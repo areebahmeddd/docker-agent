@@ -904,7 +904,7 @@
         },
         "working_dir": {
           "type": "string",
-          "description": "Optional working directory for the MCP server process. Relative paths are resolved relative to the agent's working directory."
+          "description": "Optional working directory for the MCP server process. Relative paths are resolved relative to the agent's working directory. Only valid for subprocess-based MCP types (command or ref); not supported for remote MCP toolsets."
         }
       },
       "anyOf": [
@@ -1148,7 +1148,7 @@
         },
         "working_dir": {
           "type": "string",
-          "description": "Optional working directory for MCP/LSP toolset processes. Relative paths are resolved relative to the agent's working directory. Only valid for type 'mcp' or 'lsp'."
+          "description": "Optional working directory for MCP/LSP toolset processes. Relative paths are resolved relative to the agent's working directory. Only valid for type 'mcp' or 'lsp', and not supported for remote MCP toolsets (no local subprocess)."
         }
       },
       "additionalProperties": false,

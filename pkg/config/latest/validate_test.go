@@ -181,6 +181,22 @@ agents:
 			wantErr:   "",
 			wantValue: "",
 		},
+		{
+			name: "working_dir on remote mcp is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+        working_dir: ./tools
+`,
+			wantErr:   "working_dir is not valid for remote MCP toolsets",
+			wantValue: "",
+		},
 	}
 
 	for _, tt := range tests {

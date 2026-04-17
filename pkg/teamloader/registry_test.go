@@ -1,6 +1,8 @@
 package teamloader
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +12,8 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/builtin"
+	mcptool "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
 func TestCreateShellTool(t *testing.T) {
@@ -74,6 +78,9 @@ func TestCreateMCPTool_BareCommandNotFound_CreatesToolsetAnyway(t *testing.T) {
 func TestResolveToolsetWorkingDir(t *testing.T) {
 	t.Parallel()
 
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+
 	tests := []struct {
 		name              string
 		toolsetWorkingDir string
@@ -99,7 +106,7 @@ func TestResolveToolsetWorkingDir(t *testing.T) {
 			want:              "/workspace/backend",
 		},
 		{
-			name:              "relative toolset dir without leading dot is joined with agent dir",
+			name:              "bare relative dir joined with agent dir",
 			toolsetWorkingDir: "tools/mcp",
 			agentWorkingDir:   "/workspace",
 			want:              "/workspace/tools/mcp",
@@ -116,6 +123,19 @@ func TestResolveToolsetWorkingDir(t *testing.T) {
 			agentWorkingDir:   "",
 			want:              "",
 		},
+		// Tilde expansion tests (B2)
+		{
+			name:              "tilde expands to home dir",
+			toolsetWorkingDir: "~/projects/app",
+			agentWorkingDir:   "/workspace",
+			want:              filepath.Join(home, "projects/app"),
+		},
+		{
+			name:              "bare tilde expands to home dir",
+			toolsetWorkingDir: "~",
+			agentWorkingDir:   "/workspace",
+			want:              home,
+		},
 	}
 
 	for _, tt := range tests {
@@ -125,4 +145,131 @@ func TestResolveToolsetWorkingDir(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestResolveToolsetWorkingDir_EnvVarExpansion tests env-var expansion separately
+// because t.Setenv is incompatible with t.Parallel on the parent test.
+func TestResolveToolsetWorkingDir_EnvVarExpansion(t *testing.T) {
+	t.Setenv("TEST_REGISTRY_CWD_VAR", "/custom/path")
+
+	got := resolveToolsetWorkingDir("${TEST_REGISTRY_CWD_VAR}/app", "/workspace")
+	assert.Equal(t, "/custom/path/app", got)
+}
+
+// TestCreateMCPTool_WorkingDir_ReachesSubprocess verifies that working_dir is
+// wired all the way through createMCPTool to the underlying stdio command (N5).
+func TestCreateMCPTool_WorkingDir_ReachesSubprocess(t *testing.T) {
+	t.Setenv("DOCKER_AGENT_TOOLS_DIR", t.TempDir())
+
+	// Create a real temporary directory so the existence check passes.
+	customDir := t.TempDir()
+	agentDir := t.TempDir()
+
+	toolset := latest.Toolset{
+		Type:       "mcp",
+		Command:    "some-nonexistent-mcp-binary",
+		WorkingDir: customDir,
+	}
+
+	registry := NewDefaultToolsetRegistry()
+	runConfig := &config.RuntimeConfig{
+		Config:              config.Config{WorkingDir: agentDir},
+		EnvProviderForTests: environment.NewOsEnvProvider(),
+	}
+
+	rawTool, err := registry.CreateTool(t.Context(), toolset, ".", runConfig, "test-agent")
+	require.NoError(t, err)
+	require.NotNil(t, rawTool)
+
+	// Assert the CWD reached the inner stdio command.
+	ts, ok := rawTool.(*mcptool.Toolset)
+	require.True(t, ok, "expected *mcp.Toolset")
+	assert.Equal(t, customDir, ts.WorkingDir())
+}
+
+// TestCreateMCPTool_RelativeWorkingDir_ResolvedAgainstAgentDir verifies that a
+// relative working_dir is resolved against the agent's working directory.
+func TestCreateMCPTool_RelativeWorkingDir_ResolvedAgainstAgentDir(t *testing.T) {
+	t.Setenv("DOCKER_AGENT_TOOLS_DIR", t.TempDir())
+
+	agentDir := t.TempDir()
+	// Create the subdirectory so the existence check passes.
+	subDir := filepath.Join(agentDir, "tools", "mcp")
+	require.NoError(t, os.MkdirAll(subDir, 0o700))
+
+	toolset := latest.Toolset{
+		Type:       "mcp",
+		Command:    "some-nonexistent-mcp-binary",
+		WorkingDir: "tools/mcp",
+	}
+
+	registry := NewDefaultToolsetRegistry()
+	runConfig := &config.RuntimeConfig{
+		Config:              config.Config{WorkingDir: agentDir},
+		EnvProviderForTests: environment.NewOsEnvProvider(),
+	}
+
+	rawTool, err := registry.CreateTool(t.Context(), toolset, ".", runConfig, "test-agent")
+	require.NoError(t, err)
+	require.NotNil(t, rawTool)
+
+	ts, ok := rawTool.(*mcptool.Toolset)
+	require.True(t, ok, "expected *mcp.Toolset")
+	assert.Equal(t, subDir, ts.WorkingDir())
+}
+
+// TestCreateMCPTool_NonexistentWorkingDir_ReturnsError verifies that a
+// non-existent working_dir surfaces a clear error at tool-creation time (S1).
+func TestCreateMCPTool_NonexistentWorkingDir_ReturnsError(t *testing.T) {
+	t.Setenv("DOCKER_AGENT_TOOLS_DIR", t.TempDir())
+
+	// Use a path that is guaranteed not to exist by creating a tempdir and
+	// appending a non-existent subdir (avoids flakes on hosts where a
+	// hard-coded path might coincidentally exist).
+	nonExistent := filepath.Join(t.TempDir(), "missing")
+
+	toolset := latest.Toolset{
+		Type:       "mcp",
+		Command:    "some-nonexistent-mcp-binary",
+		WorkingDir: nonExistent,
+	}
+
+	registry := NewDefaultToolsetRegistry()
+	runConfig := &config.RuntimeConfig{
+		Config:              config.Config{WorkingDir: t.TempDir()},
+		EnvProviderForTests: environment.NewOsEnvProvider(),
+	}
+
+	_, err := registry.CreateTool(t.Context(), toolset, ".", runConfig, "test-agent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "working_dir")
+	assert.Contains(t, err.Error(), "does not exist")
+}
+
+// TestCreateLSPTool_WorkingDir_ReachesHandler verifies that working_dir is
+// wired all the way through createLSPTool to the LSP handler (N5).
+func TestCreateLSPTool_WorkingDir_ReachesHandler(t *testing.T) {
+	// Create a real temporary directory so the existence check passes.
+	customDir := t.TempDir()
+	agentDir := t.TempDir()
+
+	toolset := latest.Toolset{
+		Type:       "lsp",
+		Command:    "gopls",
+		WorkingDir: customDir,
+	}
+
+	registry := NewDefaultToolsetRegistry()
+	runConfig := &config.RuntimeConfig{
+		Config:              config.Config{WorkingDir: agentDir},
+		EnvProviderForTests: environment.NewOsEnvProvider(),
+	}
+
+	rawTool, err := registry.CreateTool(t.Context(), toolset, ".", runConfig, "test-agent")
+	require.NoError(t, err)
+	require.NotNil(t, rawTool)
+
+	lsp, ok := rawTool.(*builtin.LSPTool)
+	require.True(t, ok, "expected *builtin.LSPTool")
+	assert.Equal(t, customDir, lsp.WorkingDir())
 }

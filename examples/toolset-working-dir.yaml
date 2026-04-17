@@ -12,7 +12,7 @@
 
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Example agent demonstrating working_dir for MCP and LSP toolsets
     instruction: |
       You are a helpful coding assistant with access to language server and MCP tools
