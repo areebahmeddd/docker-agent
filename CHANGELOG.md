@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.49.2] - 2026-04-21
+
+This release fixes an issue with the --pull-interval flag when using URL gordon references.
+
+## Bug Fixes
+- Fixes blocking of --pull-interval flag when using URL gordon reference
+
+## Technical Changes
+- Updates CHANGELOG.md for v1.49.1
+
+### Pull Requests
+
+- [#2484](https://github.com/docker/docker-agent/pull/2484) - docs: update CHANGELOG.md for v1.49.1
+- [#2485](https://github.com/docker/docker-agent/pull/2485) - Do not block --pull-interval flag when using URL gordon ref
+
+
 ## [v1.49.1] - 2026-04-21
 
 This release improves the shell tool's command handling and fixes documentation inconsistencies.
@@ -2122,3 +2138,5 @@ This release improves the terminal user interface with better error handling and
 [v1.49.0]: https://github.com/docker/docker-agent/releases/tag/v1.49.0
 
 [v1.49.1]: https://github.com/docker/docker-agent/releases/tag/v1.49.1
+
+[v1.49.2]: https://github.com/docker/docker-agent/releases/tag/v1.49.2
