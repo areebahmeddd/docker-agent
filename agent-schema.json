@@ -1803,6 +1803,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "callbackRedirectURL": {
+          "type": "string",
+          "description": "Optional OAuth redirect URI used in place of http://127.0.0.1:{callbackPort}/callback. The literal placeholder ${callbackPort} is replaced with the actual local callback port at runtime. The external URL is expected to redirect the browser back to the local callback server."
         }
       },
       "required": [

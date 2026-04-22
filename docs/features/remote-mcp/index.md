@@ -68,8 +68,39 @@ toolsets:
 | `clientSecret` | string          | ✗        | OAuth client secret. Omit for public clients using PKCE.                                         |
 | `callbackPort` | integer         | ✗        | Local port to receive the OAuth redirect. If omitted, docker-agent picks a random free port.    |
 | `scopes`       | array[string]   | ✗        | Scopes to request during the authorization step. Values are server-specific.                     |
+| `callbackRedirectURL` | string   | ✗        | Custom OAuth redirect URI. Useful when the auth server requires HTTPS or a pre-registered URL. The literal placeholder `${callbackPort}` is replaced with the actual local callback port. See below.            |
 
 Secrets should be stored in a credential helper or environment variable rather than committed — see [Secrets]({{ '/guides/secrets/' | relative_url }}) for interpolation patterns.
+
+### Custom redirect URI (`callbackRedirectURL`)
+
+Some authorization servers require the OAuth `redirect_uri` to be HTTPS or to match a URL that was pre-registered during app creation — neither of which plays nicely with a locally-bound loopback address such as `http://127.0.0.1:8765/callback`.
+
+To work around this, set `callbackRedirectURL` to a public URL that redirects back to the local callback server. The literal placeholder `${callbackPort}` is substituted with the actual port the local callback server is listening on (either `callbackPort` when set, or the randomly-assigned port otherwise).
+
+```yaml
+toolsets:
+  - type: mcp
+    remote:
+      url: "https://mcp.example.com/mcp"
+      transport_type: "streamable"
+      oauth:
+        clientId: "my-app-client-id"
+        callbackPort: 8765
+        # Advertise this URL to the authorization server. The external
+        # service at redirect.example.com is expected to 302-redirect the
+        # browser to http://127.0.0.1:8765/callback preserving the query
+        # string (code, state, …).
+        callbackRedirectURL: "https://redirect.example.com/cb?port=${callbackPort}"
+```
+
+The local callback server still listens on the loopback interface on `callbackPort`; only the `redirect_uri` advertised to the authorization server changes.
+
+**Validation rules:**
+
+- The URL must be absolute (scheme + host) once `${callbackPort}` has been substituted.
+- Only `http` and `https` schemes are accepted.
+- `http` is only allowed when the host is a loopback address (`127.0.0.1`, `::1`, `localhost`); any other host must use `https` to avoid exposing the authorization `code` on the wire (RFC 8252 §7.3).
 
 ## Project Management &amp; Collaboration
 

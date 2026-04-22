@@ -2,6 +2,10 @@ package latest
 
 import (
 	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"strings"
 )
 
 func (t *Config) UnmarshalYAML(unmarshal func(any) error) error {
@@ -156,6 +160,11 @@ func (t *Toolset) validate() error {
 			if t.Remote.OAuth.CallbackPort != 0 && (t.Remote.OAuth.CallbackPort < 1 || t.Remote.OAuth.CallbackPort > 65535) {
 				return errors.New("oauth callbackPort must be between 1 and 65535")
 			}
+			if t.Remote.OAuth.CallbackRedirectURL != "" {
+				if err := validateCallbackRedirectURL(t.Remote.OAuth.CallbackRedirectURL); err != nil {
+					return err
+				}
+			}
 		}
 	case "a2a":
 		if t.URL == "" {
@@ -182,5 +191,53 @@ func (t *Toolset) validate() error {
 		// no additional validation needed
 	}
 
+	return nil
+}
+
+// isLoopbackHost reports whether host is a loopback address (with or without
+// a port component). It accepts IPv4 loopback, IPv6 loopback, and the literal
+// "localhost".
+func isLoopbackHost(hostPort string) bool {
+	host := hostPort
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]") // strip IPv6 brackets
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// validateCallbackRedirectURL ensures raw is a well-formed absolute URL
+// suitable for use as an OAuth redirect_uri.
+//
+// Rules:
+//   - Must parse as an absolute URL (scheme + host) once the ${callbackPort}
+//     placeholder has been substituted with a dummy value.
+//   - Scheme must be http or https. Other schemes (javascript:, file:, ftp:,
+//     …) are rejected: the browser will be navigated to this URL by the
+//     authorization server.
+//   - http is only permitted for loopback hosts (RFC 8252 §7.3); any other
+//     host must use https, since non-loopback http redirect URIs allow the
+//     authorization code to be exposed on the wire.
+func validateCallbackRedirectURL(raw string) error {
+	// Substitute the placeholder with a dummy port so url.Parse accepts the
+	// string (Go's parser validates that ports are numeric).
+	probe := strings.ReplaceAll(raw, "${callbackPort}", "1")
+	u, err := url.Parse(probe)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("oauth callbackRedirectURL must be an absolute URL: %q", raw)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("oauth callbackRedirectURL scheme must be http or https, got %q", u.Scheme)
+	}
+	if scheme == "http" && !isLoopbackHost(u.Host) {
+		return fmt.Errorf("oauth callbackRedirectURL must use https for non-loopback hosts: %q", raw)
+	}
 	return nil
 }

@@ -831,6 +831,20 @@ type RemoteOAuthConfig struct {
 	ClientSecret string   `json:"clientSecret,omitempty"`
 	CallbackPort int      `json:"callbackPort,omitempty"`
 	Scopes       []string `json:"scopes,omitempty"`
+	// CallbackRedirectURL, when set, is used as the OAuth redirect URI
+	// instead of the default http://127.0.0.1:{callbackPort}/callback.
+	// This allows inserting a public-facing proxy (e.g. a URL shortener or
+	// a pre-registered static redirect) in front of the local callback
+	// server — useful for authorization servers that require the redirect
+	// URI to be HTTPS or pre-registered.
+	//
+	// The literal placeholder ${callbackPort} is replaced with the actual
+	// port the local callback server is listening on (either CallbackPort
+	// when set, or a random free port otherwise). The external URL is
+	// expected to redirect the browser back to
+	// http://127.0.0.1:{callbackPort}/callback preserving the OAuth query
+	// parameters.
+	CallbackRedirectURL string `json:"callbackRedirectURL,omitempty"`
 }
 
 // DeferConfig represents the deferred loading configuration for a toolset.

@@ -216,3 +216,166 @@ agents:
 		})
 	}
 }
+
+func TestToolset_Validate_MCP_RemoteOAuth_CallbackRedirectURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "callbackRedirectURL absolute URL is accepted",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+          oauth:
+            clientId: cid
+            callbackRedirectURL: https://redirect.example.com/cb
+`,
+			wantErr: "",
+		},
+		{
+			name: "callbackRedirectURL with placeholder is accepted",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+          oauth:
+            clientId: cid
+            callbackRedirectURL: "https://redirect.example.com/cb?port=${callbackPort}"
+`,
+			wantErr: "",
+		},
+		{
+			name: "http on loopback is accepted",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+          oauth:
+            clientId: cid
+            callbackRedirectURL: "http://localhost:${callbackPort}/cb"
+`,
+			wantErr: "",
+		},
+		{
+			name: "http on non-loopback host is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+          oauth:
+            clientId: cid
+            callbackRedirectURL: "http://redirect.example.com/cb"
+`,
+			wantErr: "must use https for non-loopback hosts",
+		},
+		{
+			name: "javascript scheme is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+          oauth:
+            clientId: cid
+            callbackRedirectURL: "javascript:alert(1)"
+`,
+			wantErr: "must be an absolute URL",
+		},
+		{
+			name: "ftp scheme is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+          oauth:
+            clientId: cid
+            callbackRedirectURL: "ftp://example.com/cb"
+`,
+			wantErr: "scheme must be http or https",
+		},
+		{
+			name: "relative callbackRedirectURL is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+          oauth:
+            clientId: cid
+            callbackRedirectURL: /just/a/path
+`,
+			wantErr: "oauth callbackRedirectURL must be an absolute URL",
+		},
+		{
+			name: "garbage callbackRedirectURL is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: mcp
+        remote:
+          url: https://mcp.example.com/sse
+          oauth:
+            clientId: cid
+            callbackRedirectURL: "://bad-url"
+`,
+			wantErr: "oauth callbackRedirectURL must be an absolute URL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg Config
+			err := yaml.Unmarshal([]byte(tt.config), &cfg)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
