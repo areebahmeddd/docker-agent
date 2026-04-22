@@ -484,11 +484,12 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				// stranded until the next RunStream invocation. Re-checking
 				// here closes that race: any message that enqueued successfully
 				// is guaranteed to be consumed within the current RunStream.
-				// The agent just finished a turn, so these messages get the
-				// same system-reminder envelope as mid-turn steers.
+				// The current turn is ending and a new one is about to begin;
+				// the agent is not mid-task, so plain user messages (wrap=false)
+				// are used — same as the top-of-turn drain.
 				if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
 					for _, sm := range steered {
-						r.appendSteerAndEmit(sess, sm, true, events)
+						r.appendSteerAndEmit(sess, sm, false, events)
 					}
 					r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 					continue
