@@ -41,27 +41,12 @@ func (r *LocalRuntime) registerDefaultTools() {
 	})
 }
 
-// wrapSteerMessage wraps a raw steer message in a <system-reminder> envelope
-// so the model receives the user's course-correction as a clearly-labelled
-// side-channel injection rather than a plain conversational turn.
-func wrapSteerMessage(content string) string {
-	return fmt.Sprintf(
-		"<system-reminder>\nThe user sent the following message while you were working:\n%s\n\nPlease address this in your next response while continuing with your current tasks.\n</system-reminder>",
-		content,
-	)
-}
-
-// appendSteerAndEmit appends a steered message to the session and emits the
-// corresponding UserMessage event. When wrap is true the content is enclosed
-// in a <system-reminder> envelope (appropriate for mid-turn interruptions
-// where the agent is actively working); when false the raw content is used
-// (appropriate at the top of a new turn where the agent is idle).
-func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessage, wrap bool, events chan<- Event) {
-	content := sm.Content
-	if wrap {
-		content = wrapSteerMessage(sm.Content)
-	}
-	sess.AddMessage(session.UserMessage(content, sm.MultiContent...))
+// appendSteerAndEmit appends a steered message to the session as a plain
+// user message and emits the corresponding UserMessage event. Steer messages
+// are always injected as plain user turns regardless of when they arrive
+// (idle window, mid-turn, or end-of-iteration).
+func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessage, events chan<- Event) {
+	sess.AddMessage(session.UserMessage(sm.Content, sm.MultiContent...))
 	events <- UserMessage(sm.Content, sess.ID, sm.MultiContent, len(sess.Messages)-1)
 }
 
@@ -326,13 +311,13 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			//      nothing was running to consume the message.
 			//   2. First-turn miss: a plain-text response with no tool calls
 			//      fires res.Stopped before the mid-loop drain is reached.
-			// The agent is not mid-task here, so messages are plain user turns
-			// (no system-reminder envelope). Placement after contextLimit
-			// initialization means compactIfNeeded can be called immediately.
+			// Steer messages are always injected as plain user turns.
+			// Placement after contextLimit initialization means compactIfNeeded
+			// can be called immediately.
 			if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
 				messageCountBeforeSteer := len(sess.GetAllMessages())
 				for _, sm := range steered {
-					r.appendSteerAndEmit(sess, sm, false, events)
+					r.appendSteerAndEmit(sess, sm, events)
 				}
 				r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeSteer, events)
 			}
@@ -462,12 +447,12 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			toolModelOverride = resolveToolCallModelOverride(res.Calls, agentTools)
 
 			// --- STEERING: mid-turn injection ---
-			// Drain ALL pending steer messages. These are urgent course-
-			// corrections that the model should see on the very next
-			// iteration, wrapped in <system-reminder> tags.
+			// Drain ALL pending steer messages injected while tool calls were
+			// running. These are plain user messages; the model sees them on
+			// the very next iteration.
 			if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
 				for _, sm := range steered {
-					r.appendSteerAndEmit(sess, sm, true, events)
+					r.appendSteerAndEmit(sess, sm, events)
 				}
 
 				r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
@@ -484,12 +469,10 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				// stranded until the next RunStream invocation. Re-checking
 				// here closes that race: any message that enqueued successfully
 				// is guaranteed to be consumed within the current RunStream.
-				// The current turn is ending and a new one is about to begin;
-				// the agent is not mid-task, so plain user messages (wrap=false)
-				// are used — same as the top-of-turn drain.
+				// Steer messages are always plain user turns.
 				if steered := r.steerQueue.Drain(ctx); len(steered) > 0 {
 					for _, sm := range steered {
-						r.appendSteerAndEmit(sess, sm, false, events)
+						r.appendSteerAndEmit(sess, sm, events)
 					}
 					r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 					continue

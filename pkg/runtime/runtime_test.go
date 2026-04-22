@@ -2581,14 +2581,10 @@ func TestSteer_EndOfIterationRaceIsConsumedInCurrentRunStream(t *testing.T) {
 		}
 	}
 	require.NotNil(t, steerSessionMsg, "expected a session message for the end-of-iteration steer")
-	// The hookStream injection fires inside Recv() on the stop chunk, which
-	// means the steer lands in the queue before tryModelWithFallback returns
-	// and is consumed by the mid-loop drain (wrap=true). The end-of-iteration
-	// drain (wrap=false, inside res.Stopped) covers the narrower race where
-	// the steer arrives after the mid-loop drain — that window is only
-	// reachable via real goroutine concurrency, not from a synchronous test
-	// hook. We verify the content is present; envelope assertions are omitted
-	// for this path since the drain that fires depends on injection timing.
-	assert.Contains(t, steerSessionMsg.Message.Content, "end-of-iter steer",
-		"stored session message must contain the steer content")
+	// All steer drain sites inject plain user messages; no wrapping occurs
+	// regardless of which drain (mid-loop or end-of-iteration) fires first.
+	assert.Equal(t, "end-of-iter steer", steerSessionMsg.Message.Content,
+		"end-of-iteration steer must be stored as plain content")
+	assert.NotContains(t, steerSessionMsg.Message.Content, "<system-reminder>",
+		"end-of-iteration steer must NOT use the system-reminder envelope")
 }
