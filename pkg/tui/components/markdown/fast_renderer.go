@@ -4,6 +4,7 @@ package markdown
 
 import (
 	"cmp"
+	"io"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
+	xansi "github.com/charmbracelet/x/ansi"
 	runewidth "github.com/mattn/go-runewidth"
 
 	"github.com/docker/docker-agent/pkg/tui/styles"
@@ -286,7 +288,7 @@ func (r *FastRenderer) Render(input string) (string, error) {
 	p.reset(input, r.width)
 	result := p.parse()
 	parserPool.Put(p)
-	return padAllLines(result, r.width), nil
+	return padAllLines(fixHyperlinkWrapping(result), r.width), nil
 }
 
 // parser holds the state for parsing markdown.
@@ -1536,6 +1538,49 @@ func isHorizontalRule(line string) bool {
 	return count >= 3
 }
 
+// writeHyperlinkStart writes the OSC 8 opening sequence for a clickable hyperlink.
+func writeHyperlinkStart(b *strings.Builder, url string) {
+	b.WriteString(xansi.SetHyperlink(url))
+}
+
+// writeHyperlinkEnd writes the OSC 8 closing sequence to end a hyperlink.
+func writeHyperlinkEnd(b *strings.Builder) {
+	b.WriteString(xansi.ResetHyperlink())
+}
+
+// findURLEnd returns the length of a URL starting at the given position.
+// It stops at whitespace, or certain trailing punctuation that is unlikely
+// part of the URL (e.g., trailing period, comma, parenthesis if unmatched).
+func findURLEnd(s string) int {
+	i := 0
+	parenDepth := 0
+	for i < len(s) {
+		c := s[i]
+		if c <= ' ' {
+			break
+		}
+		if c == '(' {
+			parenDepth++
+		} else if c == ')' {
+			if parenDepth > 0 {
+				parenDepth--
+			} else {
+				break
+			}
+		}
+		i++
+	}
+	for i > 0 {
+		c := s[i-1]
+		if c == '.' || c == ',' || c == ';' || c == ':' || c == '!' || c == '?' {
+			i--
+		} else {
+			break
+		}
+	}
+	return i
+}
+
 // renderInline processes inline markdown elements: bold, italic, code, links, etc.
 // It uses the document's base text style for restoring after styled elements.
 func (p *parser) renderInline(text string) string {
@@ -1571,22 +1616,29 @@ func (p *parser) renderInlineWithStyleTo(out *strings.Builder, text string, rest
 		return 0
 	}
 
-	// Fast path: check if text contains any markdown characters
+	// Fast path: check if text contains any markdown characters or URLs
 	// If not, apply the restore style directly and return
 	firstMarker := strings.IndexAny(text, inlineMarkdownChars)
-	if firstMarker == -1 {
+	firstURL := findFirstURL(text)
+	if firstMarker == -1 && firstURL == -1 {
 		restoreStyle.renderTo(out, text)
 		return textWidth(text)
+	}
+
+	// Determine the first trigger position (marker or URL)
+	firstTrigger := firstMarker
+	if firstTrigger == -1 || (firstURL != -1 && firstURL < firstTrigger) {
+		firstTrigger = firstURL
 	}
 
 	width := 0
 
 	// Optimization: write any leading plain text in one batch
-	if firstMarker > 0 {
-		plain := text[:firstMarker]
+	if firstTrigger > 0 {
+		plain := text[:firstTrigger]
 		restoreStyle.renderTo(out, plain)
 		width += textWidth(plain)
-		text = text[firstMarker:]
+		text = text[firstTrigger:]
 	}
 
 	i := 0
@@ -1726,16 +1778,16 @@ func (p *parser) renderInlineWithStyleTo(out *strings.Builder, text string, rest
 				if closeParen != -1 {
 					url := rest[:closeParen]
 					if linkText != url {
+						// Emit OSC 8 hyperlink wrapping styled link text
+						writeHyperlinkStart(out, url)
 						p.styles.ansiLinkText.renderTo(out, linkText)
-						out.WriteByte(' ')
-						out.WriteString(p.styles.ansiLink.prefix)
-						out.WriteByte('(')
-						out.WriteString(url)
-						out.WriteByte(')')
-						out.WriteString(p.styles.ansiLink.suffix)
-						width += textWidth(linkText) + 1 + textWidth(url) + 2 // +1 for space, +2 for parens
+						writeHyperlinkEnd(out)
+						width += textWidth(linkText)
 					} else {
+						// URL is the same as the text — emit clickable link with URL as text
+						writeHyperlinkStart(out, url)
 						p.styles.ansiLink.renderTo(out, linkText)
+						writeHyperlinkEnd(out)
 						width += textWidth(linkText)
 					}
 					i = i + closeBracket + 2 + closeParen + 1
@@ -1746,17 +1798,46 @@ func (p *parser) renderInlineWithStyleTo(out *strings.Builder, text string, rest
 		default:
 			// Regular character - collect consecutive plain text
 			start := i
+			origStart := i // Track original start to detect no-progress
 			for i < n && !isInlineMarker(text[i]) {
+				// Check for auto-link URLs
+				if (i+8 <= n && text[i:i+8] == "https://") || (i+7 <= n && text[i:i+7] == "http://") {
+					// First, emit any plain text before the URL
+					if i > start {
+						plainText := text[start:i]
+						restoreStyle.renderTo(out, plainText)
+						width += textWidth(plainText)
+					}
+					// Find URL boundaries, but don't extend past inline markdown markers.
+					// Use urlStopMarkdownChars (excludes _ and \ which are valid in URLs)
+					// to avoid splitting URLs like https://example.com/Thing_(foo).
+					remaining := text[i:]
+					if nextMarker := strings.IndexAny(remaining, urlStopMarkdownChars); nextMarker >= 0 {
+						remaining = remaining[:nextMarker]
+					}
+					urlLen := findURLEnd(remaining)
+					autoURL := text[i : i+urlLen]
+					// Emit OSC 8 hyperlink
+					writeHyperlinkStart(out, autoURL)
+					p.styles.ansiLink.renderTo(out, autoURL)
+					writeHyperlinkEnd(out)
+					width += textWidth(autoURL)
+					i += urlLen
+					start = i
+					continue
+				}
 				i++
 			}
-			// If we didn't advance (started on an unmatched marker), consume it as literal
-			if i == start {
+			// If we didn't advance from the original position (unmatched marker), consume one char as literal
+			if i == origStart {
 				i++
 			}
-			// Always apply restore style to plain text for consistent coloring
-			plainText := text[start:i]
-			restoreStyle.renderTo(out, plainText)
-			width += textWidth(plainText)
+			// Emit remaining plain text
+			if i > start && start < n {
+				plainText := text[start:i]
+				restoreStyle.renderTo(out, plainText)
+				width += textWidth(plainText)
+			}
 		}
 	}
 
@@ -1836,6 +1917,25 @@ func isWord(b byte) bool {
 
 // inlineMarkdownChars contains all characters that trigger inline markdown processing.
 const inlineMarkdownChars = "\\`*_~["
+
+// urlStopMarkdownChars is the subset of inline markdown markers that should
+// terminate auto-linked URL detection. Excludes _ and \\ because they appear
+// frequently in valid URLs (e.g. https://example.com/Thing_(foo)).
+const urlStopMarkdownChars = "`*~["
+
+// findFirstURL returns the index of the first "https://" or "http://" in s, or -1.
+func findFirstURL(s string) int {
+	if idx := strings.Index(s, "https://"); idx != -1 {
+		if httpIdx := strings.Index(s, "http://"); httpIdx != -1 && httpIdx < idx {
+			return httpIdx
+		}
+		return idx
+	}
+	if idx := strings.Index(s, "http://"); idx != -1 {
+		return idx
+	}
+	return -1
+}
 
 // hasInlineMarkdown checks if text contains any markdown formatting characters.
 // This allows a fast path to skip processing plain text.
@@ -1999,7 +2099,7 @@ func (p *parser) renderCodeBlockWithIndent(code, lang, indent string, availableW
 				if i > start {
 					segment := text[start:i]
 					segment = expandTabs(segment, lineWidth)
-					writeSegmentWrapped(segment, tok.style)
+					writeCodeSegmentsWithAutoLinks(segment, tok.style, &lineBuilder, writeSegmentWrapped)
 				}
 				flushLine()
 				start = i + 1
@@ -2009,7 +2109,7 @@ func (p *parser) renderCodeBlockWithIndent(code, lang, indent string, availableW
 		if start < len(text) {
 			segment := text[start:]
 			segment = expandTabs(segment, lineWidth)
-			writeSegmentWrapped(segment, tok.style)
+			writeCodeSegmentsWithAutoLinks(segment, tok.style, &lineBuilder, writeSegmentWrapped)
 		}
 	}
 
@@ -2024,6 +2124,29 @@ func (p *parser) renderCodeBlockWithIndent(code, lang, indent string, availableW
 	p.out.WriteByte('\n')
 
 	p.out.WriteByte('\n')
+}
+
+// writeCodeSegmentsWithAutoLinks detects URLs in a code segment and wraps them
+// in OSC 8 hyperlink sequences so they become clickable in the TUI.
+// OSC 8 open/close are written directly to lineBuilder (not measured by writeSegment),
+// and fixHyperlinkWrapping in Render() ensures sequences survive line wrapping.
+func writeCodeSegmentsWithAutoLinks(segment string, style ansiStyle, lineBuilder *strings.Builder, writeSegment func(string, ansiStyle)) {
+	for segment != "" {
+		idx := findFirstURL(segment)
+		if idx < 0 {
+			writeSegment(segment, style)
+			return
+		}
+		if idx > 0 {
+			writeSegment(segment[:idx], style)
+		}
+		urlLen := findURLEnd(segment[idx:])
+		url := segment[idx : idx+urlLen]
+		lineBuilder.WriteString(xansi.SetHyperlink(url))
+		writeSegment(url, style)
+		lineBuilder.WriteString(xansi.ResetHyperlink())
+		segment = segment[idx+urlLen:]
+	}
 }
 
 // spacesBuffer is a pre-allocated buffer of spaces for padding needs.
@@ -2093,6 +2216,22 @@ func ansiStringWidth(s string) int {
 				}
 				continue
 			}
+			// Skip OSC sequences (e.g., \x1b]8;...;\x07 for hyperlinks)
+			if i+1 < len(s) && s[i+1] == ']' {
+				i += 2
+				for i < len(s) {
+					if s[i] == '\x07' {
+						i++
+						break
+					}
+					if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+				continue
+			}
 			i++
 			continue
 		}
@@ -2109,6 +2248,23 @@ func ansiStringWidth(s string) int {
 		i += size
 	}
 	return width
+}
+
+// fixHyperlinkWrapping ensures that OSC 8 hyperlink sequences are properly
+// closed before each newline and re-opened after, so that each terminal line
+// is a self-contained clickable link. This is needed because wrapText/breakWord
+// can split a long hyperlinked URL across multiple lines.
+func fixHyperlinkWrapping(s string) string {
+	// Fast path: no hyperlinks, nothing to fix
+	if !strings.Contains(s, "\x1b]8;") {
+		return s
+	}
+	var buf strings.Builder
+	buf.Grow(len(s) + 128) // small overhead for extra OSC sequences
+	w := lipgloss.NewWrapWriter(&buf)
+	_, _ = io.WriteString(w, s)
+	_ = w.Close()
+	return buf.String()
 }
 
 // padAllLines pads each line to the target width with trailing spaces.
@@ -2456,10 +2612,28 @@ func splitWordsWithStyles(text string) []styledWord {
 
 	for i := 0; i < len(text); {
 		if text[i] == '\x1b' {
-			// Start of ANSI sequence
 			if wordStart == -1 {
 				wordStart = i
 			}
+			// Check for OSC sequence (\x1b]...)
+			if i+1 < len(text) && text[i+1] == ']' {
+				oscStart := i
+				i += 2
+				for i < len(text) {
+					if text[i] == '\x07' {
+						i++
+						break
+					}
+					if text[i] == '\x1b' && i+1 < len(text) && text[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+				currentAnsi = append(currentAnsi, text[oscStart:i])
+				continue
+			}
+			// Start of CSI ANSI sequence
 			inAnsi = true
 			ansiStart = i
 			i++
@@ -2515,12 +2689,13 @@ func splitWordsWithStyles(text string) []styledWord {
 // updateActiveStyles updates the list of active ANSI styles based on new codes
 func updateActiveStyles(active, newCodes []string) []string {
 	for _, code := range newCodes {
-		// Check if this is a reset sequence
+		// Skip OSC sequences (hyperlinks) — they're self-contained, not carried across lines
+		if strings.HasPrefix(code, "\x1b]") {
+			continue
+		}
 		if code == "\x1b[m" || code == "\x1b[0m" {
-			// Clear all active styles
 			active = active[:0]
 		} else {
-			// Add this style to active list
 			active = append(active, code)
 		}
 	}
@@ -2540,6 +2715,25 @@ func breakWord(word string, maxWidth int) []string {
 
 	for i := 0; i < len(word); {
 		if word[i] == '\x1b' {
+			// Check for OSC sequence
+			if i+1 < len(word) && word[i+1] == ']' {
+				oscStart := i
+				i += 2
+				for i < len(word) {
+					if word[i] == '\x07' {
+						i++
+						break
+					}
+					if word[i] == '\x1b' && i+1 < len(word) && word[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+				current.WriteString(word[oscStart:i])
+				continue
+			}
+			// Existing CSI handling
 			inAnsi = true
 			ansiSeq.WriteByte(word[i])
 			i++

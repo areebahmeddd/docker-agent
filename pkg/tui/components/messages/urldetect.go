@@ -2,6 +2,7 @@ package messages
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -20,13 +21,10 @@ type hoveredURL struct {
 // urlAtPosition extracts a URL from the rendered line at the given display column.
 // Returns the URL string if found, or empty string if the click position is not on a URL.
 func urlAtPosition(renderedLine string, col int) string {
-	plainLine := ansi.Strip(renderedLine)
-	if plainLine == "" {
+	if renderedLine == "" {
 		return ""
 	}
-
-	// Find all URL spans in the plain text
-	for _, span := range findURLSpans(plainLine) {
+	for _, span := range findAllURLSpans(renderedLine) {
 		if col >= span.startCol && col < span.endCol {
 			return span.url
 		}
@@ -38,6 +36,182 @@ type urlSpan struct {
 	url      string
 	startCol int // display column where URL starts
 	endCol   int // display column where URL ends (exclusive)
+}
+
+// extractOSC8Links finds OSC 8 hyperlinks in a rendered line and returns
+// their URL + display column positions. The display columns correspond to
+// the visible text after stripping ANSI sequences.
+func extractOSC8Links(renderedLine string) []urlSpan {
+	var spans []urlSpan
+
+	displayCol := 0
+	i := 0
+	s := renderedLine
+
+	for i < len(s) {
+		// Check for OSC 8 opening: \x1b]8;; or \x1b]8;params;
+		if i+4 < len(s) && s[i] == '\x1b' && s[i+1] == ']' && s[i+2] == '8' && s[i+3] == ';' {
+			j := i + 4
+			// Skip params until next ';'
+			for j < len(s) && s[j] != ';' && s[j] != '\x07' {
+				j++
+			}
+			if j < len(s) && s[j] == ';' {
+				j++ // skip the ';'
+				// Extract URL until BEL (\x07) or ST (\x1b\\)
+				urlStart := j
+				for j < len(s) {
+					if s[j] == '\x07' {
+						break
+					}
+					if s[j] == '\x1b' && j+1 < len(s) && s[j+1] == '\\' {
+						break
+					}
+					j++
+				}
+				url := s[urlStart:j]
+
+				// Skip the terminator
+				if j < len(s) && s[j] == '\x07' {
+					j++
+				} else if j+1 < len(s) && s[j] == '\x1b' && s[j+1] == '\\' {
+					j += 2
+				}
+				i = j
+
+				// Empty URL means this is a reset/close — ignore
+				if url == "" {
+					continue
+				}
+
+				// Read the visible text until we hit the closing OSC 8 reset
+				textStartCol := displayCol
+				for i < len(s) {
+					// Check for closing OSC 8: \x1b]8;;\x07
+					if i+4 < len(s) && s[i] == '\x1b' && s[i+1] == ']' && s[i+2] == '8' && s[i+3] == ';' {
+						k := i + 4
+						for k < len(s) && s[k] != ';' && s[k] != '\x07' {
+							k++
+						}
+						if k < len(s) && s[k] == ';' {
+							k++
+						}
+						// Skip until terminator
+						for k < len(s) {
+							if s[k] == '\x07' {
+								k++
+								break
+							}
+							if s[k] == '\x1b' && k+1 < len(s) && s[k+1] == '\\' {
+								k += 2
+								break
+							}
+							k++
+						}
+						i = k
+						break
+					}
+					// Skip CSI sequences (\x1b[...)
+					if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+						i += 2
+						for i < len(s) && (s[i] < '@' || s[i] > '~') {
+							i++
+						}
+						if i < len(s) {
+							i++
+						}
+						continue
+					}
+					// Visible character
+					r, size := utf8.DecodeRuneInString(s[i:])
+					displayCol += runewidth.RuneWidth(r)
+					i += size
+				}
+
+				if url != "" && displayCol > textStartCol {
+					spans = append(spans, urlSpan{
+						url:      url,
+						startCol: textStartCol,
+						endCol:   displayCol,
+					})
+				}
+				continue
+			}
+			// Malformed OSC, skip
+			i = j
+			continue
+		}
+
+		// Skip CSI sequences
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			i += 2
+			for i < len(s) && (s[i] < '@' || s[i] > '~') {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+			continue
+		}
+
+		// Skip other OSC sequences (non-hyperlink)
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == ']' {
+			i += 2
+			for i < len(s) {
+				if s[i] == '\x07' {
+					i++
+					break
+				}
+				if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '\\' {
+					i += 2
+					break
+				}
+				i++
+			}
+			continue
+		}
+
+		// Visible character — advance display column
+		r, size := utf8.DecodeRuneInString(s[i:])
+		displayCol += runewidth.RuneWidth(r)
+		i += size
+	}
+
+	return spans
+}
+
+// findAllURLSpans finds all clickable URLs in a rendered line by combining:
+// 1. OSC 8 hyperlinks (from invisible sequences in the rendered line)
+// 2. Visible URLs (from plain text detection)
+// OSC 8 links take priority when they overlap with visible URL spans.
+func findAllURLSpans(renderedLine string) []urlSpan {
+	osc8Spans := extractOSC8Links(renderedLine)
+	plainLine := ansi.Strip(renderedLine)
+	visibleSpans := findURLSpans(plainLine)
+
+	if len(osc8Spans) == 0 {
+		return visibleSpans
+	}
+	if len(visibleSpans) == 0 {
+		return osc8Spans
+	}
+
+	// Merge: OSC 8 spans take priority. Remove visible spans that overlap.
+	merged := make([]urlSpan, 0, len(osc8Spans)+len(visibleSpans))
+	merged = append(merged, osc8Spans...)
+	for _, vs := range visibleSpans {
+		overlaps := false
+		for _, os := range osc8Spans {
+			if vs.startCol < os.endCol && vs.endCol > os.startCol {
+				overlaps = true
+				break
+			}
+		}
+		if !overlaps {
+			merged = append(merged, vs)
+		}
+	}
+	return merged
 }
 
 // findURLSpans finds all URLs in plain text and returns their display column ranges.
@@ -144,8 +318,7 @@ func (m *model) updateHoveredURL(line, col int) {
 	m.ensureAllItemsRendered()
 
 	if line >= 0 && line < len(m.renderedLines) {
-		plainLine := ansi.Strip(m.renderedLines[line])
-		for _, span := range findURLSpans(plainLine) {
+		for _, span := range findAllURLSpans(m.renderedLines[line]) {
 			if col >= span.startCol && col < span.endCol {
 				newHover := &hoveredURL{line: line, startCol: span.startCol, endCol: span.endCol}
 				if m.hoveredURL == nil || *m.hoveredURL != *newHover {
