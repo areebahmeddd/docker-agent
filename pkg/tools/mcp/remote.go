@@ -41,10 +41,9 @@ func newRemoteClient(url, transportType string, headers map[string]string, token
 
 func (c *remoteMCPClient) Initialize(ctx context.Context, _ *gomcp.InitializeRequest) (*gomcp.InitializeResult, error) {
 	// Create HTTP client with OAuth support. We keep a reference to the
-	// oauthTransport so we can recognise the deferred-OAuth case (the
-	// transport returned an AuthorizationRequiredError because the request
-	// context disallowed prompts) and re-emit a clean
-	// AuthorizationRequiredError that callers can detect with errors.As.
+	// oauthTransport so we can enrich Connect errors with the server's own
+	// explanation — without this, a plain `Bad Request` bubbles up and the
+	// user has no idea that, say, the Slack app hasn't been enabled for MCP.
 	httpClient, oauthT := c.createHTTPClient()
 
 	var transport gomcp.Transport
@@ -93,19 +92,27 @@ func (c *remoteMCPClient) Initialize(ctx context.Context, _ *gomcp.InitializeReq
 	return session.InitializeResult(), nil
 }
 
-// enrichConnectError wraps the error returned by client.Connect so callers
-// can distinguish the deferred-OAuth case from a real failure.
+// enrichConnectError wraps the error returned by client.Connect with any
+// server-side failure message captured by the transport. The MCP SDK
+// surfaces only http.StatusText ("Bad Request", "Forbidden", ...) even when
+// the server included a useful JSON-RPC error payload, so we append the
+// extracted message here so callers — and ultimately the user — can see it.
 //
-// The MCP SDK uses fmt.Errorf("%w: %v", …) when it surfaces transport errors,
-// which means the original error is included as text only — not in the unwrap
-// chain — so we can't rely on errors.As against the SDK-wrapped error.
-// Instead we read the deferred-auth flag back off the transport and re-emit
-// a clean AuthorizationRequiredError.
+// It also recognises the deferred-OAuth case (the transport returned an
+// AuthorizationRequiredError because the request context disallowed prompts)
+// and re-emits a clean AuthorizationRequiredError so callers can distinguish
+// it from a real failure with errors.As. We can't rely on the SDK's own
+// wrapping for this because the SDK uses fmt.Errorf("%w: %v", …) when it
+// surfaces transport errors — the original error is included as text only,
+// not in the unwrap chain.
 //
 // Pre: err != nil and t != nil; only called from the Connect failure path.
 func enrichConnectError(err error, t *oauthTransport) error {
 	if t.authorizationRequired() {
 		return &AuthorizationRequiredError{URL: t.baseURL}
+	}
+	if status, msg := t.lastServerError(); status != 0 && msg != "" {
+		return fmt.Errorf("failed to connect to MCP server: %w (server responded %d: %s)", err, status, msg)
 	}
 	return fmt.Errorf("failed to connect to MCP server: %w", err)
 }
@@ -123,8 +130,8 @@ func (c *remoteMCPClient) SetManagedOAuth(managed bool) {
 // at request time from upstream headers stored in the request context.
 //
 // The oauthTransport is returned alongside the client so callers can inspect
-// the transport's state (e.g. whether OAuth was deferred) when Connect()
-// returns and we need to surface the actual cause of the failure.
+// the most recent server-side failure (via lastServerError) when Connect()
+// returns a bare HTTP-status error and we need to surface the actual cause.
 func (c *remoteMCPClient) createHTTPClient() (*http.Client, *oauthTransport) {
 	base := c.headerTransport()
 

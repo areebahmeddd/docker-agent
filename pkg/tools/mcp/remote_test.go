@@ -182,6 +182,47 @@ func TestRemoteClientEmptyHeaders(t *testing.T) {
 	}
 }
 
+// TestInitialize_SurfacesServerErrorInReturnedError verifies that when an
+// MCP server rejects the initialize call with a 4xx carrying a JSON-RPC
+// error body, the error returned by Initialize contains the server's own
+// explanation — not just the generic "Bad Request" from http.StatusText.
+//
+// Regression test for: Slack's MCP endpoint answering
+//
+//	400 Bad Request
+//	{"jsonrpc":"2.0","id":null,"error":{"code":-32600,
+//	 "message":"App is not enabled for Slack MCP server access. ..."}}
+//
+// where the bubbled-up error previously read only "...: Bad Request" and
+// the user had no way to learn what was actually wrong.
+func TestInitialize_SurfacesServerErrorInReturnedError(t *testing.T) {
+	t.Parallel()
+
+	const msg = "App is not enabled for Slack MCP server access."
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":%q}}`, msg)
+	}))
+	defer server.Close()
+
+	// Pre-populate a token so the transport doesn't try to trigger OAuth on
+	// the 401 path — we want to exercise the "server rejected us with a
+	// non-auth failure" code path.
+	store := NewInMemoryTokenStore()
+	require.NoError(t, store.StoreToken(server.URL, &OAuthToken{AccessToken: "at", TokenType: "Bearer"}))
+
+	client := newRemoteClient(server.URL, "streamable", nil, store, nil)
+
+	_, err := client.Initialize(t.Context(), nil)
+	require.Error(t, err, "Initialize should fail against a server that rejects initialize")
+	assert.Contains(t, err.Error(), msg,
+		"Initialize error must surface the server's JSON-RPC error message (%q), got: %v", msg, err)
+	assert.Contains(t, err.Error(), "400",
+		"Initialize error should include the HTTP status code so the user knows it was a server rejection, got: %v", err)
+}
+
 // TestInitialize_NonInteractiveCtxDefersOAuthAndDoesNotBlock verifies that
 // when Initialize runs against a server that requires OAuth (responds with
 // 401 + WWW-Authenticate) under a context flagged with
