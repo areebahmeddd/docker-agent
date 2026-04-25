@@ -6,7 +6,10 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/docker/docker-agent/pkg/remote"
 	"github.com/docker/docker-agent/pkg/version"
@@ -97,7 +100,15 @@ func WithQuery(query url.Values) Opt {
 	}
 }
 
-// newTransport returns an HTTP transport with automatic gzip compression disabled and using Docker Desktop proxy if available.
+// newTransport returns an HTTP transport with automatic gzip compression
+// disabled and using Docker Desktop proxy if available.
+//
+// When OpenTelemetry is enabled (i.e. OTEL_EXPORTER_OTLP_ENDPOINT is set,
+// matching the gating in initOTelSDK), the transport is wrapped with
+// otelhttp so each outbound request emits a CLIENT span and the W3C
+// traceparent header is injected. When OTel is disabled, the bare
+// transport is returned so we don't allocate per-request spans nor send
+// a traceparent header to upstream LLM providers.
 func newTransport(ctx context.Context) http.RoundTripper {
 	// Get the base transport with Desktop proxy support from remote package
 	rt := remote.NewTransport(ctx)
@@ -111,7 +122,19 @@ func newTransport(ctx context.Context) http.RoundTripper {
 		t.DisableCompression()
 	}
 
-	return rt
+	return WrapWithOTel(rt)
+}
+
+// WrapWithOTel returns rt wrapped with otelhttp when OpenTelemetry is
+// enabled (OTEL_EXPORTER_OTLP_ENDPOINT set, matching the gating in
+// cmd/root/otel.go), or rt unchanged otherwise. Exposed so callers that
+// build their own transports outside of NewHTTPClient can opt into the
+// same env-gated instrumentation without duplicating the gating logic.
+func WrapWithOTel(rt http.RoundTripper) http.RoundTripper {
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+		return rt
+	}
+	return otelhttp.NewTransport(rt)
 }
 
 type userAgentTransport struct {

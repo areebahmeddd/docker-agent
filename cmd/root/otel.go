@@ -10,6 +10,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
@@ -64,6 +65,14 @@ func initOTelSDK(ctx context.Context) (err error) {
 
 	tp := trace.NewTracerProvider(tracerProviderOpts...)
 	otel.SetTracerProvider(tp)
+
+	// Propagator must be set so otelhttp injects W3C traceparent on
+	// outbound requests and extracts it from incoming ones. Without this
+	// the SDK records spans locally but they never chain across services.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
 	go func() {
 		<-ctx.Done()
