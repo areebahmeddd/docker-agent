@@ -1,0 +1,160 @@
+package chatserver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/team"
+	"github.com/docker/docker-agent/pkg/tools"
+)
+
+// agentPolicy decides which agent in a team is exposed by the server and
+// which one to run for a given request. It is built once at startup and is
+// read-only thereafter, so it's safe to share across goroutines.
+type agentPolicy struct {
+	// exposed is the list of agent names advertised on /v1/models.
+	exposed []string
+	// fallback is used when the request's "model" field doesn't match any
+	// exposed agent (so we don't fail when clients hard-code "gpt-4").
+	fallback string
+}
+
+// newAgentPolicy validates the requested agent name against the team and
+// returns the selection policy. If agentName is empty, every agent in the
+// team is exposed and the team's default agent is used as fallback.
+// Otherwise only that one agent is exposed and used.
+func newAgentPolicy(t *team.Team, agentName string) (agentPolicy, error) {
+	if agentName != "" {
+		if !slices.Contains(t.AgentNames(), agentName) {
+			return agentPolicy{}, fmt.Errorf("agent %q not found", agentName)
+		}
+		return agentPolicy{exposed: []string{agentName}, fallback: agentName}, nil
+	}
+	a, err := t.DefaultAgent()
+	if err != nil {
+		return agentPolicy{}, fmt.Errorf("resolving default agent: %w", err)
+	}
+	return agentPolicy{exposed: t.AgentNames(), fallback: a.Name()}, nil
+}
+
+// pick returns the agent name to use for a request. The "model" field is
+// honoured when it matches an exposed agent; otherwise we silently fall
+// back, mirroring how OpenAI's API behaves with unknown model strings on
+// some compatible servers.
+func (p agentPolicy) pick(model string) string {
+	if model != "" && slices.Contains(p.exposed, model) {
+		return model
+	}
+	return p.fallback
+}
+
+// buildSession converts an OpenAI-style message history into a docker-agent
+// session. System messages are added as system context, prior user/
+// assistant/tool turns are replayed verbatim so the agent sees the full
+// conversation, and the latest user message becomes the prompt.
+//
+// Tool approval and non-interactive mode are forced on: this is a headless
+// HTTP endpoint, there's no human in the loop to approve anything.
+//
+// Returns nil when the history contains no usable user message, in which
+// case the caller should reject the request.
+func buildSession(messages []ChatCompletionMessage) *session.Session {
+	sess := session.New(
+		session.WithToolsApproved(true),
+		session.WithNonInteractive(true),
+	)
+
+	hasUser := false
+	for _, m := range messages {
+		content := m.Content
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(m.Role)) {
+		case "system":
+			sess.AddMessage(session.SystemMessage(content))
+		case "assistant":
+			sess.AddMessage(&session.Message{Message: chat.Message{
+				Role:    chat.MessageRoleAssistant,
+				Content: content,
+			}})
+		case "tool":
+			sess.AddMessage(&session.Message{Message: chat.Message{
+				Role:       chat.MessageRoleTool,
+				Content:    content,
+				ToolCallID: m.ToolCallID,
+			}})
+		default:
+			// user, developer, or any other role: feed it to the agent
+			// as user input rather than rejecting the request.
+			sess.AddMessage(session.UserMessage(content))
+			hasUser = true
+		}
+	}
+
+	if !hasUser {
+		return nil
+	}
+	return sess
+}
+
+// runAgentLoop drives the runtime to completion, forwarding assistant
+// content to emit (which may be nil for non-streaming mode).
+//
+// The session is built with ToolsApproved=true and NonInteractive=true,
+// which means the runtime auto-approves tool calls and auto-stops on
+// max-iterations. The handler cases below are intentionally kept as
+// defence-in-depth: if those session settings ever drift, this handler
+// still won't hang the request. Elicitation is the exception — the
+// runtime always blocks until we respond, so its case is required for
+// correctness, not just defence.
+//
+// The first error reported by the runtime is surfaced; later events in
+// the same run are still drained so the runtime can shut down cleanly.
+func runAgentLoop(ctx context.Context, rt runtime.Runtime, sess *session.Session, emit func(string)) error {
+	var runErr error
+	for ev := range rt.RunStream(ctx, sess) {
+		switch e := ev.(type) {
+		case *runtime.AgentChoiceEvent:
+			if emit != nil {
+				emit(e.Content)
+			}
+		case *runtime.ToolCallConfirmationEvent:
+			// Defensive: should never fire while ToolsApproved=true.
+			rt.Resume(ctx, runtime.ResumeApprove())
+		case *runtime.ElicitationRequestEvent:
+			// Required: the runtime blocks until we respond, regardless
+			// of NonInteractive. Decline so the tool call fails fast.
+			_ = rt.ResumeElicitation(ctx, tools.ElicitationActionDecline, nil)
+		case *runtime.MaxIterationsReachedEvent:
+			// Defensive: in non-interactive mode the runtime already
+			// stops on its own and this Resume is dropped.
+			rt.Resume(ctx, runtime.ResumeReject(""))
+		case *runtime.ErrorEvent:
+			if runErr == nil {
+				runErr = errors.New(e.Error)
+			}
+		}
+	}
+	return runErr
+}
+
+// sessionUsage extracts approximate token usage from a completed session,
+// returning nil when nothing is known so we can omit the field entirely
+// rather than reporting zeroes.
+func sessionUsage(sess *session.Session) *ChatCompletionUsage {
+	if sess.InputTokens == 0 && sess.OutputTokens == 0 {
+		return nil
+	}
+	return &ChatCompletionUsage{
+		PromptTokens:     sess.InputTokens,
+		CompletionTokens: sess.OutputTokens,
+		TotalTokens:      sess.InputTokens + sess.OutputTokens,
+	}
+}
