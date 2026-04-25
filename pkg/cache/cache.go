@@ -121,14 +121,10 @@ func (c *cache) Store(question, response string) {
 	key := c.normalize(question)
 
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.entries[key] = response
-	var snapshot map[string]string
 	if c.persist != nil {
-		snapshot = maps.Clone(c.entries)
-	}
-	c.mu.Unlock()
-
-	if c.persist != nil {
+		snapshot := maps.Clone(c.entries)
 		c.persist(snapshot)
 	}
 }
@@ -220,6 +216,6 @@ func syncDir(dir string) {
 	if err != nil {
 		return
 	}
+	defer d.Close()
 	_ = d.Sync()
-	_ = d.Close()
 }

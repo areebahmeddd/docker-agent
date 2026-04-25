@@ -174,6 +174,12 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 			cachePath := agentConfig.Cache.Path
 			if cachePath != "" && !filepath.IsAbs(cachePath) {
 				cachePath = filepath.Join(parentDir, cachePath)
+				cachePath = filepath.Clean(cachePath)
+				// Ensure the resolved path is within parentDir to prevent path traversal
+				cleanParent := filepath.Clean(parentDir) + string(filepath.Separator)
+				if !strings.HasPrefix(cachePath+string(filepath.Separator), cleanParent) {
+					return nil, fmt.Errorf("agent %q: cache path %q escapes parent directory", agentConfig.Name, agentConfig.Cache.Path)
+				}
 			}
 			c, err := cache.New(cache.Config{
 				Enabled:       true,
