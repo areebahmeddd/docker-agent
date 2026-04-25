@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -367,5 +368,56 @@ func TestCallbackServer_RejectsCallbackBeforeStateSet(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d — callback accepted without expected state set", resp.StatusCode)
+	}
+}
+
+// TestOAuthTransport_NonInteractiveCtxSkipsElicitation verifies that when
+// the request context is marked non-interactive (via WithoutInteractivePrompts),
+// a 401 with WWW-Authenticate does NOT trigger the OAuth flow. Instead the
+// transport returns a recognisable AuthorizationRequiredError, so callers can
+// surface a deferred-auth notice without the goroutine getting stuck on a
+// dialog the UI is not yet ready to show.
+//
+// We deliberately leave the transport's `client` field nil: in non-interactive
+// mode the short-circuit must happen before anything in the OAuth flow
+// (which would dereference `client` to send an elicitation) is reached. A
+// nil-pointer panic here would be a clear, loud signal that the contract
+// is broken.
+//
+// Regression test for: "docker agent run ./examples/slack.yaml" hanging
+// during startup, with Ctrl-C unable to interrupt because the OAuth
+// elicitation was synchronously waiting on a TUI prompt that hadn't been
+// rendered yet.
+func TestOAuthTransport_NonInteractiveCtxSkipsElicitation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource="https://example.test/.well-known/oauth-protected-resource"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	transport := &oauthTransport{
+		base:       http.DefaultTransport,
+		tokenStore: NewInMemoryTokenStore(),
+		baseURL:    srv.URL,
+		// client intentionally left nil — see test comment above.
+	}
+
+	ctx := WithoutInteractivePrompts(t.Context())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, gotErr := transport.RoundTrip(req)
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	if gotErr == nil {
+		t.Fatalf("expected an error in non-interactive mode, got resp=%v err=nil", resp)
+	}
+	if !IsAuthorizationRequired(gotErr) {
+		t.Errorf("expected IsAuthorizationRequired(err)=true, got err=%v", gotErr)
 	}
 }

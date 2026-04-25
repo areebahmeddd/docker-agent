@@ -40,8 +40,12 @@ func newRemoteClient(url, transportType string, headers map[string]string, token
 }
 
 func (c *remoteMCPClient) Initialize(ctx context.Context, _ *gomcp.InitializeRequest) (*gomcp.InitializeResult, error) {
-	// Create HTTP client with OAuth support
-	httpClient := c.createHTTPClient()
+	// Create HTTP client with OAuth support. We keep a reference to the
+	// oauthTransport so we can recognise the deferred-OAuth case (the
+	// transport returned an AuthorizationRequiredError because the request
+	// context disallowed prompts) and re-emit a clean
+	// AuthorizationRequiredError that callers can detect with errors.As.
+	httpClient, oauthT := c.createHTTPClient()
 
 	var transport gomcp.Transport
 
@@ -80,13 +84,30 @@ func (c *remoteMCPClient) Initialize(ctx context.Context, _ *gomcp.InitializeReq
 	// Connect to the MCP server
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to MCP server: %w", err)
+		return nil, enrichConnectError(err, oauthT)
 	}
 
 	c.setSession(session)
 
 	slog.Debug("Remote MCP client connected successfully")
 	return session.InitializeResult(), nil
+}
+
+// enrichConnectError wraps the error returned by client.Connect so callers
+// can distinguish the deferred-OAuth case from a real failure.
+//
+// The MCP SDK uses fmt.Errorf("%w: %v", …) when it surfaces transport errors,
+// which means the original error is included as text only — not in the unwrap
+// chain — so we can't rely on errors.As against the SDK-wrapped error.
+// Instead we read the deferred-auth flag back off the transport and re-emit
+// a clean AuthorizationRequiredError.
+//
+// Pre: err != nil and t != nil; only called from the Connect failure path.
+func enrichConnectError(err error, t *oauthTransport) error {
+	if t.authorizationRequired() {
+		return &AuthorizationRequiredError{URL: t.baseURL}
+	}
+	return fmt.Errorf("failed to connect to MCP server: %w", err)
 }
 
 // SetManagedOAuth sets whether OAuth should be handled in managed mode.
@@ -100,12 +121,16 @@ func (c *remoteMCPClient) SetManagedOAuth(managed bool) {
 // createHTTPClient creates an HTTP client with custom headers and OAuth support.
 // Header values may contain ${headers.NAME} placeholders that are resolved
 // at request time from upstream headers stored in the request context.
-func (c *remoteMCPClient) createHTTPClient() *http.Client {
-	transport := c.headerTransport()
+//
+// The oauthTransport is returned alongside the client so callers can inspect
+// the transport's state (e.g. whether OAuth was deferred) when Connect()
+// returns and we need to surface the actual cause of the failure.
+func (c *remoteMCPClient) createHTTPClient() (*http.Client, *oauthTransport) {
+	base := c.headerTransport()
 
 	// Then wrap with OAuth support
-	transport = &oauthTransport{
-		base:        transport,
+	oauthT := &oauthTransport{
+		base:        base,
 		client:      c,
 		tokenStore:  c.tokenStore,
 		baseURL:     c.url,
@@ -113,9 +138,7 @@ func (c *remoteMCPClient) createHTTPClient() *http.Client {
 		oauthConfig: c.oauthConfig,
 	}
 
-	return &http.Client{
-		Transport: transport,
-	}
+	return &http.Client{Transport: oauthT}, oauthT
 }
 
 func (c *remoteMCPClient) headerTransport() http.RoundTripper {

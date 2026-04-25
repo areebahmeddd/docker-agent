@@ -184,11 +184,18 @@ type oauthTransport struct {
 	managed     bool
 	oauthConfig *latest.RemoteOAuthConfig
 
-	// mu protects refreshFailedAt from concurrent access.
+	// mu protects refreshFailedAt and lastAuthRequired from concurrent access.
 	mu sync.Mutex
 	// refreshFailedAt tracks the last time a silent token refresh failed,
 	// so we avoid retrying on every request.
 	refreshFailedAt time.Time
+	// lastAuthRequired records when the transport short-circuited an
+	// interactive OAuth flow because the request context disallowed
+	// prompts (see WithoutInteractivePrompts). The MCP SDK wraps transport
+	// errors with %v, breaking errors.As, so callers must use this field
+	// instead of unwrapping to know that OAuth was deferred rather than
+	// failed for some other reason.
+	lastAuthRequired bool
 }
 
 func (t *oauthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -221,6 +228,22 @@ func (t *oauthTransport) roundTrip(req *http.Request, isRetry bool) (*http.Respo
 	if resp.StatusCode == http.StatusUnauthorized && !isRetry {
 		wwwAuth := resp.Header.Get("WWW-Authenticate")
 		if wwwAuth != "" {
+			// If the caller asked for non-interactive operation (e.g. the
+			// runtime is populating sidebar tool counts during startup),
+			// don't block on an OAuth elicitation that the TUI is not yet
+			// ready to surface. Surface a recognisable error instead so
+			// the toolset can be flagged "needs auth" without freezing
+			// the agent and without making Ctrl-C wait for a user response
+			// that will never come.
+			if !interactivePromptsAllowed(req.Context()) {
+				slog.Debug("Skipping OAuth elicitation in non-interactive context", "url", t.baseURL)
+				resp.Body.Close()
+				t.mu.Lock()
+				t.lastAuthRequired = true
+				t.mu.Unlock()
+				return nil, &AuthorizationRequiredError{URL: t.baseURL}
+			}
+
 			resp.Body.Close()
 
 			authServer := req.URL.Scheme + "://" + req.URL.Host
@@ -237,6 +260,16 @@ func (t *oauthTransport) roundTrip(req *http.Request, isRetry bool) (*http.Respo
 	}
 
 	return resp, nil
+}
+
+// authorizationRequired reports whether the transport short-circuited an
+// interactive OAuth flow because the request context disallowed prompts.
+// Callers can use this to recognise the deferred-OAuth case even though
+// the MCP SDK destroys the underlying error chain by wrapping with %v.
+func (t *oauthTransport) authorizationRequired() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastAuthRequired
 }
 
 // getValidToken returns a non-expired token for the server, silently refreshing

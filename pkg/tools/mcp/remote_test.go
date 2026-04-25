@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -178,5 +179,50 @@ func TestRemoteClientEmptyHeaders(t *testing.T) {
 		require.NotNil(t, capturedRequest, "Request should have been captured")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Server did not receive request within timeout")
+	}
+}
+
+// TestInitialize_NonInteractiveCtxDefersOAuthAndDoesNotBlock verifies that
+// when Initialize runs against a server that requires OAuth (responds with
+// 401 + WWW-Authenticate) under a context flagged with
+// WithoutInteractivePrompts, the call:
+//
+//   - returns promptly,
+//   - returns an error that satisfies IsAuthorizationRequired,
+//   - never opens a callback HTTP server (i.e. doesn't try to bind a port).
+//
+// Regression test for: "docker agent run ./examples/slack.yaml" hanging
+// during startup. The TUI was not yet ready to render the OAuth dialog,
+// the elicitation goroutine was blocked on a synchronous channel send,
+// and Ctrl-C couldn't reach it.
+func TestInitialize_NonInteractiveCtxDefersOAuthAndDoesNotBlock(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource="https://example.test/.well-known/oauth-protected-resource"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	client := newRemoteClient(server.URL, "streamable", nil, NewInMemoryTokenStore(), nil)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	nonInteractiveCtx := WithoutInteractivePrompts(ctx)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Initialize(nonInteractiveCtx, nil)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err, "Initialize should fail with a deferred-auth error in non-interactive ctx")
+		assert.True(t, IsAuthorizationRequired(err),
+			"non-interactive Initialize should return IsAuthorizationRequired, got: %v", err)
+	case <-ctx.Done():
+		t.Fatalf("Initialize blocked for too long; non-interactive ctx must short-circuit OAuth: %v", ctx.Err())
 	}
 }
