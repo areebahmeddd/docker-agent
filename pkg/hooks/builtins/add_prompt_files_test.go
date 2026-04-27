@@ -1,4 +1,4 @@
-package session
+package builtins
 
 import (
 	"os"
@@ -18,7 +18,7 @@ func TestReadPromptFiles(t *testing.T) {
 	err := os.WriteFile(filepath.Join(dir, filename), []byte("content"), 0o644)
 	require.NoError(t, err)
 
-	additionalPrompts, err := ReadPromptFiles(dir, filename)
+	additionalPrompts, err := readPromptFiles(dir, filename)
 	require.NoError(t, err)
 	require.Len(t, additionalPrompts, 1)
 	assert.Equal(t, "content", additionalPrompts[0])
@@ -37,7 +37,7 @@ func TestReadPromptFilesParent(t *testing.T) {
 	err = os.Mkdir(child, 0o755)
 	require.NoError(t, err)
 
-	additionalPrompts, err := ReadPromptFiles(child, filename)
+	additionalPrompts, err := readPromptFiles(child, filename)
 	require.NoError(t, err)
 	require.Len(t, additionalPrompts, 1)
 	assert.Equal(t, "content", additionalPrompts[0])
@@ -59,7 +59,7 @@ func TestReadPromptFilesReadFirst(t *testing.T) {
 	err = os.WriteFile(filepath.Join(child, filename), []byte("child"), 0o644)
 	require.NoError(t, err)
 
-	additionalPrompts, err := ReadPromptFiles(child, filename)
+	additionalPrompts, err := readPromptFiles(child, filename)
 	require.NoError(t, err)
 	require.Len(t, additionalPrompts, 1)
 	assert.Equal(t, "child", additionalPrompts[0])
@@ -72,7 +72,7 @@ func TestReadNoPromptFiles(t *testing.T) {
 	// Use a unique filename that won't exist anywhere
 	filename := "test_prompt_nonexistent_12345.md"
 
-	additionalPrompts, err := ReadPromptFiles(dir, filename)
+	additionalPrompts, err := readPromptFiles(dir, filename)
 	require.NoError(t, err)
 	assert.Empty(t, additionalPrompts)
 }
@@ -109,7 +109,7 @@ func TestReadPromptFilesFromWorkDirAndHome(t *testing.T) {
 		})
 	}
 
-	additionalPrompts, err := ReadPromptFiles(workDir, filename)
+	additionalPrompts, err := readPromptFiles(workDir, filename)
 	require.NoError(t, err)
 	require.Len(t, additionalPrompts, 2)
 	assert.Equal(t, "workdir content", additionalPrompts[0])
@@ -146,7 +146,7 @@ func TestReadPromptFilesFromHomeOnly(t *testing.T) {
 		})
 	}
 
-	additionalPrompts, err := ReadPromptFiles(workDir, filename)
+	additionalPrompts, err := readPromptFiles(workDir, filename)
 	require.NoError(t, err)
 	require.Len(t, additionalPrompts, 1)
 	assert.Equal(t, "home content", additionalPrompts[0])
@@ -179,7 +179,7 @@ func TestReadPromptFilesDeduplication(t *testing.T) {
 	}
 
 	// When working directory is home, should only return one result
-	additionalPrompts, err := ReadPromptFiles(homeDir, filename)
+	additionalPrompts, err := readPromptFiles(homeDir, filename)
 	require.NoError(t, err)
 	require.Len(t, additionalPrompts, 1)
 	assert.Equal(t, "home content", additionalPrompts[0])
