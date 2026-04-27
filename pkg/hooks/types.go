@@ -41,20 +41,18 @@ const (
 	EventOnMaxIterations EventType = "on_max_iterations"
 )
 
-// HookType values populate [Hook.Type]. It is an alias for string so a
-// hook authored in YAML round-trips through [latest.HookDefinition]
-// without any conversion; the executor validates the value at registry
-// lookup time.
-type HookType = string
-
-const (
-	// HookTypeCommand runs a shell command.
-	HookTypeCommand HookType = "command"
-	// HookTypeBuiltin dispatches to a named in-process Go function
-	// registered via [Registry.RegisterBuiltin]. The name is stored in
-	// [Hook.Command].
-	HookTypeBuiltin HookType = "builtin"
-)
+// consumesContext reports whether the runtime emit site for e routes
+// [Result.AdditionalContext] somewhere meaningful (a system message, a
+// transient turn_start prompt, ...). For observational events it is
+// silently dropped, so plain stdout from a hook is also discarded for
+// those.
+func (e EventType) consumesContext() bool {
+	switch e {
+	case EventSessionStart, EventTurnStart, EventPostToolUse, EventStop:
+		return true
+	}
+	return false
+}
 
 // Input is the JSON-serializable payload passed to hooks via stdin.
 type Input struct {

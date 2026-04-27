@@ -14,8 +14,7 @@ import (
 // short names it always used, while the single source of truth (and
 // the YAML/JSON tags, the validate() method, and IsEmpty) lives next
 // to the schema in pkg/config/latest. Adding a new event is a one-line
-// change on [latest.HooksConfig] plus one line in the executor's
-// compile loop.
+// change on [latest.HooksConfig] plus one line in compileEvents.
 type (
 	// Config is the hooks configuration for an agent.
 	Config = latest.HooksConfig
@@ -26,4 +25,19 @@ type (
 	// MatcherConfig pairs a tool-name regex with the hooks to run when
 	// it matches (used by EventPreToolUse and EventPostToolUse).
 	MatcherConfig = latest.HookMatcherConfig
+)
+
+// HookType values populate [Hook.Type]. It is an alias for string so
+// hooks authored in YAML round-trip through [latest.HookDefinition]
+// without any conversion; the executor validates the value at registry
+// lookup time.
+type HookType = string
+
+const (
+	// HookTypeCommand runs a shell command.
+	HookTypeCommand HookType = "command"
+	// HookTypeBuiltin dispatches to a named in-process Go function
+	// registered via [Registry.RegisterBuiltin]. The name is stored in
+	// [Hook.Command].
+	HookTypeBuiltin HookType = "builtin"
 )

@@ -22,12 +22,14 @@ type Executor struct {
 	registry   *Registry
 	// events maps each event to its compiled matcher list. Flat events
 	// (everything except pre/post_tool_use) are stored as a single
-	// matcher with an empty pattern, unifying the dispatch path.
+	// matcher with a nil pattern, unifying the dispatch path.
 	events map[EventType][]matcher
 }
 
-// matcher is the compiled form of a [MatcherConfig]: an optional regex
-// pattern (nil means "match all") and the hooks to fire when it matches.
+// matcher is the compiled form of a [MatcherConfig]: a tool-name regex
+// plus the hooks to fire when it matches. A nil pattern matches every
+// tool — both "" and "*" matchers compile to nil, as do flat events
+// where the tool-name dimension doesn't apply.
 type matcher struct {
 	pattern *regexp.Regexp
 	hooks   []Hook
@@ -35,15 +37,6 @@ type matcher struct {
 
 func (m *matcher) matches(toolName string) bool {
 	return m.pattern == nil || m.pattern.MatchString(toolName)
-}
-
-// hookResult is the outcome of a single hook invocation.
-type hookResult struct {
-	output   *Output
-	stdout   string
-	stderr   string
-	exitCode int
-	err      error
 }
 
 // NewExecutor creates a new hook executor backed by [DefaultRegistry].
@@ -188,6 +181,17 @@ func dedupKey(h Hook) string {
 	return b.String()
 }
 
+// hookResult is the outcome of a single hook invocation: the raw
+// [HandlerResult] reported by the handler plus a post-execution err
+// (factory failure, timeout, exec error). When err is non-nil the
+// handler-reported fields are reset to a uniform "did not run"
+// representation so [aggregate] can rely on the err alone.
+type hookResult struct {
+	HandlerResult
+
+	err error
+}
+
 // runHook resolves the hook's [HookType] in the registry, applies its
 // timeout, and returns the structured outcome. JSON-on-stdout is parsed
 // into [Output] when the handler didn't already provide one.
@@ -205,7 +209,7 @@ func (e *Executor) runHook(ctx context.Context, hook Hook, inputJSON []byte) hoo
 	defer cancel()
 
 	res, err := handler.Run(timeoutCtx, inputJSON)
-	r := hookResult{stdout: res.Stdout, stderr: res.Stderr, exitCode: res.ExitCode, output: res.Output}
+	r := hookResult{HandlerResult: res}
 
 	// Normalize timeout/cancellation: handler error types vary, so we
 	// rewrite to a uniform error so PreToolUse fails closed cleanly.
@@ -214,40 +218,33 @@ func (e *Executor) runHook(ctx context.Context, hook Hook, inputJSON []byte) hoo
 		if errors.Is(ctxErr, context.DeadlineExceeded) {
 			reason = fmt.Sprintf("timed out after %s", hook.GetTimeout())
 		}
-		r.err = fmt.Errorf("hook %q %s: %w", hook.Command, reason, ctxErr)
-		r.exitCode = -1
-		r.output = nil
-		return r
+		return hookResult{err: fmt.Errorf("hook %q %s: %w", hook.Command, reason, ctxErr)}
 	}
 	if err != nil {
-		r.err = err
-		r.exitCode = -1
-		r.output = nil
-		return r
+		return hookResult{err: err}
 	}
 
 	// Fall back to the legacy "parse JSON from stdout" protocol.
-	if r.output == nil && r.exitCode == 0 && r.stdout != "" {
-		s := strings.TrimSpace(r.stdout)
-		if strings.HasPrefix(s, "{") {
-			var parsed Output
-			if jerr := json.Unmarshal([]byte(s), &parsed); jerr == nil {
-				r.output = &parsed
-			}
-		}
+	if r.Output == nil && r.ExitCode == 0 {
+		r.Output = parseStdoutJSON(r.Stdout)
 	}
 	return r
 }
 
-// contextEvents are the events whose runtime emit sites consume
-// Result.AdditionalContext. Plain stdout from a hook is routed there
-// for these events; for observational events it is silently dropped to
-// avoid the impression that it mattered.
-var contextEvents = map[EventType]bool{
-	EventSessionStart: true,
-	EventTurnStart:    true,
-	EventPostToolUse:  true,
-	EventStop:         true,
+// parseStdoutJSON returns a parsed [Output] when stdout begins with '{'
+// and decodes cleanly, or nil otherwise. Used for the legacy "JSON on
+// stdout" hook protocol where handlers don't pre-populate
+// [HandlerResult.Output].
+func parseStdoutJSON(stdout string) *Output {
+	s := strings.TrimSpace(stdout)
+	if !strings.HasPrefix(s, "{") {
+		return nil
+	}
+	var parsed Output
+	if err := json.Unmarshal([]byte(s), &parsed); err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 // aggregate combines per-hook results into a single [Result].
@@ -263,36 +260,36 @@ func aggregate(results []hookResult, event EventType) *Result {
 				slog.Warn("PreToolUse hook failed to execute; denying tool call", "error", r.err)
 				final.Allowed = false
 				final.ExitCode = -1
-				final.Stderr = r.stderr
+				final.Stderr = r.Stderr
 				messages = append(messages, fmt.Sprintf("PreToolUse hook failed to execute: %v", r.err))
 			} else {
 				slog.Warn("Hook execution error", "error", r.err)
 			}
 			continue
 
-		case r.exitCode == 2:
+		case r.ExitCode == 2:
 			final.Allowed = false
 			final.ExitCode = 2
-			if r.stderr != "" {
-				final.Stderr = r.stderr
-				messages = append(messages, strings.TrimSpace(r.stderr))
+			if r.Stderr != "" {
+				final.Stderr = r.Stderr
+				messages = append(messages, strings.TrimSpace(r.Stderr))
 			}
 			continue
 
-		case r.exitCode != 0:
-			slog.Debug("Hook returned non-zero exit code", "exit_code", r.exitCode, "stderr", r.stderr)
+		case r.ExitCode != 0:
+			slog.Debug("Hook returned non-zero exit code", "exit_code", r.ExitCode, "stderr", r.Stderr)
 			continue
 
-		case r.output == nil:
+		case r.Output == nil:
 			// Plain stdout becomes AdditionalContext only for events
 			// whose runtime consumes it.
-			if r.stdout != "" && contextEvents[event] {
-				contexts = append(contexts, strings.TrimSpace(r.stdout))
+			if r.Stdout != "" && event.consumesContext() {
+				contexts = append(contexts, strings.TrimSpace(r.Stdout))
 			}
 			continue
 		}
 
-		out := r.output
+		out := r.Output
 		if !out.ShouldContinue() {
 			final.Allowed = false
 			if out.StopReason != "" {
