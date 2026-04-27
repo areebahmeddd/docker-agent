@@ -304,10 +304,8 @@ func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) (
 				if len(contentBlocks) > 0 {
 					anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(contentBlocks...))
 				}
-			} else {
-				if strings.TrimSpace(msg.Content) != "" {
-					anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Content)))
-				}
+			} else if strings.TrimSpace(msg.Content) != "" {
+				anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Content)))
 			}
 			continue
 		}
