@@ -285,7 +285,7 @@ func (r *LocalRuntime) tryModelWithFallback(
 				}
 			}
 
-			res, err := r.handleStream(ctx, stream, a, agentTools, sess, m, events)
+			res, err := handleStream(ctx, stream, a, agentTools, sess, m, events)
 			if err != nil {
 				lastErr = err
 
