@@ -17,6 +17,15 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
+// nowFn returns the current time. Indirected through a package-level variable
+// so that tests can install a deterministic clock via setNowForTest.
+var nowFn = time.Now
+
+// newIDFn returns a fresh session ID. Indirected through a package-level
+// variable so that tests can install a deterministic ID generator via
+// setIDForTest.
+var newIDFn = func() string { return uuid.New().String() }
+
 const (
 	// DefaultMaxOldToolCallTokens is the default maximum number of tokens to keep from tool call
 	// arguments and results. Older tool calls beyond this budget will have their
@@ -212,7 +221,7 @@ func UserMessage(content string, multiContent ...chat.MessagePart) *Message {
 			Role:         chat.MessageRoleUser,
 			Content:      content,
 			MultiContent: multiContent,
-			CreatedAt:    time.Now().Format(time.RFC3339),
+			CreatedAt:    nowFn().Format(time.RFC3339),
 		},
 	}
 }
@@ -229,7 +238,7 @@ func SystemMessage(content string) *Message {
 		Message: chat.Message{
 			Role:      chat.MessageRoleSystem,
 			Content:   content,
-			CreatedAt: time.Now().Format(time.RFC3339),
+			CreatedAt: nowFn().Format(time.RFC3339),
 		},
 	}
 }
@@ -721,8 +730,8 @@ func (s *Session) OwnCost() float64 {
 // New creates a new agent session
 func New(opts ...Opt) *Session {
 	s := &Session{
-		ID:              uuid.New().String(),
-		CreatedAt:       time.Now(),
+		ID:              newIDFn(),
+		CreatedAt:       nowFn(),
 		SendUserMessage: true,
 	}
 
@@ -843,7 +852,7 @@ func buildSessionSummaryMessages(items []Item) ([]chat.Message, int) {
 		messages = append(messages, chat.Message{
 			Role:      chat.MessageRoleUser,
 			Content:   "Session Summary: " + items[lastSummaryIndex].Summary,
-			CreatedAt: time.Now().Format(time.RFC3339),
+			CreatedAt: nowFn().Format(time.RFC3339),
 		})
 	}
 
