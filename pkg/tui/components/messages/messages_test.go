@@ -1184,3 +1184,36 @@ func TestBindingsExcludesEditKeyWhenAssistantMessageSelected(t *testing.T) {
 	}
 	assert.False(t, foundE, "Bindings should NOT include 'e' key when assistant message is selected")
 }
+
+func TestKeyGAndShiftGScrollMessagesView(t *testing.T) {
+	t.Parallel()
+
+	sessionState := &service.SessionState{}
+	m := NewScrollableView(80, 10, sessionState).(*model)
+	m.SetSize(80, 10)
+
+	// Add enough messages to require scrolling.
+	for i := range 20 {
+		content := "Message " + strconv.Itoa(i) + ": " + strings.Repeat("line\n", 5)
+		msg := types.Agent(types.MessageTypeAssistant, "root", content)
+		m.messages = append(m.messages, msg)
+		m.views = append(m.views, m.createMessageView(msg))
+	}
+
+	// Select the messages view.
+	m.Focus()
+
+	// Render once to compute layout (auto-scrolls to the bottom).
+	m.View()
+	require.Positive(t, m.scrollOffset, "precondition: should not start at the top")
+
+	// 'g' jumps to the very top of the view.
+	m.Update(tea.KeyPressMsg{Code: 'g'})
+	assert.Equal(t, 0, m.scrollOffset, "g should scroll to the top")
+
+	// 'G' jumps back to the very bottom of the view.
+	m.Update(tea.KeyPressMsg{Code: 'G'})
+	m.View() // apply scroll clamp
+	wantOffset := max(0, m.totalScrollableHeight()-m.height)
+	assert.Equal(t, wantOffset, m.scrollOffset, "G should scroll to the bottom")
+}
