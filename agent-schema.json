@@ -574,6 +574,13 @@
           "items": {
             "$ref": "#/definitions/HookDefinition"
           }
+        },
+        "on_session_resume": {
+          "type": "array",
+          "description": "Hooks that run when the user explicitly approves the runtime to continue past its configured max_iterations limit. Receives previous_max_iterations and new_max_iterations in the input. Observational; useful for alerting on extended-runtime sessions or for billing/quota pipelines that meter resumes.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
         }
       },
       "additionalProperties": false

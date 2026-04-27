@@ -201,6 +201,20 @@ func (r *LocalRuntime) executeOnAgentSwitchHooks(ctx context.Context, a *agent.A
 	}, nil)
 }
 
+// executeOnSessionResumeHooks fires on_session_resume when the user
+// explicitly approves continuation past the configured
+// max_iterations limit. Observational; failures are logged. The hook
+// runs alongside the existing event-channel signalling so audit /
+// quota / alerting pipelines can react without subscribing to the
+// per-session channel.
+func (r *LocalRuntime) executeOnSessionResumeHooks(ctx context.Context, a *agent.Agent, sessionID string, prevMax, newMax int) {
+	r.dispatchHook(ctx, a, hooks.EventOnSessionResume, &hooks.Input{
+		SessionID:             sessionID,
+		PreviousMaxIterations: prevMax,
+		NewMaxIterations:      newMax,
+	}, nil)
+}
+
 // executeBeforeLLMCallHooks fires before_llm_call just before each
 // model call. A terminating verdict (decision="block" / continue=false
 // / exit 2) stops the run loop — see [hooks.EventBeforeLLMCall] for

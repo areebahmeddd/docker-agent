@@ -53,6 +53,11 @@ const (
 	// agent ran which tools without subscribing to the runtime event
 	// channel.
 	EventOnAgentSwitch EventType = "on_agent_switch"
+	// EventOnSessionResume fires when the user explicitly approves the
+	// runtime to continue past its configured max_iterations limit.
+	// Observational; useful for alerting on extended-runtime sessions
+	// or for pipelines that bill / quota-track per resume.
+	EventOnSessionResume EventType = "on_session_resume"
 )
 
 // consumesContext reports whether the runtime emit site for e routes
@@ -100,6 +105,14 @@ type Input struct {
 	FromAgent       string `json:"from_agent,omitempty"`
 	ToAgent         string `json:"to_agent,omitempty"`
 	AgentSwitchKind string `json:"agent_switch_kind,omitempty"`
+
+	// OnSessionResume specific: the iteration cap that was reached
+	// (PreviousMaxIterations) and the new cap after the user approved
+	// continuation (NewMaxIterations). Carrying both lets audit
+	// pipelines compute how much extra runtime was granted without
+	// reconstructing it from the iteration counter.
+	PreviousMaxIterations int `json:"previous_max_iterations,omitempty"`
+	NewMaxIterations      int `json:"new_max_iterations,omitempty"`
 }
 
 // ToJSON serializes the input.

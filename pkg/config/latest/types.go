@@ -1676,6 +1676,11 @@ type HooksConfig struct {
 	// after a transferred task completes. Observational; useful for
 	// audit, transcript, and metrics pipelines.
 	OnAgentSwitch []HookDefinition `json:"on_agent_switch,omitempty" yaml:"on_agent_switch,omitempty"`
+
+	// OnSessionResume hooks run when the user explicitly approves the
+	// runtime to continue past its configured max_iterations limit.
+	// Observational; useful for alerting on extended-runtime sessions.
+	OnSessionResume []HookDefinition `json:"on_session_resume,omitempty" yaml:"on_session_resume,omitempty"`
 }
 
 // IsEmpty returns true if no hooks are configured
@@ -1695,7 +1700,8 @@ func (h *HooksConfig) IsEmpty() bool {
 		len(h.Notification) == 0 &&
 		len(h.OnError) == 0 &&
 		len(h.OnMaxIterations) == 0 &&
-		len(h.OnAgentSwitch) == 0
+		len(h.OnAgentSwitch) == 0 &&
+		len(h.OnSessionResume) == 0
 }
 
 // HookMatcherConfig represents a hook matcher with its hooks.
@@ -1832,6 +1838,13 @@ func (h *HooksConfig) validate() error {
 	// Validate OnAgentSwitch hooks
 	for i, hook := range h.OnAgentSwitch {
 		if err := hook.validate("on_agent_switch", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate OnSessionResume hooks
+	for i, hook := range h.OnSessionResume {
+		if err := hook.validate("on_session_resume", i); err != nil {
 			return err
 		}
 	}
