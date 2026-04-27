@@ -19,7 +19,6 @@ import (
 	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
-	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin"
 	bgagent "github.com/docker/docker-agent/pkg/tools/builtin/agent"
@@ -147,7 +146,7 @@ func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.S
 
 	r.executeOnUserInputHooks(ctx, sess.ID, "stream stopped")
 
-	telemetry.RecordSessionEnd(ctx)
+	r.telemetry.RecordSessionEnd(ctx)
 }
 
 // RunStream starts the agent's interaction loop and returns a channel of events.
@@ -160,7 +159,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 	events := make(chan Event, 128)
 
 	go func() {
-		telemetry.RecordSessionStart(ctx, r.CurrentAgentName(), sess.ID)
+		r.telemetry.RecordSessionStart(ctx, r.CurrentAgentName(), sess.ID)
 
 		ctx, sessionSpan := r.startSpan(ctx, "runtime.session", trace.WithAttributes(
 			attribute.String("agent", r.CurrentAgentName()),
@@ -463,7 +462,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				streamSpan.SetStatus(codes.Error, "error handling stream")
 				slog.Error("All models failed", "agent", a.Name(), "error", err)
 				// Track error in telemetry
-				telemetry.RecordError(ctx, err.Error())
+				r.telemetry.RecordError(ctx, err.Error())
 				errMsg := modelerrors.FormatError(err)
 				events <- Error(errMsg)
 				r.notifyError(ctx, a, sess.ID, errMsg)
@@ -730,7 +729,7 @@ func (r *LocalRuntime) getTools(ctx context.Context, a *agent.Agent, sessionSpan
 		slog.Error("Failed to get agent tools", "agent", a.Name(), "error", err)
 		sessionSpan.RecordError(err)
 		sessionSpan.SetStatus(codes.Error, "failed to get tools")
-		telemetry.RecordError(ctx, err.Error())
+		r.telemetry.RecordError(ctx, err.Error())
 		return nil, err
 	}
 

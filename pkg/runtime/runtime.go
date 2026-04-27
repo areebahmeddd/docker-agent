@@ -250,6 +250,13 @@ type LocalRuntime struct {
 	// CreatedAt, fallback cooldown windows, tool-call latency) goes through
 	// this hook so a single fake clock controls them all.
 	now func() time.Time
+
+	// telemetry receives the runtime's observability events (session
+	// start/end, tool calls, token usage, errors). Defaults to
+	// defaultTelemetry which forwards to pkg/telemetry. Tests can inject
+	// a recorder via WithTelemetry to assert the lifecycle without
+	// standing up an OTel pipeline.
+	telemetry Telemetry
 }
 
 type Opt func(*LocalRuntime)
@@ -333,6 +340,18 @@ func WithClock(now func() time.Time) Opt {
 	}
 }
 
+// WithTelemetry replaces the runtime's Telemetry sink. Defaults to a
+// pass-through to the package-level pkg/telemetry helpers. Tests pass a
+// recorder to assert that the runtime emitted the expected lifecycle
+// events without setting up an OTel client.
+func WithTelemetry(t Telemetry) Opt {
+	return func(r *LocalRuntime) {
+		if t != nil {
+			r.telemetry = t
+		}
+	}
+}
+
 // WithRetryOnRateLimit enables automatic retry with backoff for HTTP 429 (rate limit)
 // errors when no fallback models are available. When enabled, the runtime will honor
 // the Retry-After header from the provider's response to determine wait time before
@@ -379,6 +398,7 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		hooksRegistry:        hooksRegistry,
 		builtinsState:        builtinsState,
 		now:                  time.Now,
+		telemetry:            defaultTelemetry{},
 	}
 	r.bgAgents = agenttool.NewHandler(r)
 
