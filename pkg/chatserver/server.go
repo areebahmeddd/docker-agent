@@ -127,10 +127,11 @@ func Run(ctx context.Context, agentFilename string, opts Options, ln net.Listene
 
 	httpServer := &http.Server{
 		Handler: newRouter(&server{
-			team:          t,
-			policy:        policy,
-			conversations: newConversationStore(opts.ConversationsMaxSessions, conversationTTL(opts)),
-			runtimes:      newRuntimePool(t, opts.MaxIdleRuntimes),
+			team:              t,
+			policy:            policy,
+			conversations:     newConversationStore(opts.ConversationsMaxSessions, conversationTTL(opts)),
+			conversationLocks: newConversationLockSet(),
+			runtimes:          newRuntimePool(t, opts.MaxIdleRuntimes),
 		}, opts),
 		ReadHeaderTimeout: 30 * time.Second,
 	}
@@ -180,10 +181,11 @@ func serve(ctx context.Context, httpServer *http.Server, ln net.Listener) error 
 // runtime, so the only shared state is the team (whose toolsets are
 // independently safe to call) and the optional conversation cache.
 type server struct {
-	team          *team.Team
-	policy        agentPolicy
-	conversations *conversationStore
-	runtimes      *runtimePool
+	team              *team.Team
+	policy            agentPolicy
+	conversations     *conversationStore
+	conversationLocks *conversationLockSet
+	runtimes          *runtimePool
 }
 
 func newRouter(s *server, opts Options) http.Handler {
@@ -368,6 +370,11 @@ func (s *server) handleChatCompletions(c echo.Context) error {
 	}
 
 	conversationID := c.Request().Header.Get("X-Conversation-Id")
+	if !s.conversationLocks.tryAcquire(conversationID) {
+		return writeError(c, http.StatusConflict, "another request is already in flight for this conversation id")
+	}
+	defer s.conversationLocks.release(conversationID)
+
 	sess := s.resolveSession(conversationID, req.Messages)
 	if sess == nil {
 		return writeError(c, http.StatusBadRequest, "no user message provided")

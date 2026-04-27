@@ -20,7 +20,10 @@ func newTestServer(exposed ...string) (*server, *echo.Echo) {
 	if len(exposed) == 0 {
 		exposed = []string{"root"}
 	}
-	srv := &server{policy: agentPolicy{exposed: exposed, fallback: exposed[0]}}
+	srv := &server{
+		policy:            agentPolicy{exposed: exposed, fallback: exposed[0]},
+		conversationLocks: newConversationLockSet(),
+	}
 	e := echo.New()
 	return srv, e
 }

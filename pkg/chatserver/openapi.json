@@ -267,6 +267,14 @@
             }
           },
           "413": { "description": "Request body exceeds --max-request-size." },
+          "409": {
+            "description": "Another request with the same X-Conversation-Id is in flight. Retry sequentially.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
           "500": {
             "description": "Agent execution failed.",
             "content": {

@@ -280,6 +280,26 @@ func TestBearerAuthMiddleware(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletions_RejectsConcurrentSameConversation(t *testing.T) {
+	srv, _ := newTestServer("root")
+	r := newRouter(srv, Options{})
+
+	// Pre-acquire the conversation lock to simulate an in-flight
+	// request. The next request with the same id must get 409.
+	require.True(t, srv.conversationLocks.tryAcquire("conv-x"))
+	defer srv.conversationLocks.release("conv-x")
+
+	body := `{"messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Conversation-Id", "conv-x")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "another request is already in flight")
+}
+
 func TestBearerAuthMiddleware_AllowsCORSPreflight(t *testing.T) {
 	// CORS preflight must succeed without an Authorization header.
 	srv, _ := newTestServer("root")
