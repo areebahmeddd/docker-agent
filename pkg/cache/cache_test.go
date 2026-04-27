@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -204,7 +205,8 @@ func TestFileCache_persistenceFailureKeepsInMemory(t *testing.T) {
 }
 
 // TestFileCache_atomicWriteLeavesNoTempFiles verifies that the rename-based
-// atomic write does not leak temporary files on the happy path.
+// atomic write does not leak temporary files on the happy path. Only the
+// JSON file and the persistent .lock sentinel are expected to remain.
 func TestFileCache_atomicWriteLeavesNoTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cache.json")
@@ -219,8 +221,12 @@ func TestFileCache_atomicWriteLeavesNoTempFiles(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 
+	expected := map[string]bool{
+		"cache.json":      true, // the data file
+		"cache.json.lock": true, // the cross-process advisory lock
+	}
 	for _, e := range entries {
-		assert.Equal(t, "cache.json", e.Name(),
+		assert.True(t, expected[e.Name()],
 			"unexpected leftover in cache directory: %q", e.Name())
 	}
 }
@@ -262,4 +268,108 @@ func TestFileCache_concurrentStoreNeverYieldsTornFile(t *testing.T) {
 	}
 
 	<-done
+}
+
+// TestFileCache_crossProcessConcurrentStoresPreserveAllEntries simulates
+// two independent processes (each with its own *Cache instance pointed
+// at the same path) racing to Store many distinct keys. The advisory
+// file lock taken by Cache.Store must serialize the read-modify-write
+// window so that — after both finish — the on-disk file contains every
+// entry written by either side. Without the lock, each side would read
+// a stale snapshot under its own mutex, and the last writer would
+// silently clobber the other's entries.
+func TestFileCache_crossProcessConcurrentStoresPreserveAllEntries(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	cA, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+	cB, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+
+	const writesPerSide = 50
+	doneA := make(chan struct{})
+	doneB := make(chan struct{})
+
+	go func() {
+		defer close(doneA)
+		for i := range writesPerSide {
+			cA.Store(fmt.Sprintf("a%d", i), fmt.Sprintf("va%d", i))
+		}
+	}()
+	go func() {
+		defer close(doneB)
+		for i := range writesPerSide {
+			cB.Store(fmt.Sprintf("b%d", i), fmt.Sprintf("vb%d", i))
+		}
+	}()
+
+	<-doneA
+	<-doneB
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var onDisk map[string]string
+	require.NoError(t, json.Unmarshal(data, &onDisk))
+
+	assert.Lenf(t, onDisk, 2*writesPerSide,
+		"expected every key from both processes to be on disk; got %d", len(onDisk))
+	for i := range writesPerSide {
+		assert.Equal(t, fmt.Sprintf("va%d", i), onDisk[fmt.Sprintf("a%d", i)])
+		assert.Equal(t, fmt.Sprintf("vb%d", i), onDisk[fmt.Sprintf("b%d", i)])
+	}
+}
+
+// TestFileCache_lookupReloadsAfterExternalWrite verifies that a Cache
+// instance picks up entries written by another instance (read: another
+// process) without restart: when Lookup notices the file mtime has
+// advanced since the last load, it re-reads the file and the new entry
+// becomes visible.
+func TestFileCache_lookupReloadsAfterExternalWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	reader, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+
+	// Initially nothing on disk; reader sees no entry.
+	_, ok := reader.Lookup("q")
+	require.False(t, ok)
+
+	writer, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+	writer.Store("q", "a")
+
+	// File mtime granularity on some filesystems (macOS HFS+ historically,
+	// some network FS) is 1 second. Bump the mtime explicitly so we don't
+	// false-pass on a coincidentally-equal timestamp. We use a future
+	// time so the reader's last-seen mtime is unambiguously older.
+	future := time.Now().Add(2 * time.Second)
+	require.NoError(t, os.Chtimes(path, future, future))
+
+	got, ok := reader.Lookup("q")
+	assert.True(t, ok, "reader must reload and see the entry written by the sibling instance")
+	assert.Equal(t, "a", got)
+}
+
+// TestFileCache_lockFileNeverDeleted asserts that the .lock sidecar is
+// not removed by Store, since deleting it could let two concurrent
+// processes lock different inodes and lose mutual exclusion. The lock
+// file is a long-lived sentinel.
+func TestFileCache_lockFileNeverDeleted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c, err := New(Config{Enabled: true, Path: path})
+	require.NoError(t, err)
+
+	c.Store("q", "a")
+	info1, err := os.Stat(path + ".lock")
+	require.NoError(t, err, "lock file must exist after first Store")
+
+	c.Store("q2", "a2")
+	info2, err := os.Stat(path + ".lock")
+	require.NoError(t, err, "lock file must persist across Stores")
+	assert.Equal(t, info1.Sys(), info2.Sys(),
+		"lock file inode must be stable across Stores so flock semantics hold")
 }

@@ -11,7 +11,10 @@
 #   - trim_spaces: when true, leading and trailing whitespace is ignored.
 #
 # Storage is in-memory by default. Set `path` to persist entries to a JSON
-# file that is reloaded on startup so the cache survives restarts.
+# file that is reloaded on startup so the cache survives restarts. Multiple
+# processes can safely share the same file: an advisory lock on
+# `<path>.lock` serializes writes, and Lookup reloads the in-memory map
+# when the file changes externally.
 
 agents:
   root:

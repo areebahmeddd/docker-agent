@@ -132,6 +132,12 @@ agents:
 
 When `path` is set, every `Store` rewrites the entire cache file. Writes are **atomic**: the new content is written to a sibling temp file, `fsync`'d, and renamed over the destination, so a concurrent reader (or a process that crashes mid-write) will always see either the previous content or the new content in full — never a partially written file. The parent directory is also `fsync`'d after the rename so the rename itself is durable.
 
+**Cross-process sharing**
+
+Multiple processes can share the same `path:` cache file safely. Every `Store` takes an exclusive advisory lock on a sibling `<path>.lock` file (POSIX `flock(2)` on Unix, `LockFileEx` on Windows), reloads the current on-disk state under the lock, merges the new entry, and writes back atomically. Two processes that store *different* keys at the same time both see their writes preserved on disk; the lock window is short (one read + one fsync'd write).
+
+`Lookup` watches the file's modification time and reloads the in-memory map when the file has advanced since its last load, so writes from a sibling process become visible without a restart. The `<path>.lock` sentinel file is created on first write and never deleted: removing it would let two processes lock different inodes and lose mutual exclusion.
+
 ## Welcome Message
 
 Display a message when users start a session:

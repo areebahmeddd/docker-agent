@@ -10,11 +10,18 @@
 //   - an in-memory map (the default), which keeps entries for the lifetime of
 //     the process;
 //   - a JSON-file backed store, which persists entries to disk so they
-//     survive restarts. Writes to the JSON file are atomic: the file is
-//     written to a sibling temp file, fsync'd, and renamed over the
-//     destination, so a concurrent reader (or a process that crashes
-//     mid-write) will always see either the previous content or the new
-//     content in full — never a partially written file.
+//     survive restarts.
+//
+// File-backed caches are concurrent-write-safe across processes. Every
+// [Cache.Store] takes an exclusive advisory lock on a sibling
+// `<path>.lock` file (POSIX flock / Windows LockFileEx), reloads the
+// current on-disk state under the lock, merges its entry, and writes
+// back atomically via a temp file + rename. Two processes simultaneously
+// caching different keys both see their writes preserved; the lock
+// serializes the read-modify-write window so neither can clobber the
+// other. [Cache.Lookup] reloads the in-memory map when the file's mtime
+// has advanced since its last load, so cross-process writes become
+// visible without a restart.
 //
 // Two normalization options are exposed:
 //
@@ -28,11 +35,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Config describes how a Cache should normalize keys and where it should
@@ -57,17 +65,20 @@ type Config struct {
 }
 
 // Cache stores agent responses keyed on the user's question. It is safe
-// for concurrent use by multiple goroutines.
-//
-// When the underlying [Config] sets Path, every Store mirrors the
-// in-memory state to a JSON file via an atomic temp-file + rename so
-// concurrent readers (and a process that crashes mid-write) only ever
-// see a fully written file.
+// for concurrent use by multiple goroutines, and — when configured with
+// a Path — by multiple processes (see the package doc).
 type Cache struct {
 	mu        sync.RWMutex
 	entries   map[string]string
 	normalize func(string) string
-	persist   func(map[string]string)
+
+	// path is the JSON file backing this cache, empty for in-memory only.
+	path string
+
+	// mtime is the file mtime at our last load. Lookup compares it
+	// against the current file mtime to decide whether to reload, so
+	// writes from a sibling process become visible without a restart.
+	mtime time.Time
 }
 
 // New builds a Cache from the given Config. It returns (nil, nil) when
@@ -81,18 +92,15 @@ func New(cfg Config) (*Cache, error) {
 	c := &Cache{
 		entries:   make(map[string]string),
 		normalize: keyNormalizer(cfg.CaseSensitive, cfg.TrimSpaces),
+		path:      cfg.Path,
 	}
 
 	if cfg.Path != "" {
 		if err := loadFromFile(cfg.Path, c.entries); err != nil {
 			return nil, err
 		}
-		path := cfg.Path
-		c.persist = func(snapshot map[string]string) {
-			// Persistence failures must not break a successful agent
-			// turn — entries remain available from memory and the next
-			// Store will retry the file write.
-			_ = writeJSON(path, snapshot)
+		if info, err := os.Stat(cfg.Path); err == nil {
+			c.mtime = info.ModTime()
 		}
 	}
 
@@ -101,7 +109,14 @@ func New(cfg Config) (*Cache, error) {
 
 // Lookup returns the stored response for the given question and a
 // boolean indicating whether the question was found.
+//
+// When the cache is file-backed and the file has been modified since
+// our last load (typically by another process), the in-memory state is
+// reloaded before the lookup so cross-process writes are visible.
 func (c *Cache) Lookup(question string) (string, bool) {
+	if c.path != "" {
+		c.maybeReload()
+	}
 	key := c.normalize(question)
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -110,32 +125,78 @@ func (c *Cache) Lookup(question string) (string, bool) {
 }
 
 // Store records the response for the given question, replacing any
-// existing entry with the same normalized key. When the cache is
-// file-backed, the snapshot is also flushed to disk before Store
-// returns. Storing the same (question, response) pair twice is a no-op
-// and skips the file rewrite — useful when an agent's stop hook re-fires
-// with the same content (e.g. on a cache-replay turn).
+// existing entry with the same normalized key. Storing the same
+// (question, response) pair twice is a no-op and skips the file
+// rewrite — useful when an agent's stop hook re-fires with the same
+// content (e.g. a cache-replay turn).
 //
-// Store deliberately holds the write lock across the persist callback.
-// Releasing the lock between cloning the snapshot and writing it would
-// allow two concurrent stores S1 and S2 to take their snapshots in
-// order S1→S2 but persist them out-of-order S2→S1, which would
-// overwrite the on-disk file with S1's stale snapshot and silently lose
-// S2's entry on the next process restart. The lock window is short
-// (one fsync + rename + dir fsync) and concurrent Lookup callers are
-// blocked only for the duration of that single write.
+// When the cache is file-backed, the operation is serialized across
+// processes via an advisory lock on a sibling .lock file: we take the
+// lock, reload the on-disk state, merge our entry, write atomically
+// (temp file + fsync + rename), and release. This guarantees that two
+// processes simultaneously storing different keys both see their
+// writes preserved on disk; in-process callers serialize via c.mu.
 func (c *Cache) Store(question, response string) {
 	key := c.normalize(question)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Cheap in-memory dedup: skip the cross-process lock and disk
+	// write when our local view already matches. After a recent
+	// Lookup our view is fresh, so this catches the common
+	// "store the answer we just replayed" path of cache_response.
 	if existing, ok := c.entries[key]; ok && existing == response {
 		return
 	}
-	c.entries[key] = response
-	if c.persist != nil {
-		c.persist(maps.Clone(c.entries))
+
+	if c.path != "" {
+		if mtime, err := persistEntry(c.path, key, response); err != nil {
+			// Persistence failures are not fatal: keep the entry
+			// in memory and let the next Store retry the file
+			// write.
+			slog.Warn("cache persist failed; keeping entry in memory only",
+				"path", c.path, "error", err)
+		} else if !mtime.IsZero() {
+			c.mtime = mtime
+		}
 	}
+
+	c.entries[key] = response
+}
+
+// maybeReload reloads c.entries from disk when the file mtime has
+// advanced since our last load. Called from Lookup. Safe to no-op
+// when the file doesn't exist or can't be stat'd (the in-memory
+// state is preserved).
+func (c *Cache) maybeReload() {
+	info, err := os.Stat(c.path)
+	if err != nil {
+		return
+	}
+
+	c.mu.RLock()
+	upToDate := info.ModTime().Equal(c.mtime)
+	c.mu.RUnlock()
+	if upToDate {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Re-check under the write lock: another goroutine may have just
+	// reloaded us.
+	if info.ModTime().Equal(c.mtime) {
+		return
+	}
+	fresh := make(map[string]string)
+	if err := loadFromFile(c.path, fresh); err != nil {
+		slog.Warn("cache reload failed; keeping in-memory state",
+			"path", c.path, "error", err)
+		return
+	}
+	c.entries = fresh
+	c.mtime = info.ModTime()
 }
 
 // keyNormalizer returns a function that applies the configured
@@ -173,6 +234,83 @@ func loadFromFile(path string, entries map[string]string) error {
 		return fmt.Errorf("loading cache file %q: %w", path, err)
 	}
 	return nil
+}
+
+// persistEntry takes a cross-process advisory lock on path's sibling
+// .lock file, reloads the on-disk entries, merges (key, response),
+// and atomically writes the result. It returns the file mtime after
+// writing (zero on error), used by callers to track external changes.
+//
+// Skips the write — and returns the unchanged mtime — when the on-disk
+// state already has key → response, keeping cross-process replays free
+// of redundant disk traffic.
+func persistEntry(path, key, response string) (time.Time, error) {
+	lock, err := acquireFileLock(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer lock.release()
+
+	entries := make(map[string]string)
+	if err := loadFromFile(path, entries); err != nil {
+		return time.Time{}, err
+	}
+
+	if existing, ok := entries[key]; ok && existing == response {
+		if info, err := os.Stat(path); err == nil {
+			return info.ModTime(), nil
+		}
+		return time.Time{}, nil
+	}
+
+	entries[key] = response
+	if err := writeJSON(path, entries); err != nil {
+		return time.Time{}, err
+	}
+
+	if info, err := os.Stat(path); err == nil {
+		return info.ModTime(), nil
+	}
+	return time.Time{}, nil
+}
+
+// fileLock is the handle returned by acquireFileLock. Call release when
+// done — typically as a deferred call in the same function that
+// acquired the lock.
+type fileLock struct {
+	f *os.File
+}
+
+// acquireFileLock opens (creating if needed) "<path>.lock" and takes an
+// exclusive advisory lock on it. The lock is released by calling
+// release on the returned handle. The lock file itself is intentionally
+// never renamed or deleted: doing so would let two processes lock
+// different inodes for the same logical resource and lose mutual
+// exclusion.
+func acquireFileLock(path string) (*fileLock, error) {
+	lockPath := path + ".lock"
+	if dir := filepath.Dir(lockPath); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("creating lock directory %q: %w", dir, err)
+		}
+	}
+	f, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening lock file %q: %w", lockPath, err)
+	}
+	if err := lockExclusive(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("locking %q: %w", lockPath, err)
+	}
+	return &fileLock{f: f}, nil
+}
+
+// release unlocks and closes the lock file. Errors are ignored: the OS
+// will release the lock when the descriptor is closed regardless, and a
+// failure to close at this point can't usefully be propagated.
+func (l *fileLock) release() {
+	_ = unlockFile(l.f)
+	_ = l.f.Close()
 }
 
 // writeJSON atomically writes entries to path as pretty-printed JSON.
