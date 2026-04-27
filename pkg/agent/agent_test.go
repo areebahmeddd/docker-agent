@@ -145,19 +145,15 @@ func TestModelOverride(t *testing.T) {
 	a := New("root", "test", WithModel(defaultModel))
 
 	// Initially should return the default model
-	model := a.Model()
-	assert.Equal(t, "openai/gpt-4o", model.ID())
+	assert.Equal(t, "openai/gpt-4o", a.Model().ID())
 	assert.False(t, a.HasModelOverride())
 
 	// Set an override
 	a.SetModelOverride(overrideModel)
 	assert.True(t, a.HasModelOverride())
+	assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model().ID())
 
-	// Now Model() should return the override
-	model = a.Model()
-	assert.Equal(t, "anthropic/claude-sonnet-4-0", model.ID())
-
-	// ConfiguredModels should still return the original models
+	// ConfiguredModels still reflects the originally configured models
 	configuredModels := a.ConfiguredModels()
 	require.Len(t, configuredModels, 1)
 	assert.Equal(t, "openai/gpt-4o", configuredModels[0].ID())
@@ -165,10 +161,131 @@ func TestModelOverride(t *testing.T) {
 	// Clear the override
 	a.SetModelOverride(nil)
 	assert.False(t, a.HasModelOverride())
+	assert.Equal(t, "openai/gpt-4o", a.Model().ID())
+}
 
-	// Model() should return the default again
-	model = a.Model()
-	assert.Equal(t, "openai/gpt-4o", model.ID())
+func TestSetModelOverride_ReturnsSnapshotOfStoredValue(t *testing.T) {
+	// SetModelOverride must return a snapshot of the value it just stored,
+	// not what a subsequent SnapshotModelOverride() would load. This is the
+	// guarantee that closes the race window for scoped overrides: if a
+	// concurrent caller stores a different override after our store but
+	// before we capture our snapshot, our snapshot must still refer to
+	// what we stored, so the deferred CAS-restore will fail (concurrent
+	// change wins) instead of incorrectly succeeding.
+	t.Parallel()
+
+	defaultModel := &mockProvider{id: "default"}
+	oursModel := &mockProvider{id: "ours"}
+	othersModel := &mockProvider{id: "others"}
+
+	a := New("root", "test", WithModel(defaultModel))
+
+	// Capture the snapshot returned by SetModelOverride.
+	prev := a.SnapshotModelOverride()
+	oursSnap := a.SetModelOverride(oursModel)
+
+	// Simulate a concurrent caller storing a different override _after_ we
+	// stored ours but _before_ a hypothetical post-store SnapshotModelOverride.
+	a.SetModelOverride(othersModel)
+	require.Equal(t, "others", a.Model().ID())
+
+	// The deferred restore must be a no-op because oursSnap holds the
+	// pointer we stored, not the current pointer.
+	a.RestoreModelOverride(prev, oursSnap)
+	assert.Equal(t, "others", a.Model().ID(),
+		"concurrent override must be preserved; the snapshot returned by SetModelOverride captures the stored pointer")
+}
+
+func TestSetModelOverride_ClearReturnsZeroSnapshot(t *testing.T) {
+	t.Parallel()
+
+	a := New("root", "test", WithModel(&mockProvider{id: "default"}))
+
+	// Calling SetModelOverride with no providers (or nil) clears the override.
+	// The returned snapshot should round-trip cleanly through RestoreModelOverride.
+	cleared := a.SetModelOverride()
+	assert.False(t, a.HasModelOverride())
+
+	// Now set an override and restore using `cleared` as `prev`.
+	oursSnap := a.SetModelOverride(&mockProvider{id: "ours"})
+	require.True(t, a.HasModelOverride())
+
+	a.RestoreModelOverride(cleared, oursSnap)
+	assert.False(t, a.HasModelOverride(), "restoring a cleared snapshot must clear the override")
+}
+
+func TestSnapshotAndRestoreModelOverride(t *testing.T) {
+	t.Parallel()
+
+	defaultModel := &mockProvider{id: "openai/gpt-4o"}
+	skillModel := &mockProvider{id: "openai/gpt-4o-mini"}
+	userModel := &mockProvider{id: "anthropic/claude-sonnet-4-0"}
+
+	t.Run("restores when no concurrent change", func(t *testing.T) {
+		t.Parallel()
+		a := New("root", "test", WithModel(defaultModel))
+
+		prev := a.SnapshotModelOverride()
+		a.SetModelOverride(skillModel)
+		ours := a.SnapshotModelOverride()
+		assert.Equal(t, "openai/gpt-4o-mini", a.Model().ID())
+
+		a.RestoreModelOverride(prev, ours)
+		assert.False(t, a.HasModelOverride())
+		assert.Equal(t, "openai/gpt-4o", a.Model().ID())
+	})
+
+	t.Run("restores back to a pre-existing override", func(t *testing.T) {
+		t.Parallel()
+		a := New("root", "test", WithModel(defaultModel))
+		a.SetModelOverride(userModel)
+
+		prev := a.SnapshotModelOverride()
+		a.SetModelOverride(skillModel)
+		ours := a.SnapshotModelOverride()
+		assert.Equal(t, "openai/gpt-4o-mini", a.Model().ID())
+
+		a.RestoreModelOverride(prev, ours)
+		assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model().ID())
+	})
+
+	t.Run("keeps a concurrent change instead of restoring", func(t *testing.T) {
+		// This is the TUI-while-skill-runs scenario: another caller
+		// changes the override between SnapshotModelOverride and
+		// RestoreModelOverride. The deferred restore must NOT clobber
+		// that change.
+		t.Parallel()
+		a := New("root", "test", WithModel(defaultModel))
+
+		prev := a.SnapshotModelOverride()
+		a.SetModelOverride(skillModel)
+		ours := a.SnapshotModelOverride()
+
+		// Simulate concurrent TUI model switch.
+		a.SetModelOverride(userModel)
+
+		a.RestoreModelOverride(prev, ours)
+		require.True(t, a.HasModelOverride(), "user's model choice must be preserved")
+		assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model().ID())
+	})
+
+	t.Run("keeps a concurrent clear instead of restoring", func(t *testing.T) {
+		// Same as above but the concurrent caller clears the override
+		// (e.g. user revert via TUI). The restore must respect that.
+		t.Parallel()
+		a := New("root", "test", WithModel(defaultModel))
+		a.SetModelOverride(userModel)
+
+		prev := a.SnapshotModelOverride()
+		a.SetModelOverride(skillModel)
+		ours := a.SnapshotModelOverride()
+
+		// Simulate concurrent TUI revert.
+		a.SetModelOverride()
+
+		a.RestoreModelOverride(prev, ours)
+		assert.False(t, a.HasModelOverride(), "user's revert must be preserved")
+	})
 }
 
 func TestModel_LogsSelection(t *testing.T) {
