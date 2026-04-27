@@ -132,13 +132,11 @@ func TestElicitationBridge_ConcurrentSendsAreSerializedSafely(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 5 {
 				_ = b.send(Error("x"))
 			}
-		}()
+		})
 	}
 
 	// Concurrent reader to keep the channel from filling up.

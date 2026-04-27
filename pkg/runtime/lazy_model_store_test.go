@@ -70,9 +70,9 @@ func TestLazyModelStore_DefersError(t *testing.T) {
 	})
 
 	_, err := l.GetModel(t.Context(), "anything")
-	assert.ErrorIs(t, err, wantErr)
+	require.ErrorIs(t, err, wantErr)
 	_, err = l.GetDatabase(t.Context())
-	assert.ErrorIs(t, err, wantErr)
+	require.ErrorIs(t, err, wantErr)
 
 	assert.Equal(t, 1, calls, "loader should only run once even after multiple method calls")
 }

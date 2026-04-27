@@ -8,7 +8,6 @@ import (
 	"maps"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -182,21 +181,21 @@ type ToolsChangeSubscriber interface {
 
 // LocalRuntime manages the execution of agents
 type LocalRuntime struct {
-	toolMap                     map[string]ToolHandlerFunc
-	team                        *team.Team
-	currentAgent                string
-	resumeChan                  chan ResumeRequest
-	tracer                      trace.Tracer
-	modelsStore                 ModelStore
-	sessionCompaction           bool
-	managedOAuth                bool
-	startupInfoEmitted          bool                   // Track if startup info has been emitted to avoid unnecessary duplication
+	toolMap              map[string]ToolHandlerFunc
+	team                 *team.Team
+	agents               *agentRouter
+	resumeChan           chan ResumeRequest
+	tracer               trace.Tracer
+	modelsStore          ModelStore
+	sessionCompaction    bool
+	managedOAuth         bool
+	startupInfoEmitted   bool                   // Track if startup info has been emitted to avoid unnecessary duplication
 	elicitationRequestCh chan ElicitationResult // Channel for receiving elicitation responses
 	elicitation          elicitationBridge      // Owns the per-stream events channel for outbound elicitation requests
-	sessionStore                session.Store
-	workingDir                  string   // Working directory for hooks execution
-	env                         []string // Environment variables for hooks execution
-	modelSwitcherCfg            *ModelSwitcherConfig
+	sessionStore         session.Store
+	workingDir           string   // Working directory for hooks execution
+	env                  []string // Environment variables for hooks execution
+	modelSwitcherCfg     *ModelSwitcherConfig
 
 	// hooksRegistry is the runtime-private hooks.Registry used to build
 	// every Executor. It carries the runtime-owned builtin hooks
@@ -228,8 +227,6 @@ type LocalRuntime struct {
 	// cooldown_manager.go for the eviction contract; the manager reads
 	// the runtime's clock so WithClock makes cooldown windows testable.
 	cooldowns *cooldownManager
-
-	currentAgentMu sync.RWMutex
 
 	// steerQueue stores urgent mid-turn messages. The agent loop drains
 	// ALL pending messages after tool execution, before the stop check.
@@ -270,7 +267,7 @@ type Opt func(*LocalRuntime)
 
 func WithCurrentAgent(agentName string) Opt {
 	return func(r *LocalRuntime) {
-		r.currentAgent = agentName
+		r.agents.Set(agentName)
 	}
 }
 
@@ -410,7 +407,7 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	r := &LocalRuntime{
 		toolMap:                make(map[string]ToolHandlerFunc),
 		team:                   agents,
-		currentAgent:           defaultAgent.Name(),
+		agents:                 newAgentRouter(agents, defaultAgent.Name()),
 		resumeChan:             make(chan ResumeRequest),
 		elicitationRequestCh:   make(chan ElicitationResult),
 		steerQueue:             NewInMemoryMessageQueue(defaultSteerQueueCapacity),
@@ -450,8 +447,8 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	}
 
 	// Validate that the current agent exists and has a model
-	// (currentAgent might have been changed by options)
-	defaultAgent, err = r.team.Agent(r.currentAgent)
+	// (the router's current name might have been changed by WithCurrentAgent)
+	defaultAgent, err = r.team.Agent(r.agents.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -469,21 +466,17 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	// the team are finalized. Read-only afterwards.
 	r.buildHooksExecutors()
 
-	slog.Debug("Creating new runtime", "agent", r.currentAgent, "available_agents", agents.Size())
+	slog.Debug("Creating new runtime", "agent", r.agents.Name(), "available_agents", agents.Size())
 
 	return r, nil
 }
 
 func (r *LocalRuntime) CurrentAgentName() string {
-	r.currentAgentMu.RLock()
-	defer r.currentAgentMu.RUnlock()
-	return r.currentAgent
+	return r.agents.Name()
 }
 
 func (r *LocalRuntime) setCurrentAgent(name string) {
-	r.currentAgentMu.Lock()
-	defer r.currentAgentMu.Unlock()
-	r.currentAgent = name
+	r.agents.Set(name)
 }
 
 func (r *LocalRuntime) CurrentAgentInfo(context.Context) CurrentAgentInfo {
@@ -497,13 +490,7 @@ func (r *LocalRuntime) CurrentAgentInfo(context.Context) CurrentAgentInfo {
 }
 
 func (r *LocalRuntime) SetCurrentAgent(agentName string) error {
-	// Validate that the agent exists in the team
-	if _, err := r.team.Agent(agentName); err != nil {
-		return err
-	}
-	r.setCurrentAgent(agentName)
-	slog.Debug("Switched current agent", "agent", agentName)
-	return nil
+	return r.agents.SetValidated(agentName)
 }
 
 func (r *LocalRuntime) CurrentAgentCommands(context.Context) types.Commands {
@@ -584,22 +571,14 @@ func (r *LocalRuntime) discoverMCPPrompts(ctx context.Context, toolset *mcptools
 
 // CurrentAgent returns the current agent
 func (r *LocalRuntime) CurrentAgent() *agent.Agent {
-	// We validated already that the agent exists
-	current, _ := r.team.Agent(r.CurrentAgentName())
-	return current
+	return r.agents.Current()
 }
 
-// resolveSessionAgent returns the agent for the given session. When the session
-// is pinned to a specific agent (e.g. background agent tasks), it returns that
-// agent directly instead of reading the shared currentAgent field, which may
-// point to a different agent.
+// resolveSessionAgent returns the agent for the given session. Delegates to
+// agentRouter.ResolveSession; kept on LocalRuntime for the existing callsites
+// in loop.go and elsewhere.
 func (r *LocalRuntime) resolveSessionAgent(sess *session.Session) *agent.Agent {
-	if sess.AgentName != "" {
-		if a, err := r.team.Agent(sess.AgentName); err == nil {
-			return a
-		}
-	}
-	return r.CurrentAgent()
+	return r.agents.ResolveSession(sess)
 }
 
 // CurrentAgentSkillsToolset returns the skills toolset for the current agent, or nil if not enabled.

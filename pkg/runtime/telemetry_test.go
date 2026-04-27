@@ -18,12 +18,12 @@ import (
 // the runtime emitted the expected lifecycle events. It is intentionally
 // thread-safe because RunStream invokes telemetry from a goroutine.
 type recordingTelemetry struct {
-	mu             sync.Mutex
-	sessionStarts  []sessionStart
-	sessionEnds    int
-	errors         []string
-	toolCalls      []toolCallRecord
-	tokenUsages    []tokenUsageRecord
+	mu            sync.Mutex
+	sessionStarts []sessionStart
+	sessionEnds   int
+	errors        []string
+	toolCalls     []toolCallRecord
+	tokenUsages   []tokenUsageRecord
 }
 
 type sessionStart struct {
