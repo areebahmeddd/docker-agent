@@ -39,11 +39,6 @@ type AgentDefaults struct {
 	AddPromptFiles     []string
 }
 
-// IsZero reports whether no agent default would inject any builtin.
-func (d AgentDefaults) IsZero() bool {
-	return !d.AddDate && !d.AddEnvironmentInfo && len(d.AddPromptFiles) == 0
-}
-
 // ApplyAgentDefaults appends the stock builtin hook entries implied by
 // d to cfg, returning the (possibly mutated) config.
 //

@@ -11,60 +11,50 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 )
 
-// hooksExec returns the cached [hooks.Executor] for a, building one on
-// first lookup. Returns nil when the agent has no user-configured hooks
-// and no agent-flag (AddDate / AddEnvironmentInfo / AddPromptFiles) maps
-// to a builtin. Callers can then short-circuit without paying for a
-// no-op dispatch.
+// buildHooksExecutors builds a [hooks.Executor] for every agent in the
+// team that has user-configured hooks or an agent-flag that maps to a
+// builtin (AddDate / AddEnvironmentInfo / AddPromptFiles). Agents with
+// no hooks have no entry; lookups fall through to nil so callers can
+// short-circuit cheaply.
 //
-// The cache is keyed by agent name. Entries (including the nil sentinel)
-// are stable for the lifetime of the runtime, so repeated dispatches
-// during a turn don't re-translate agent flags into builtin hook entries
-// or rebuild matcher tables.
+// Called once from [NewLocalRuntime] after r.workingDir, r.env and
+// r.hooksRegistry are finalized; the resulting map is read-only for
+// the lifetime of the runtime, so per-dispatch lookups don't need to
+// lock.
+func (r *LocalRuntime) buildHooksExecutors() {
+	r.hooksExecByAgent = make(map[string]*hooks.Executor)
+	for _, name := range r.team.AgentNames() {
+		a, err := r.team.Agent(name)
+		if err != nil {
+			continue
+		}
+		cfg := builtins.ApplyAgentDefaults(hooks.FromConfig(a.Hooks()), builtins.AgentDefaults{
+			AddDate:            a.AddDate(),
+			AddEnvironmentInfo: a.AddEnvironmentInfo(),
+			AddPromptFiles:     a.AddPromptFiles(),
+		})
+		if cfg == nil {
+			continue
+		}
+		r.hooksExecByAgent[name] = hooks.NewExecutorWithRegistry(cfg, r.workingDir, r.env, r.hooksRegistry)
+	}
+}
+
+// hooksExec returns the pre-built [hooks.Executor] for a, or nil when
+// the agent has no hooks (see [buildHooksExecutors]).
 func (r *LocalRuntime) hooksExec(a *agent.Agent) *hooks.Executor {
 	if a == nil {
 		return nil
 	}
-	name := a.Name()
-
-	r.hooksExecMu.RLock()
-	if exec, ok := r.hooksExecByAgent[name]; ok {
-		r.hooksExecMu.RUnlock()
-		return exec
-	}
-	r.hooksExecMu.RUnlock()
-
-	r.hooksExecMu.Lock()
-	defer r.hooksExecMu.Unlock()
-	// Re-check under the write lock to avoid double-build under contention.
-	if exec, ok := r.hooksExecByAgent[name]; ok {
-		return exec
-	}
-
-	cfg := builtins.ApplyAgentDefaults(hooks.FromConfig(a.Hooks()), builtins.AgentDefaults{
-		AddDate:            a.AddDate(),
-		AddEnvironmentInfo: a.AddEnvironmentInfo(),
-		AddPromptFiles:     a.AddPromptFiles(),
-	})
-
-	var exec *hooks.Executor
-	if cfg != nil {
-		exec = hooks.NewExecutorWithRegistry(cfg, r.workingDir, r.env, r.hooksRegistry)
-	}
-	if r.hooksExecByAgent == nil {
-		r.hooksExecByAgent = make(map[string]*hooks.Executor)
-	}
-	r.hooksExecByAgent[name] = exec
-	return exec
+	return r.hooksExecByAgent[a.Name()]
 }
 
 // dispatchHook is the common dispatch path shared by every hook
-// callsite: resolve the cached executor, short-circuit if no hook is
-// configured for event, then dispatch and emit any [Result.SystemMessage]
-// as a Warning event. Errors are logged at warn level and surfaced as
-// nil results so callers can use a single nil check to mean "nothing
-// useful came back" — covering the not-configured, no-agent, and
-// dispatch-failed cases uniformly.
+// callsite: resolve the pre-built executor, dispatch, and emit any
+// [Result.SystemMessage] as a Warning event. Errors are logged at warn
+// level and surfaced as nil results so callers can use a single nil
+// check to mean "nothing useful came back" — covering the
+// not-configured, no-agent, and dispatch-failed cases uniformly.
 //
 // events may be nil for fire-and-forget callsites (notification,
 // on_error, on_max_iterations, ...) where there's no Warning channel
@@ -79,11 +69,10 @@ func (r *LocalRuntime) dispatchHook(
 	events chan Event,
 ) *hooks.Result {
 	exec := r.hooksExec(a)
-	if exec == nil || !exec.Has(event) {
+	if exec == nil {
 		return nil
 	}
 
-	slog.Debug("Executing hooks", "event", event, "agent", a.Name(), "session_id", input.SessionID)
 	result, err := exec.Dispatch(ctx, event, input)
 	if err != nil {
 		slog.Warn("Hook execution failed", "event", event, "agent", a.Name(), "error", err)
@@ -215,11 +204,10 @@ func (r *LocalRuntime) executeAfterLLMCallHooks(ctx context.Context, sess *sessi
 
 // executeOnUserInputHooks fires on_user_input when the runtime is about
 // to wait for the user (tool confirmation, elicitation, max iterations,
-// stream stopped). Resolves the agent from r.team itself so callsites
-// in code paths without an agent handle (like the elicitation handler)
-// stay short.
+// stream stopped). Resolves the agent itself so callsites in code paths
+// without an agent handle (like the elicitation handler) stay short.
 func (r *LocalRuntime) executeOnUserInputHooks(ctx context.Context, sessionID, logContext string) {
-	a, _ := r.team.Agent(r.CurrentAgentName())
+	a := r.CurrentAgent()
 	if a == nil {
 		return
 	}

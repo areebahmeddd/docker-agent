@@ -206,14 +206,12 @@ type LocalRuntime struct {
 	// touching any process-wide state.
 	hooksRegistry *hooks.Registry
 
-	// hooksExecByAgent caches the per-agent [hooks.Executor], keyed by
-	// agent name. Building one requires translating agent flags into
-	// implicit builtin hook entries and compiling matchers — work we
-	// don't want to repeat on every dispatch within a turn. Entries are
-	// stable for the runtime's lifetime; a nil value caches the
-	// "no hooks configured" verdict so repeat lookups stay cheap.
+	// hooksExecByAgent holds the per-agent [hooks.Executor], keyed by
+	// agent name. Built once in [NewLocalRuntime.buildHooksExecutors]
+	// after team and runtime config are finalized; agents with no hooks
+	// have no entry, so [hooksExec] returns nil for them. Read-only after
+	// construction, so no locking is needed.
 	hooksExecByAgent map[string]*hooks.Executor
-	hooksExecMu      sync.RWMutex
 
 	// retryOnRateLimit enables retry-with-backoff for HTTP 429 (rate limit) errors
 	// when no fallback models are configured. When false (default), 429 errors are
@@ -393,6 +391,10 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	// This avoids concurrent map writes when multiple goroutines call
 	// RunStream on the same runtime (e.g. background agent sessions).
 	r.registerDefaultTools()
+
+	// Pre-build per-agent hook executors now that workingDir, env and
+	// the team are finalized. Read-only afterwards.
+	r.buildHooksExecutors()
 
 	slog.Debug("Creating new runtime", "agent", r.currentAgent, "available_agents", agents.Size())
 

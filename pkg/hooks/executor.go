@@ -29,16 +29,12 @@ type Executor struct {
 // matcher is the compiled form of a [MatcherConfig]: an optional regex
 // pattern (nil means "match all") and the hooks to fire when it matches.
 type matcher struct {
-	raw     string
 	pattern *regexp.Regexp
 	hooks   []Hook
 }
 
 func (m *matcher) matches(toolName string) bool {
-	if m.raw == "" || m.raw == "*" {
-		return true
-	}
-	return m.pattern != nil && m.pattern.MatchString(toolName)
+	return m.pattern == nil || m.pattern.MatchString(toolName)
 }
 
 // hookResult is the outcome of a single hook invocation.
@@ -103,7 +99,7 @@ func compileMatchers(configs []MatcherConfig) []matcher {
 	}
 	out := make([]matcher, 0, len(configs))
 	for _, mc := range configs {
-		m := matcher{raw: mc.Matcher, hooks: mc.Hooks}
+		m := matcher{hooks: mc.Hooks}
 		if mc.Matcher != "" && mc.Matcher != "*" {
 			p, err := regexp.Compile("^(?:" + mc.Matcher + ")$")
 			if err != nil {
@@ -157,6 +153,8 @@ func (e *Executor) Dispatch(ctx context.Context, event EventType, input *Input) 
 	if len(hooks) == 0 {
 		return &Result{Allowed: true}, nil
 	}
+
+	slog.Debug("Executing hooks", "event", event, "session_id", input.SessionID, "count", len(hooks))
 
 	inputJSON, err := input.ToJSON()
 	if err != nil {
