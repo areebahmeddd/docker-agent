@@ -402,17 +402,6 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				return
 			}
 
-			// before_llm_call hooks fire just before the model is invoked.
-			// A terminating verdict (e.g. from the max_iterations builtin)
-			// stops the run loop here, before any tokens are spent.
-			if stop, msg := r.executeBeforeLLMCallHooks(ctx, sess, a); stop {
-				slog.Warn("before_llm_call hook signalled run termination",
-					"agent", a.Name(), "session_id", sess.ID, "reason", msg)
-				r.emitHookDrivenShutdown(ctx, a, sess, msg, events)
-				streamSpan.End()
-				return
-			}
-
 			// Try primary model with fallback chain if configured
 			res, usedModel, err := r.tryModelWithFallback(streamCtx, a, model, messages, agentTools, sess, m, events)
 			if err != nil {

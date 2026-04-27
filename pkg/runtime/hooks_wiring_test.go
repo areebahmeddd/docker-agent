@@ -86,10 +86,9 @@ func TestHooksExecWiresAgentFlagsToBuiltins(t *testing.T) {
 			exec := r.hooksExec(a)
 			require.NotNil(t, exec, "loop_detector is always-on, so an executor is always built")
 
-			// hooksExec caches the executor by agent name. Calling it twice
-			// returns the same pointer, so per-turn dispatches don't pay
-			// the matcher-compilation cost repeatedly.
-			assert.Same(t, exec, r.hooksExec(a), "hooksExec must cache by agent name")
+			// hooksExec is read-only after [LocalRuntime.buildHooksExecutors],
+			// so calling it twice returns the same pointer.
+			assert.Same(t, exec, r.hooksExec(a), "hooksExec must be stable across calls")
 
 			assert.Equal(t, tc.wantTurnStart, exec.Has(hooks.EventTurnStart),
 				"turn_start activation must match flags")

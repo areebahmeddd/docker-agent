@@ -84,24 +84,22 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 
 		outcome := r.executeWithApproval(callCtx, sess, toolCall, tool, events, a, invoke)
 
+		if outcome.canceled {
+			callSpan.SetStatus(codes.Ok, "tool call canceled by user")
+		} else {
+			callSpan.SetStatus(codes.Ok, "tool call processed")
+		}
+		callSpan.End()
+
 		switch {
 		case outcome.canceled:
-			callSpan.SetStatus(codes.Ok, "tool call canceled by user")
-			callSpan.End()
 			synthesizeRemaining(calls[i+1:],
 				"The tool call was canceled because a previous tool call in the same batch was canceled by the user.")
 			return false, ""
-
 		case outcome.stopRun:
-			callSpan.SetStatus(codes.Ok, "tool call processed")
-			callSpan.End()
 			synthesizeRemaining(calls[i+1:],
 				"The tool call was skipped because a post_tool_use hook signalled run termination.")
 			return true, outcome.stopMessage
-
-		default:
-			callSpan.SetStatus(codes.Ok, "tool call processed")
-			callSpan.End()
 		}
 	}
 	return false, ""

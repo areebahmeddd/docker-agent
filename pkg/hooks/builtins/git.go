@@ -57,7 +57,7 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 		// Defensive: every caller guards on Cwd, but bailing out
 		// here keeps a future caller from accidentally running git
 		// in the process's working directory.
-		return "", errors.New("gitOutput: empty working directory")
+		return "", errors.New("empty working directory")
 	}
 	full := append([]string{"-C", dir}, args...)
 	out, err := exec.CommandContext(ctx, "git", full...).Output()

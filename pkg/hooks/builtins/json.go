@@ -6,10 +6,10 @@ import (
 	"slices"
 )
 
-// sortKeys recursively sorts map keys so [json.Marshal] produces
-// deterministic output regardless of how the input was constructed.
-// Slices are walked in place; non-collection values are returned
-// unchanged.
+// sortKeys returns a deep, deterministic copy of v with every nested
+// map's keys ordered. Slices and maps are copied rather than mutated
+// in place so the caller's input is never modified — important when
+// the same Input is reachable from a future hook handler.
 func sortKeys(v any) any {
 	switch val := v.(type) {
 	case map[string]any:
@@ -19,10 +19,11 @@ func sortKeys(v any) any {
 		}
 		return sorted
 	case []any:
+		copied := make([]any, len(val))
 		for i, item := range val {
-			val[i] = sortKeys(item)
+			copied[i] = sortKeys(item)
 		}
-		return val
+		return copied
 	default:
 		return v
 	}
