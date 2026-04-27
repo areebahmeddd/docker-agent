@@ -660,26 +660,7 @@ func (s *SQLiteSessionStore) GetSession(ctx context.Context, id string) (*Sessio
 	if id == "" {
 		return nil, ErrEmptyID
 	}
-
-	row := s.db.QueryRowContext(ctx,
-		"SELECT "+sessionSelectColumns+" FROM sessions WHERE id = ?", id)
-
-	sess, err := scanSession(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-
-	// Load messages from session_items table
-	items, err := s.loadSessionItems(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("loading session items: %w", err)
-	}
-	sess.Messages = items
-
-	return sess, nil
+	return s.loadSession(ctx, s.db, id)
 }
 
 // sessionItemRow holds the raw data from a session_items row
@@ -694,13 +675,10 @@ type sessionItemRow struct {
 	firstKeptEntry int
 }
 
-// loadSessionItems loads all items for a session from the session_items table.
-func (s *SQLiteSessionStore) loadSessionItems(ctx context.Context, sessionID string) ([]Item, error) {
-	return s.loadSessionItemsWith(ctx, s.db, sessionID)
-}
-
-// loadSessionItemsWith loads items using the provided querier (db or tx).
-func (s *SQLiteSessionStore) loadSessionItemsWith(ctx context.Context, q querier, sessionID string) ([]Item, error) {
+// loadSessionItems loads all items for a session from session_items.
+// Used both as the public read path (q == s.db) and recursively from inside
+// loadSession when resolving sub-sessions inside a transaction.
+func (s *SQLiteSessionStore) loadSessionItems(ctx context.Context, q querier, sessionID string) ([]Item, error) {
 	rows, err := q.QueryContext(ctx,
 		`SELECT position, item_type, agent_name, message_json, implicit, subsession_id, summary_text, COALESCE(first_kept_entry, 0)
 		 FROM session_items WHERE session_id = ? ORDER BY position`, sessionID)
@@ -752,7 +730,7 @@ func (s *SQLiteSessionStore) loadSessionItemsWith(ctx context.Context, q querier
 				continue
 			}
 			// Recursively load sub-session
-			subSession, err := s.loadSessionWith(ctx, q, row.subsessionID.String)
+			subSession, err := s.loadSession(ctx, q, row.subsessionID.String)
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {
 					// Sub-session was deleted but item reference remains (orphaned reference)
@@ -771,8 +749,8 @@ func (s *SQLiteSessionStore) loadSessionItemsWith(ctx context.Context, q querier
 	return items, nil
 }
 
-// loadSessionWith loads a session using the provided querier.
-func (s *SQLiteSessionStore) loadSessionWith(ctx context.Context, q querier, id string) (*Session, error) {
+// loadSession retrieves a session by ID using the supplied querier.
+func (s *SQLiteSessionStore) loadSession(ctx context.Context, q querier, id string) (*Session, error) {
 	row := q.QueryRowContext(ctx,
 		"SELECT "+sessionSelectColumns+" FROM sessions WHERE id = ?", id)
 
@@ -784,12 +762,10 @@ func (s *SQLiteSessionStore) loadSessionWith(ctx context.Context, q querier, id 
 		return nil, err
 	}
 
-	// Load messages
-	items, err := s.loadSessionItemsWith(ctx, q, id)
+	sess.Messages, err = s.loadSessionItems(ctx, q, id)
 	if err != nil {
 		return nil, fmt.Errorf("loading session items: %w", err)
 	}
-	sess.Messages = items
 
 	return sess, nil
 }
@@ -818,7 +794,7 @@ func (s *SQLiteSessionStore) GetSessions(ctx context.Context) ([]*Session, error
 
 	// Load messages for each session
 	for _, session := range sessions {
-		items, err := s.loadSessionItems(ctx, session.ID)
+		items, err := s.loadSessionItems(ctx, s.db, session.ID)
 		if err != nil {
 			return nil, fmt.Errorf("loading items for session %s: %w", session.ID, err)
 		}

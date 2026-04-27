@@ -337,6 +337,23 @@ func cloneMessage(m *Message) *Message {
 	return &cp
 }
 
+// snapshotItems returns a copy of s.Messages safe to use without holding
+// s.mu. Each Message value is deep-copied so concurrent UpdateMessage calls
+// cannot mutate the snapshot; non-Message fields (Summary, SubSession, Cost,
+// FirstKeptEntry) are shallow-copied since they are not mutated in place.
+func (s *Session) snapshotItems() []Item {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]Item, len(s.Messages))
+	for i, item := range s.Messages {
+		items[i] = item
+		if item.Message != nil {
+			items[i].Message = cloneMessage(item.Message)
+		}
+	}
+	return items
+}
+
 // cloneChatMessage returns a deep copy of a chat.Message, duplicating
 // all slice and pointer fields that would otherwise alias the original.
 func cloneChatMessage(m chat.Message) chat.Message {
@@ -421,16 +438,7 @@ func (s *Session) AllowedDirectories() []string {
 
 // GetAllMessages extracts all messages from the session, including from sub-sessions
 func (s *Session) GetAllMessages() []Message {
-	s.mu.RLock()
-	items := make([]Item, len(s.Messages))
-	for i, item := range s.Messages {
-		if item.Message != nil {
-			items[i] = Item{Message: cloneMessage(item.Message)}
-		} else {
-			items[i] = item
-		}
-	}
-	s.mu.RUnlock()
+	items := s.snapshotItems()
 
 	var messages []Message
 	for _, item := range items {
@@ -881,16 +889,7 @@ func (s *Session) GetMessages(a *agent.Agent, extraSystemMessages ...chat.Messag
 
 	// Take a snapshot of Messages under the lock, copying Message structs
 	// to avoid racing with UpdateMessage which may modify the pointed-to objects.
-	s.mu.RLock()
-	items := make([]Item, len(s.Messages))
-	for i, item := range s.Messages {
-		if item.Message != nil {
-			items[i] = Item{Message: cloneMessage(item.Message), Summary: item.Summary, SubSession: item.SubSession, Cost: item.Cost}
-		} else {
-			items[i] = item
-		}
-	}
-	s.mu.RUnlock()
+	items := s.snapshotItems()
 
 	// Build session summary messages (vary per session)
 	summaryMessages, startIndex := buildSessionSummaryMessages(items)
