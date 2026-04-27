@@ -1,17 +1,14 @@
 package dialog
 
 import (
-	"cmp"
 	"slices"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/docker/docker-agent/pkg/tui/components/scrollview"
 	"github.com/docker/docker-agent/pkg/tui/components/toolcommon"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
@@ -30,80 +27,41 @@ type ThemeChoice struct {
 
 // themePickerDialog is a dialog for selecting a theme.
 type themePickerDialog struct {
-	BaseDialog
+	pickerCore
 
-	textInput  textinput.Model
-	themes     []ThemeChoice
-	filtered   []ThemeChoice
-	selected   int
-	keyMap     commandPaletteKeyMap
-	scrollview *scrollview.Model
-
-	// Double-click detection
-	lastClickTime  time.Time
-	lastClickIndex int
+	themes   []ThemeChoice
+	filtered []ThemeChoice
 
 	// Original theme for restoration on cancel
 	originalThemeRef string
 
 	// Avoid re-applying the same preview repeatedly (e.g., during filtering)
 	lastPreviewRef string
+
+	// Cached grouped list rebuilt on every render so mouse hit-testing
+	// and findSelectedLine share the layout used by View().
+	cached *groupedList
 }
+
+// customThemesSeparatorLabel labels the separator above the custom themes group.
+const customThemesSeparatorLabel = "Custom themes"
 
 // NewThemePickerDialog creates a new theme picker dialog.
 // originalThemeRef is the currently active theme ref (for restoration on cancel).
 func NewThemePickerDialog(themes []ThemeChoice, originalThemeRef string) Dialog {
-	ti := textinput.New()
-	ti.Placeholder = "Type to search themes…"
-	ti.Focus()
-	ti.CharLimit = 100
-	ti.SetWidth(50)
-	ti.SetStyles(styles.DialogInputStyle)
+	d := &themePickerDialog{
+		pickerCore:       newPickerCore(themePickerLayout, "Type to search themes…"),
+		originalThemeRef: originalThemeRef,
+	}
+	d.textInput.CharLimit = 100
 
-	// Sort themes: built-in first, then custom. Within each section:
-	// current first, then default, then alphabetically.
+	// Sort themes: built-in first, then custom. Within each section: current
+	// first, then default, then alphabetically.
 	sortedThemes := make([]ThemeChoice, len(themes))
 	copy(sortedThemes, themes)
 	slices.SortFunc(sortedThemes, func(a, b ThemeChoice) int {
-		getPriority := func(t ThemeChoice) int {
-			if t.IsBuiltin {
-				return 0
-			}
-			return 1
-		}
-		pa, pb := getPriority(a), getPriority(b)
-		if pa != pb {
-			return cmp.Compare(pa, pb)
-		}
-		if a.IsCurrent != b.IsCurrent {
-			if a.IsCurrent {
-				return -1
-			}
-			return 1
-		}
-		if a.IsDefault != b.IsDefault {
-			if a.IsDefault {
-				return -1
-			}
-			return 1
-		}
-		na := strings.ToLower(a.Name)
-		nb := strings.ToLower(b.Name)
-		if na != nb {
-			return cmp.Compare(na, nb)
-		}
-		return cmp.Compare(a.Ref, b.Ref)
+		return comparePickerSortKeys(themeSortKeys(a), themeSortKeys(b))
 	})
-
-	d := &themePickerDialog{
-		textInput:        ti,
-		themes:           themes,
-		filtered:         nil,
-		keyMap:           defaultCommandPaletteKeyMap(),
-		scrollview:       scrollview.New(scrollview.WithReserveScrollbarSpace(true)),
-		originalThemeRef: originalThemeRef,
-	}
-
 	d.themes = sortedThemes
 	d.filterThemes()
 
@@ -111,18 +69,44 @@ func NewThemePickerDialog(themes []ThemeChoice, originalThemeRef string) Dialog 
 	for i, t := range d.filtered {
 		if t.IsCurrent {
 			d.selected = i
-			d.scrollview.EnsureLineVisible(d.findSelectedLine(nil)) // Scroll to current selection on open
+			d.scrollview.EnsureLineVisible(d.findSelectedLine())
 			break
 		}
 	}
 
-	// Initialize preview tracking to current selection (theme is already applied when dialog opens)
+	// Initialize preview tracking to current selection (theme is already
+	// applied when dialog opens).
 	if d.selected >= 0 && d.selected < len(d.filtered) {
-		sel := d.filtered[d.selected]
-		d.lastPreviewRef = sel.Ref
+		d.lastPreviewRef = d.filtered[d.selected].Ref
 	}
 
 	return d
+}
+
+// themeSortKeys derives the sort key tuple from a ThemeChoice.
+func themeSortKeys(t ThemeChoice) pickerSortKeys {
+	section := 1
+	if t.IsBuiltin {
+		section = 0
+	}
+	return pickerSortKeys{
+		Section:   section,
+		IsCurrent: t.IsCurrent,
+		IsDefault: t.IsDefault,
+		Name:      t.Name,
+		Tiebreak:  t.Ref,
+	}
+}
+
+// themePickerLayout is the layout used by the theme picker.
+var themePickerLayout = pickerLayout{
+	WidthPercent:    pickerWidthPercent,
+	MinWidth:        pickerMinWidth,
+	MaxWidth:        pickerMaxWidth,
+	HeightPercent:   pickerHeightPercent,
+	MaxHeight:       pickerMaxHeight,
+	ListOverhead:    pickerListVerticalOverhead,
+	ListStartOffset: pickerListStartOffset,
 }
 
 func (d *themePickerDialog) Init() tea.Cmd {
@@ -147,8 +131,8 @@ func (d *themePickerDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	case tea.PasteMsg:
 		var cmd tea.Cmd
 		d.textInput, cmd = d.textInput.Update(msg)
-		if selectionChanged := d.filterThemes(); selectionChanged {
-			d.scrollview.EnsureLineVisible(d.findSelectedLine(nil))
+		if d.filterThemes() {
+			d.scrollview.EnsureLineVisible(d.findSelectedLine())
 			return d, tea.Batch(cmd, d.emitPreview())
 		}
 		return d, cmd
@@ -156,18 +140,14 @@ func (d *themePickerDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		// Scrollbar clicks handled above; this handles list item clicks
 		if msg.Button == tea.MouseLeft {
-			if themeIdx := d.mouseYToThemeIndex(msg.Y); themeIdx >= 0 {
-				now := time.Now()
-				if themeIdx == d.lastClickIndex && now.Sub(d.lastClickTime) < styles.DoubleClickThreshold {
+			if themeIdx := d.mouseListIndex(msg.Y, d.lineToThemeIndex); themeIdx >= 0 {
+				if d.recordClick(themeIdx) {
 					d.selected = themeIdx
-					d.lastClickTime = time.Time{}
 					cmd := d.handleSelection()
 					return d, cmd
 				}
 				oldSelected := d.selected
 				d.selected = themeIdx
-				d.lastClickTime = now
-				d.lastClickIndex = themeIdx
 				if d.selected != oldSelected {
 					cmd := d.emitPreview()
 					return d, cmd
@@ -184,14 +164,14 @@ func (d *themePickerDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, d.keyMap.Escape):
 			return d, tea.Sequence(
-				core.CmdHandler(CloseDialogMsg{}),
+				closeDialogCmd(),
 				core.CmdHandler(messages.ThemeCancelPreviewMsg{OriginalRef: d.originalThemeRef}),
 			)
 
 		case key.Matches(msg, d.keyMap.Up):
 			if d.selected > 0 {
 				d.selected--
-				d.scrollview.EnsureLineVisible(d.findSelectedLine(nil))
+				d.scrollview.EnsureLineVisible(d.findSelectedLine())
 				cmd := d.emitPreview()
 				return d, cmd
 			}
@@ -200,7 +180,7 @@ func (d *themePickerDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		case key.Matches(msg, d.keyMap.Down):
 			if d.selected < len(d.filtered)-1 {
 				d.selected++
-				d.scrollview.EnsureLineVisible(d.findSelectedLine(nil))
+				d.scrollview.EnsureLineVisible(d.findSelectedLine())
 				cmd := d.emitPreview()
 				return d, cmd
 			}
@@ -213,8 +193,8 @@ func (d *themePickerDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			d.textInput, cmd = d.textInput.Update(msg)
-			if selectionChanged := d.filterThemes(); selectionChanged {
-				d.scrollview.EnsureLineVisible(d.findSelectedLine(nil))
+			if d.filterThemes() {
+				d.scrollview.EnsureLineVisible(d.findSelectedLine())
 				return d, tea.Batch(cmd, d.emitPreview())
 			}
 			return d, cmd
@@ -224,29 +204,11 @@ func (d *themePickerDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	return d, nil
 }
 
-func (d *themePickerDialog) mouseYToThemeIndex(y int) int {
-	dialogRow, _ := d.Position()
-	maxItems := d.scrollview.VisibleHeight()
-
-	listStartY := dialogRow + pickerListStartOffset
-	listEndY := listStartY + maxItems
-
-	if y < listStartY || y >= listEndY {
-		return -1
-	}
-
-	lineInView := y - listStartY
-	scrollOffset := d.scrollview.ScrollOffset()
-	actualLine := scrollOffset + lineInView
-
-	return d.lineToThemeIndex(actualLine)
-}
-
 func (d *themePickerDialog) handleSelection() tea.Cmd {
 	if d.selected >= 0 && d.selected < len(d.filtered) {
 		selected := d.filtered[d.selected]
 		return tea.Sequence(
-			core.CmdHandler(CloseDialogMsg{}),
+			closeDialogCmd(),
 			core.CmdHandler(messages.ChangeThemeMsg{ThemeRef: selected.Ref}),
 		)
 	}
@@ -257,13 +219,11 @@ func (d *themePickerDialog) handleSelection() tea.Cmd {
 func (d *themePickerDialog) emitPreview() tea.Cmd {
 	if d.selected >= 0 && d.selected < len(d.filtered) {
 		selected := d.filtered[d.selected]
-
 		// Skip if we're already previewing this exact selection.
 		if selected.Ref == d.lastPreviewRef {
 			return nil
 		}
 		d.lastPreviewRef = selected.Ref
-
 		return core.CmdHandler(messages.ThemePreviewMsg{
 			ThemeRef:    selected.Ref,
 			OriginalRef: d.originalThemeRef,
@@ -272,34 +232,10 @@ func (d *themePickerDialog) emitPreview() tea.Cmd {
 	return nil
 }
 
-const customThemesSeparatorLabel = "── Custom themes "
+// buildList rebuilds the cached grouped list of themes including separators.
+func (d *themePickerDialog) buildList(contentWidth int) *groupedList {
+	gl := newGroupedList()
 
-func (d *themePickerDialog) dialogSize() (dialogWidth, maxHeight, contentWidth int) {
-	dialogWidth = max(min(d.Width()*pickerWidthPercent/100, pickerMaxWidth), pickerMinWidth)
-	maxHeight = min(d.Height()*pickerHeightPercent/100, pickerMaxHeight)
-	contentWidth = dialogWidth - pickerDialogPadding - d.scrollview.ReservedCols()
-	return dialogWidth, maxHeight, contentWidth
-}
-
-// SetSize sets the dialog dimensions and configures the scrollview.
-func (d *themePickerDialog) SetSize(width, height int) tea.Cmd {
-	cmd := d.BaseDialog.SetSize(width, height)
-	_, maxHeight, contentWidth := d.dialogSize()
-	regionWidth := contentWidth + d.scrollview.ReservedCols()
-	visLines := max(1, maxHeight-pickerListVerticalOverhead)
-	d.scrollview.SetSize(regionWidth, visLines)
-	return cmd
-}
-
-func (d *themePickerDialog) View() string {
-	dialogWidth, _, contentWidth := d.dialogSize()
-	d.textInput.SetWidth(contentWidth)
-
-	// Build all theme lines
-	var allLines []string
-	customSeparatorShown := false
-
-	// Pre-compute which groups exist to decide on separators
 	hasBuiltinThemes := false
 	for _, t := range d.filtered {
 		if t.IsBuiltin {
@@ -308,42 +244,53 @@ func (d *themePickerDialog) View() string {
 		}
 	}
 
+	customSeparatorShown := false
 	for i, theme := range d.filtered {
-		// Add separator before first custom theme if there are built-in themes above.
 		if !theme.IsBuiltin && !customSeparatorShown {
 			if hasBuiltinThemes {
-				separatorLine := styles.MutedStyle.Render(customThemesSeparatorLabel + strings.Repeat("─", max(0, contentWidth-lipgloss.Width(customThemesSeparatorLabel)-2)))
-				allLines = append(allLines, separatorLine)
+				gl.AddNonItem(RenderGroupSeparator(customThemesSeparatorLabel, contentWidth))
 			}
 			customSeparatorShown = true
 		}
-
-		allLines = append(allLines, d.renderTheme(theme, i == d.selected, contentWidth))
+		gl.AddItem(d.renderTheme(theme, i == d.selected, contentWidth))
 	}
+	d.cached = gl
+	return gl
+}
 
-	regionWidth := contentWidth + d.scrollview.ReservedCols()
+// lineToThemeIndex returns the theme index for a rendered line, or -1 for
+// separators. Used by mouse hit-testing.
+func (d *themePickerDialog) lineToThemeIndex(line int) int {
+	if d.cached == nil {
+		d.buildList(0)
+	}
+	return d.cached.ItemForLine(line)
+}
 
-	// Set scrollview position for mouse hit-testing (auto-computed from dialog position)
-	dialogRow, dialogCol := d.Position()
-	d.scrollview.SetPosition(dialogCol+3, dialogRow+pickerListStartOffset)
+// findSelectedLine returns the line index for the currently selected theme.
+func (d *themePickerDialog) findSelectedLine() int {
+	if d.cached == nil {
+		d.buildList(0)
+	}
+	return d.cached.LineForItem(d.selected)
+}
 
-	d.scrollview.SetContent(allLines, len(allLines))
+func (d *themePickerDialog) View() string {
+	dialogWidth, _, contentWidth := d.dialogSize()
+	d.textInput.SetWidth(contentWidth)
+
+	gl := d.buildList(contentWidth)
+	d.updateScrollviewPosition()
+	d.scrollview.SetContent(gl.Lines(), len(gl.Lines()))
 
 	var scrollableContent string
 	if len(d.filtered) == 0 {
-		visLines := d.scrollview.VisibleHeight()
-		emptyLines := []string{"", styles.DialogContentStyle.
-			Italic(true).Align(lipgloss.Center).Width(contentWidth).
-			Render("No themes found")}
-		for len(emptyLines) < visLines {
-			emptyLines = append(emptyLines, "")
-		}
-		scrollableContent = d.scrollview.ViewWithLines(emptyLines)
+		scrollableContent = d.renderEmptyState("No themes found", contentWidth)
 	} else {
 		scrollableContent = d.scrollview.View()
 	}
 
-	content := NewContent(regionWidth).
+	content := NewContent(d.regionWidth(contentWidth)).
 		AddTitle("Select Theme").
 		AddSpace().
 		AddContent(d.textInput.View()).
@@ -366,16 +313,13 @@ func (d *themePickerDialog) renderTheme(theme ThemeChoice, selected bool, maxWid
 		currentBadgeStyle = currentBadgeStyle.Background(styles.MobyBlue)
 	}
 
-	// Display name
 	displayName := theme.Name
 
-	// Build description: for custom themes, show filename (without user: prefix)
-	// For built-in themes, don't show filename - just the name is enough
+	// For custom themes, show filename for identification. Built-in themes
+	// don't need a description.
 	var desc string
 	if !theme.IsBuiltin {
-		// Custom theme - show filename for identification
-		baseRef := strings.TrimPrefix(theme.Ref, styles.UserThemePrefix)
-		desc = baseRef
+		desc = strings.TrimPrefix(theme.Ref, styles.UserThemePrefix)
 	}
 
 	// Calculate badge widths - show all applicable badges
@@ -392,22 +336,18 @@ func (d *themePickerDialog) renderTheme(theme ThemeChoice, selected bool, maxWid
 		separatorWidth = lipgloss.Width(" • ")
 	}
 
-	// Maximum width for name (leaving space for badges and description).
 	maxNameWidth := maxWidth - badgeWidth
 	if desc != "" {
 		minDescWidth := min(10, lipgloss.Width(desc))
 		maxNameWidth = maxWidth - badgeWidth - separatorWidth - minDescWidth
 	}
 
-	// Truncate name if needed.
 	if lipgloss.Width(displayName) > maxNameWidth {
 		displayName = toolcommon.TruncateText(displayName, maxNameWidth)
 	}
 
-	// Build the name with colored badges - show all applicable badges.
-	// Order: name (current) (default) - most important context first.
-	var nameParts []string
-	nameParts = append(nameParts, nameStyle.Render(displayName))
+	// Build the name with colored badges in order: name (current) (default).
+	nameParts := []string{nameStyle.Render(displayName)}
 	if theme.IsCurrent {
 		nameParts = append(nameParts, currentBadgeStyle.Render(" (current)"))
 	}
@@ -428,11 +368,6 @@ func (d *themePickerDialog) renderTheme(theme ThemeChoice, selected bool, maxWid
 	return name
 }
 
-func (d *themePickerDialog) Position() (row, col int) {
-	dialogWidth, maxHeight, _ := d.dialogSize()
-	return CenterPosition(d.Width(), d.Height(), dialogWidth, maxHeight)
-}
-
 func (d *themePickerDialog) filterThemes() (selectionChanged bool) {
 	query := strings.ToLower(strings.TrimSpace(d.textInput.Value()))
 
@@ -442,13 +377,12 @@ func (d *themePickerDialog) filterThemes() (selectionChanged bool) {
 		prevRef = d.filtered[d.selected].Ref
 	}
 
-	d.filtered = nil
+	d.filtered = d.filtered[:0]
 	for _, theme := range d.themes {
 		if query == "" {
 			d.filtered = append(d.filtered, theme)
 			continue
 		}
-
 		searchText := strings.ToLower(theme.Name + " " + theme.Ref)
 		if strings.Contains(searchText, query) {
 			d.filtered = append(d.filtered, theme)
@@ -466,84 +400,12 @@ func (d *themePickerDialog) filterThemes() (selectionChanged bool) {
 		}
 	}
 
-	// Reset scroll when filtering.
 	d.scrollview.SetScrollOffset(0)
+	d.cached = nil // layout will be rebuilt on next render
 
-	// Determine if selection changed.
 	newRef := ""
 	if d.selected >= 0 && d.selected < len(d.filtered) {
 		newRef = d.filtered[d.selected].Ref
 	}
 	return newRef != prevRef
-}
-
-// lineToThemeIndex converts a line index (in the rendered list including separators)
-// to a theme index in d.filtered. Returns -1 if the line is a separator.
-func (d *themePickerDialog) lineToThemeIndex(lineIdx int) int {
-	hasBuiltinThemes := false
-	for _, t := range d.filtered {
-		if t.IsBuiltin {
-			hasBuiltinThemes = true
-			break
-		}
-	}
-
-	currentLine := 0
-	customSeparatorShown := false
-
-	for i, theme := range d.filtered {
-		// Custom separator before first custom theme (if built-in themes exist above).
-		if !theme.IsBuiltin && !customSeparatorShown {
-			if hasBuiltinThemes {
-				if currentLine == lineIdx {
-					return -1
-				}
-				currentLine++
-			}
-			customSeparatorShown = true
-		}
-
-		if currentLine == lineIdx {
-			return i
-		}
-		currentLine++
-	}
-
-	return -1
-}
-
-// findSelectedLine returns the line index (including separators) that corresponds to the selected theme.
-func (d *themePickerDialog) findSelectedLine(_ []string) int {
-	if d.selected < 0 || d.selected >= len(d.filtered) {
-		return 0
-	}
-
-	hasBuiltinThemes := false
-	for _, t := range d.filtered {
-		if t.IsBuiltin {
-			hasBuiltinThemes = true
-			break
-		}
-	}
-
-	lineIndex := 0
-	customSeparatorShown := false
-
-	for i := range d.selected + 1 {
-		theme := d.filtered[i]
-
-		if !theme.IsBuiltin && !customSeparatorShown {
-			if hasBuiltinThemes && i <= d.selected {
-				lineIndex++
-			}
-			customSeparatorShown = true
-		}
-
-		if i == d.selected {
-			return lineIndex
-		}
-		lineIndex++
-	}
-
-	return lineIndex
 }

@@ -8,11 +8,9 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/docker/go-units"
 
 	"github.com/docker/docker-agent/pkg/fsx"
-	"github.com/docker/docker-agent/pkg/tui/components/scrollview"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -27,20 +25,31 @@ type fileEntry struct {
 }
 
 const (
+	// filePickerListOverhead = title(1) + space(1) + dir(1) + input(1) +
+	// separator(1) + space(1) + help row(2) + borders/padding(3)
 	filePickerListOverhead = 11
-	filePickerListStartY   = 7 // border(1) + padding(1) + title(1) + space(1) + dir(1) + input(1) + separator(1)
+	// filePickerListStartY = border(1) + padding(1) + title(1) + space(1) +
+	// dir(1) + input(1) + separator(1)
+	filePickerListStartY = 7
 )
 
-type filePickerDialog struct {
-	BaseDialog
+// filePickerLayout is the layout used by the file picker.
+var filePickerLayout = pickerLayout{
+	WidthPercent:    80,
+	MinWidth:        60,
+	MaxWidth:        80,
+	HeightPercent:   70,
+	MaxHeight:       30,
+	ListOverhead:    filePickerListOverhead,
+	ListStartOffset: filePickerListStartY,
+}
 
-	textInput   textinput.Model
+type filePickerDialog struct {
+	pickerCore
+
 	currentDir  string
 	entries     []fileEntry
 	filtered    []fileEntry
-	selected    int
-	scrollview  *scrollview.Model
-	keyMap      commandPaletteKeyMap
 	err         error
 	showHidden  bool
 	showIgnored bool
@@ -50,12 +59,6 @@ type filePickerDialog struct {
 // If initialPath is provided and is a directory, it starts in that directory.
 // If initialPath is a file, it starts in the file's directory with the file pre-selected.
 func NewFilePickerDialog(initialPath string) Dialog {
-	ti := textinput.New()
-	ti.Placeholder = "Type to filter files…"
-	ti.Focus()
-	ti.CharLimit = 256
-	ti.SetWidth(50)
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
@@ -68,7 +71,6 @@ func NewFilePickerDialog(initialPath string) Dialog {
 		if !filepath.IsAbs(initialPath) {
 			initialPath = filepath.Join(cwd, initialPath)
 		}
-
 		info, err := os.Stat(initialPath)
 		if err == nil {
 			if info.IsDir() {
@@ -86,10 +88,8 @@ func NewFilePickerDialog(initialPath string) Dialog {
 	}
 
 	d := &filePickerDialog{
-		textInput:  ti,
+		pickerCore: newPickerCore(filePickerLayout, "Type to filter files…"),
 		currentDir: startDir,
-		scrollview: scrollview.New(scrollview.WithReserveScrollbarSpace(true)),
-		keyMap:     defaultCommandPaletteKeyMap(),
 	}
 
 	d.loadDirectory()
@@ -204,7 +204,7 @@ func (d *filePickerDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 
 		switch {
 		case key.Matches(msg, d.keyMap.Escape):
-			return d, core.CmdHandler(CloseDialogMsg{})
+			return d, closeDialogCmd()
 
 		case key.Matches(msg, d.keyMap.Up):
 			if d.selected > 0 {
@@ -230,7 +230,7 @@ func (d *filePickerDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 					return d, nil
 				}
 				return d, tea.Sequence(
-					core.CmdHandler(CloseDialogMsg{}),
+					closeDialogCmd(),
 					core.CmdHandler(messages.InsertFileRefMsg{FilePath: entry.path}),
 				)
 			}
@@ -285,13 +285,6 @@ func (d *filePickerDialog) filterEntries() {
 	d.scrollview.SetScrollOffset(0)
 }
 
-func (d *filePickerDialog) dialogSize() (dialogWidth, maxHeight, contentWidth int) {
-	dialogWidth = max(min(d.Width()*80/100, 80), 60)
-	maxHeight = min(d.Height()*70/100, 30)
-	contentWidth = dialogWidth - 6 - d.scrollview.ReservedCols()
-	return dialogWidth, maxHeight, contentWidth
-}
-
 func (d *filePickerDialog) View() string {
 	dialogWidth, _, contentWidth := d.dialogSize()
 	d.textInput.SetWidth(contentWidth)
@@ -302,45 +295,26 @@ func (d *filePickerDialog) View() string {
 	}
 	dirLine := styles.MutedStyle.Render("📁 " + displayDir)
 
-	// Build all entry lines
 	var allLines []string
 	for i, entry := range d.filtered {
 		allLines = append(allLines, d.renderEntry(entry, i == d.selected, contentWidth))
 	}
 
-	regionWidth := contentWidth + d.scrollview.ReservedCols()
-	visibleLines := d.scrollview.VisibleHeight()
-
-	// Set scrollview position for mouse hit-testing (auto-computed from dialog position)
-	dialogRow, dialogCol := d.Position()
-	d.scrollview.SetPosition(dialogCol+3, dialogRow+filePickerListStartY)
-
+	d.updateScrollviewPosition()
 	d.scrollview.SetContent(allLines, len(allLines))
 
 	var scrollableContent string
 	switch {
 	case d.err != nil:
-		errLines := []string{"", styles.ErrorStyle.
-			Align(lipgloss.Center).Width(contentWidth).
-			Render(d.err.Error())}
-		for len(errLines) < visibleLines {
-			errLines = append(errLines, "")
-		}
-		scrollableContent = d.scrollview.ViewWithLines(errLines)
+		scrollableContent = d.renderErrorState(d.err.Error(), contentWidth)
 	case len(d.filtered) == 0:
-		emptyLines := []string{"", styles.DialogContentStyle.
-			Italic(true).Align(lipgloss.Center).Width(contentWidth).
-			Render("No files found")}
-		for len(emptyLines) < visibleLines {
-			emptyLines = append(emptyLines, "")
-		}
-		scrollableContent = d.scrollview.ViewWithLines(emptyLines)
+		scrollableContent = d.renderEmptyState("No files found", contentWidth)
 	default:
 		scrollableContent = d.scrollview.View()
 	}
 
 	helpRow1, helpRow2 := d.filePickerHelpKeysRows()
-	content := NewContent(regionWidth).
+	content := NewContent(d.regionWidth(contentWidth)).
 		AddTitle("Attach File").
 		AddSpace().
 		AddContent(dirLine).
@@ -353,16 +327,6 @@ func (d *filePickerDialog) View() string {
 		Build()
 
 	return styles.DialogStyle.Width(dialogWidth).Render(content)
-}
-
-// SetSize sets the dialog dimensions and configures the scrollview region.
-func (d *filePickerDialog) SetSize(width, height int) tea.Cmd {
-	cmd := d.BaseDialog.SetSize(width, height)
-	_, maxHeight, contentWidth := d.dialogSize()
-	regionWidth := contentWidth + d.scrollview.ReservedCols()
-	visibleLines := max(1, maxHeight-filePickerListOverhead)
-	d.scrollview.SetSize(regionWidth, visibleLines)
-	return cmd
 }
 
 func (d *filePickerDialog) renderEntry(entry fileEntry, selected bool, maxWidth int) string {
@@ -411,9 +375,4 @@ func (d *filePickerDialog) filePickerHelpKeysRows() (row1, row2 []string) {
 		"alt+i", ignoredLabel,
 	}
 	return row1, row2
-}
-
-func (d *filePickerDialog) Position() (row, col int) {
-	dialogWidth, maxHeight, _ := d.dialogSize()
-	return CenterPosition(d.Width(), d.Height(), dialogWidth, maxHeight)
 }

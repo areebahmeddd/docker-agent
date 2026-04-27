@@ -138,7 +138,7 @@ type workingDirPickerDialog struct {
 	favoriteDirs []string
 	favoriteSet  map[string]bool
 	tuiStore     *tuistate.Store
-	keyMap       commandPaletteKeyMap
+	keyMap       pickerKeyMap
 
 	// Tab click regions (recomputed each render)
 	tabRegions []tabRegion
@@ -191,7 +191,7 @@ func NewWorkingDirPickerDialog(recentDirs, favoriteDirs []string, store *tuistat
 		favoriteDirs: favoriteDirs,
 		favoriteSet:  favSet,
 		tuiStore:     store,
-		keyMap:       defaultCommandPaletteKeyMap(),
+		keyMap:       defaultPickerKeyMap(),
 		pinnedScroll: scrollview.New(scrollview.WithReserveScrollbarSpace(true)),
 		recentScroll: scrollview.New(scrollview.WithReserveScrollbarSpace(true)),
 		browseScroll: scrollview.New(scrollview.WithReserveScrollbarSpace(true)),
