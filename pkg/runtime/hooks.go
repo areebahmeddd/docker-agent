@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // buildHooksExecutors builds a [hooks.Executor] for every agent in the
@@ -175,6 +176,84 @@ func (r *LocalRuntime) notify(ctx context.Context, a *agent.Agent, event hooks.E
 		NotificationLevel:   level,
 		NotificationMessage: message,
 	}, nil)
+}
+
+// Agent-switch kinds passed via [hooks.Input.AgentSwitchKind] to
+// describe what kind of transition triggered the on_agent_switch
+// event. Constants instead of literals so the hook contract is
+// discoverable from the runtime side and a typo trips a compile
+// error.
+const (
+	agentSwitchKindTransferTask       = "transfer_task"
+	agentSwitchKindTransferTaskReturn = "transfer_task_return"
+	agentSwitchKindHandoff            = "handoff"
+)
+
+// executeOnAgentSwitchHooks fires on_agent_switch when the runtime
+// changes the active agent. Observational; failures are logged. The
+// hook runs alongside the existing [AgentSwitching] event, so users
+// who already consume that event see no behaviour change.
+func (r *LocalRuntime) executeOnAgentSwitchHooks(ctx context.Context, a *agent.Agent, sessionID, fromAgent, toAgent, kind string) {
+	r.dispatchHook(ctx, a, hooks.EventOnAgentSwitch, &hooks.Input{
+		SessionID:       sessionID,
+		FromAgent:       fromAgent,
+		ToAgent:         toAgent,
+		AgentSwitchKind: kind,
+	}, nil)
+}
+
+// executeOnSessionResumeHooks fires on_session_resume when the user
+// explicitly approves continuation past the configured
+// max_iterations limit. Observational; failures are logged. The hook
+// runs alongside the existing event-channel signalling so audit /
+// quota / alerting pipelines can react without subscribing to the
+// per-session channel.
+func (r *LocalRuntime) executeOnSessionResumeHooks(ctx context.Context, a *agent.Agent, sessionID string, prevMax, newMax int) {
+	r.dispatchHook(ctx, a, hooks.EventOnSessionResume, &hooks.Input{
+		SessionID:             sessionID,
+		PreviousMaxIterations: prevMax,
+		NewMaxIterations:      newMax,
+	}, nil)
+}
+
+// Verdicts and sources for [hooks.EventOnToolApprovalDecision]. Constants
+// instead of literals so the contract between executeWithApproval and
+// the hook protocol is discoverable from the runtime side and a typo
+// trips a compile error.
+const (
+	ApprovalDecisionAllow    = "allow"
+	ApprovalDecisionDeny     = "deny"
+	ApprovalDecisionCanceled = "canceled"
+
+	ApprovalSourceYolo                    = "yolo"
+	ApprovalSourceSessionPermissionsAllow = "session_permissions_allow"
+	ApprovalSourceSessionPermissionsDeny  = "session_permissions_deny"
+	ApprovalSourceTeamPermissionsAllow    = "team_permissions_allow"
+	ApprovalSourceTeamPermissionsDeny     = "team_permissions_deny"
+	ApprovalSourceReadOnlyHint            = "readonly_hint"
+	ApprovalSourceUserApproved            = "user_approved"
+	ApprovalSourceUserApprovedSession     = "user_approved_session"
+	ApprovalSourceUserApprovedTool        = "user_approved_tool"
+	ApprovalSourceUserRejected            = "user_rejected"
+	ApprovalSourceContextCanceled         = "context_canceled"
+)
+
+// executeOnToolApprovalDecisionHooks fires on_tool_approval_decision
+// after the runtime's approval chain has resolved a verdict for a
+// tool call. Fired once per call from each return path of
+// [executeWithApproval], so a single hook gets one record per tool
+// call regardless of which step decided.
+func (r *LocalRuntime) executeOnToolApprovalDecisionHooks(
+	ctx context.Context,
+	sess *session.Session,
+	a *agent.Agent,
+	toolCall tools.ToolCall,
+	decision, source string,
+) {
+	input := newHooksInput(sess, toolCall)
+	input.ApprovalDecision = decision
+	input.ApprovalSource = source
+	r.dispatchHook(ctx, a, hooks.EventOnToolApprovalDecision, input, nil)
 }
 
 // executeBeforeLLMCallHooks fires before_llm_call just before each

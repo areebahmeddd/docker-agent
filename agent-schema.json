@@ -567,6 +567,27 @@
           "items": {
             "$ref": "#/definitions/HookDefinition"
           }
+        },
+        "on_agent_switch": {
+          "type": "array",
+          "description": "Hooks that run whenever the runtime moves the active agent to a new one (transfer_task, handoff, or the return after a transferred task completes). Receives from_agent, to_agent, and agent_switch_kind in the input. Observational; useful for audit, transcript, and metrics pipelines that track which agent ran which tools.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
+        },
+        "on_session_resume": {
+          "type": "array",
+          "description": "Hooks that run when the user explicitly approves the runtime to continue past its configured max_iterations limit. Receives previous_max_iterations and new_max_iterations in the input. Observational; useful for alerting on extended-runtime sessions or for billing/quota pipelines that meter resumes.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
+        },
+        "on_tool_approval_decision": {
+          "type": "array",
+          "description": "Hooks that run after the runtime's tool approval chain (yolo / permissions / readonly / ask) resolves a verdict for a tool call, before the call is executed (allow) or its error response is recorded (deny / canceled). Receives approval_decision (\"allow\" | \"deny\" | \"canceled\") and approval_source (a stable classifier of which step decided). Observational; gives audit pipelines a single \"who approved what\" record without re-implementing the chain.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
         }
       },
       "additionalProperties": false

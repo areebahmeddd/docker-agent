@@ -302,7 +302,9 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				case req := <-r.resumeChan:
 					if req.Type == ResumeTypeApprove {
 						slog.Debug("User chose to continue after max iterations", "agent", a.Name())
-						runtimeMaxIterations = iteration + 10
+						newMax := iteration + 10
+						r.executeOnSessionResumeHooks(ctx, a, sess.ID, runtimeMaxIterations, newMax)
+						runtimeMaxIterations = newMax
 					} else {
 						slog.Debug("User rejected continuation", "agent", a.Name())
 
