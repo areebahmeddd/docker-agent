@@ -417,18 +417,17 @@ func (s *server) resolveSession(id string, msgs []ChatCompletionMessage) (*sessi
 }
 
 // maybeStoreConversation inserts the session into the cache after a
-// run. We only need to insert when the conversation is new — existing
-// entries are mutated in place.
+// run. We always insert to handle the case where the conversation was
+// evicted while the request was in flight.
 func (s *server) maybeStoreConversation(id string, sess *session.Session, isNew bool) {
 	if id == "" || s.conversations == nil {
 		return
 	}
-	if isNew {
-		s.conversations.Put(id, sess)
-	}
+	// Always Put, even for existing conversations, to handle eviction
+	// during request processing. Put refreshes the lastUsed timestamp
+	// and ensures the updated session is stored.
+	s.conversations.Put(id, sess)
 }
-
-// chatCompletion runs the agent to completion and replies with one
 // non-streaming OpenAI ChatCompletion object.
 func (s *server) chatCompletion(c echo.Context, rt runtime.Runtime, sess *session.Session, model string) error {
 	var toolCalls []ToolCallReference
