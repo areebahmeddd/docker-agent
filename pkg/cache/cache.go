@@ -99,9 +99,7 @@ func New(cfg Config) (*Cache, error) {
 		if err := loadFromFile(cfg.Path, c.entries); err != nil {
 			return nil, err
 		}
-		if info, err := os.Stat(cfg.Path); err == nil {
-			c.mtime = info.ModTime()
-		}
+		c.mtime = mtimeOf(cfg.Path)
 	}
 
 	return c, nil
@@ -114,9 +112,7 @@ func New(cfg Config) (*Cache, error) {
 // our last load (typically by another process), the in-memory state is
 // reloaded before the lookup so cross-process writes are visible.
 func (c *Cache) Lookup(question string) (string, bool) {
-	if c.path != "" {
-		c.maybeReload()
-	}
+	c.maybeReload()
 	key := c.normalize(question)
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -151,25 +147,58 @@ func (c *Cache) Store(question, response string) {
 	}
 
 	if c.path != "" {
-		if mtime, err := persistEntry(c.path, key, response); err != nil {
+		if err := c.persistToDisk(key, response); err != nil {
 			// Persistence failures are not fatal: keep the entry
 			// in memory and let the next Store retry the file
 			// write.
 			slog.Warn("cache persist failed; keeping entry in memory only",
 				"path", c.path, "error", err)
-		} else if !mtime.IsZero() {
-			c.mtime = mtime
 		}
 	}
 
 	c.entries[key] = response
 }
 
+// persistToDisk takes the cross-process lock on c.path's sibling .lock
+// file, reloads the on-disk entries, merges (key, response), writes
+// atomically, and refreshes c.mtime. The caller must hold c.mu.
+//
+// Skips the write — but still refreshes c.mtime — when the on-disk
+// state already has key → response, which keeps cross-process replays
+// free of redundant disk traffic.
+func (c *Cache) persistToDisk(key, response string) error {
+	unlock, err := lockFile(c.path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	entries := make(map[string]string)
+	if err := loadFromFile(c.path, entries); err != nil {
+		return err
+	}
+
+	if existing, ok := entries[key]; ok && existing == response {
+		c.mtime = mtimeOf(c.path)
+		return nil
+	}
+
+	entries[key] = response
+	if err := writeJSON(c.path, entries); err != nil {
+		return err
+	}
+	c.mtime = mtimeOf(c.path)
+	return nil
+}
+
 // maybeReload reloads c.entries from disk when the file mtime has
-// advanced since our last load. Called from Lookup. Safe to no-op
-// when the file doesn't exist or can't be stat'd (the in-memory
+// advanced since our last load. Called from Lookup; a no-op when the
+// cache is in-memory only or when the file can't be stat'd (in-memory
 // state is preserved).
 func (c *Cache) maybeReload() {
+	if c.path == "" {
+		return
+	}
 	info, err := os.Stat(c.path)
 	if err != nil {
 		return
@@ -236,58 +265,25 @@ func loadFromFile(path string, entries map[string]string) error {
 	return nil
 }
 
-// persistEntry takes a cross-process advisory lock on path's sibling
-// .lock file, reloads the on-disk entries, merges (key, response),
-// and atomically writes the result. It returns the file mtime after
-// writing (zero on error), used by callers to track external changes.
-//
-// Skips the write — and returns the unchanged mtime — when the on-disk
-// state already has key → response, keeping cross-process replays free
-// of redundant disk traffic.
-func persistEntry(path, key, response string) (time.Time, error) {
-	lock, err := acquireFileLock(path)
-	if err != nil {
-		return time.Time{}, err
-	}
-	defer lock.release()
-
-	entries := make(map[string]string)
-	if err := loadFromFile(path, entries); err != nil {
-		return time.Time{}, err
-	}
-
-	if existing, ok := entries[key]; ok && existing == response {
-		if info, err := os.Stat(path); err == nil {
-			return info.ModTime(), nil
-		}
-		return time.Time{}, nil
-	}
-
-	entries[key] = response
-	if err := writeJSON(path, entries); err != nil {
-		return time.Time{}, err
-	}
-
+// mtimeOf returns the file modification time at path, or the zero value
+// if path doesn't exist or can't be stat'd. The zero value is safe to
+// compare via [time.Time.Equal] in [Cache.maybeReload].
+func mtimeOf(path string) time.Time {
 	if info, err := os.Stat(path); err == nil {
-		return info.ModTime(), nil
+		return info.ModTime()
 	}
-	return time.Time{}, nil
+	return time.Time{}
 }
 
-// fileLock is the handle returned by acquireFileLock. Call release when
-// done — typically as a deferred call in the same function that
-// acquired the lock.
-type fileLock struct {
-	f *os.File
-}
-
-// acquireFileLock opens (creating if needed) "<path>.lock" and takes an
-// exclusive advisory lock on it. The lock is released by calling
-// release on the returned handle. The lock file itself is intentionally
-// never renamed or deleted: doing so would let two processes lock
-// different inodes for the same logical resource and lose mutual
-// exclusion.
-func acquireFileLock(path string) (*fileLock, error) {
+// lockFile takes an exclusive advisory lock on "<path>.lock", creating
+// the lock file (and any missing parent directory) if needed. The
+// returned closure releases the lock and closes the descriptor; defer
+// it in the caller.
+//
+// The lock file is intentionally never renamed or deleted: doing so
+// would let two processes lock different inodes for the same logical
+// resource and lose mutual exclusion. It's a long-lived sentinel.
+func lockFile(path string) (func(), error) {
 	lockPath := path + ".lock"
 	if dir := filepath.Dir(lockPath); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -302,15 +298,13 @@ func acquireFileLock(path string) (*fileLock, error) {
 		f.Close()
 		return nil, fmt.Errorf("locking %q: %w", lockPath, err)
 	}
-	return &fileLock{f: f}, nil
-}
-
-// release unlocks and closes the lock file. Errors are ignored: the OS
-// will release the lock when the descriptor is closed regardless, and a
-// failure to close at this point can't usefully be propagated.
-func (l *fileLock) release() {
-	_ = unlockFile(l.f)
-	_ = l.f.Close()
+	// Errors in the release path are ignored: the OS will release the
+	// lock when the descriptor is closed regardless, and a failure to
+	// close at this point can't usefully be propagated.
+	return func() {
+		_ = unlockFile(f)
+		_ = f.Close()
+	}, nil
 }
 
 // writeJSON atomically writes entries to path as pretty-printed JSON.
