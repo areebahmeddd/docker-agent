@@ -345,10 +345,16 @@ func aggregate(results []hookResult, event EventType) *Result {
 				}
 			}
 			if event == EventBeforeCompaction && hso.Summary != "" && final.Summary == "" {
-				// First non-empty summary wins. Concatenating multiple
-				// summaries would produce nonsense, so we keep the first
-				// hook's verdict and let later hooks fall through to the
-				// observational path.
+				// First non-empty summary in CONFIG ORDER wins. Hooks run
+				// concurrently (see runHook above), but we iterate
+				// `results` in the order they were configured — the index
+				// of each hook's slot in `results` is fixed at registration
+				// time, not by completion order — so this verdict is
+				// deterministic regardless of which hook finishes first.
+				// Concatenating multiple summaries would produce nonsense,
+				// and merging them would require a second LLM call,
+				// defeating the point of the hook-supplied summary (which
+				// is to skip the LLM entirely).
 				final.Summary = hso.Summary
 			}
 			if hso.AdditionalContext != "" {

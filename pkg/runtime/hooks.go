@@ -342,19 +342,25 @@ func (r *LocalRuntime) executeBeforeCompactionHooks(
 // executeAfterCompactionHooks fires after a successful compaction has
 // applied a summary to the session. Purely observational — the result
 // is discarded.
+//
+// The Input carries the *pre-compaction* token counts (what was
+// summarized), not the new ones, so handlers can naturally express
+// "compacted from X to Y". The post-compaction counts are reflected
+// in the next [NewTokenUsageEvent] the runtime emits.
 func (r *LocalRuntime) executeAfterCompactionHooks(
 	ctx context.Context,
 	sess *session.Session,
 	a *agent.Agent,
 	reason string,
 	contextLimit int64,
+	preInputTokens, preOutputTokens int64,
 	summary string,
 	events chan Event,
 ) {
 	r.dispatchHook(ctx, a, hooks.EventAfterCompaction, &hooks.Input{
 		SessionID:        sess.ID,
-		InputTokens:      sess.InputTokens,
-		OutputTokens:     sess.OutputTokens,
+		InputTokens:      preInputTokens,
+		OutputTokens:     preOutputTokens,
 		ContextLimit:     contextLimit,
 		CompactionReason: reason,
 		Summary:          summary,

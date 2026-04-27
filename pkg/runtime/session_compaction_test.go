@@ -218,7 +218,9 @@ func TestDoCompactBeforeHookSuppliesSummary(t *testing.T) {
 
 // TestDoCompactAfterHookFires verifies that after_compaction fires
 // when a summary was applied (LLM-path or hook-path), and that the
-// hook receives the produced summary text.
+// hook receives the produced summary text together with the
+// *pre-compaction* token counts (so observability handlers can
+// express "compacted from X to Y").
 func TestDoCompactAfterHookFires(t *testing.T) {
 	dir := t.TempDir()
 	logFile := dir + "/after.log"
@@ -231,7 +233,11 @@ func TestDoCompactAfterHookFires(t *testing.T) {
 			{Type: "command", Command: "echo '" + beforeJSON + "'", Timeout: 5},
 		},
 		AfterCompaction: []latest.HookDefinition{
-			{Type: "command", Command: "cat | jq -r '.summary' > " + logFile, Timeout: 5},
+			// Capture summary plus pre-compaction tokens; if the runtime
+			// regresses to passing post-compaction values we'll see
+			// input_tokens == EstimateMessageTokens(summary) instead of
+			// the pre-compaction 1234.
+			{Type: "command", Command: "cat | jq -r '\"\\(.summary)|\\(.input_tokens)|\\(.output_tokens)\"' > " + logFile, Timeout: 5},
 		},
 	}
 
@@ -251,6 +257,11 @@ func TestDoCompactAfterHookFires(t *testing.T) {
 	sess := session.New(session.WithMessages([]session.Item{
 		session.NewMessageItem(&session.Message{Message: chat.Message{Role: chat.MessageRoleUser, Content: "hi"}}),
 	}))
+	// Seed pre-compaction token counts so we can verify the hook
+	// receives them rather than the post-compaction values (which
+	// would be approximately EstimateMessageTokens(summary) and 0).
+	sess.InputTokens = 1234
+	sess.OutputTokens = 567
 
 	events := make(chan Event, 32)
 	rt.compactWithReason(t.Context(), sess, "", compactionReasonThreshold, events)
@@ -260,8 +271,8 @@ func TestDoCompactAfterHookFires(t *testing.T) {
 
 	logged, readErr := os.ReadFile(logFile)
 	require.NoError(t, readErr, "after_compaction hook must have run and produced the log file")
-	assert.Equal(t, customSummary+"\n", string(logged),
-		"after_compaction must receive the produced summary verbatim")
+	assert.Equal(t, customSummary+"|1234|567\n", string(logged),
+		"after_compaction must receive the produced summary and the *pre-compaction* token counts")
 }
 
 // TestDoCompactNoHooksMatchesPriorBehavior is a regression guard: with

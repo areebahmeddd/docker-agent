@@ -185,13 +185,13 @@ func TestSplitIndexForKeep(t *testing.T) {
 			wantSplit: 0,
 		},
 		{
-			name: "all messages fit in keep budget - compact everything",
+			name: "all messages fit in keep budget - returned len(messages) signals 'compact everything, keep nothing' (the manual /compact contract)",
 			messages: []chat.Message{
 				msg(chat.MessageRoleUser, "short"),
 				msg(chat.MessageRoleAssistant, "short"),
 			},
 			maxTokens: 100_000,
-			wantSplit: 2, // all fit → compact everything
+			wantSplit: 2, // all fit → messages[:2] is everything to compact, messages[2:] is empty (nothing kept)
 		},
 		{
 			name: "recent messages kept, older ones compacted",

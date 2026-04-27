@@ -190,6 +190,14 @@ func nonSystemMessages(sess *session.Session, a *agent.Agent) []chat.Message {
 // are dropped from the front of the to-compact list to make room.
 func extractMessages(sess *session.Session, a *agent.Agent, contextLimit int64, additionalPrompt string) ([]chat.Message, int) {
 	messages := nonSystemMessages(sess, a)
+	// Clear Cost and CacheControl on our local copy of the conversation.
+	// Cost is per-message bookkeeping that's already accumulated into
+	// sess.TotalCost(); leaving it set would double-count when the
+	// summarization session reports its own TotalCost back through the
+	// compactor.Result.Cost field. CacheControl pins a provider cache
+	// checkpoint (Anthropic prompt caching, etc.); pinning it inside the
+	// summarization sub-call would associate the cache point with the
+	// throwaway compaction conversation rather than the parent session.
 	for i := range messages {
 		messages[i].Cost = 0
 		messages[i].CacheControl = false

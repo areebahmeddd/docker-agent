@@ -93,11 +93,18 @@ func SplitIndexForKeep(messages []chat.Message, maxTokens int64) int {
 	return len(messages)
 }
 
-// FirstIndexInBudget walks messages from the end and returns the
-// earliest index whose suffix fits in contextLimit, snapping to
-// user/assistant boundaries. Used to truncate the conversation we
-// hand to the summarization model so the request itself doesn't
-// blow the context window.
+// FirstIndexInBudget returns the smallest index N such that
+// messages[N:] fits within contextLimit, snapping to a user/assistant
+// turn boundary. Used to truncate the conversation handed to the
+// summarization model so the request itself doesn't blow the context
+// window.
+//
+// When the entire slice fits within contextLimit, the function returns
+// the index of the earliest user/assistant message in the suffix —
+// older tool-only messages (which can't legally start a conversation)
+// are dropped. In the unusual case of a tool-only conversation with
+// no user/asst turns, it returns len(messages); callers should treat
+// that as "nothing to send" and skip the truncation.
 func FirstIndexInBudget(messages []chat.Message, contextLimit int64) int {
 	var tokens int64
 	lastValidMessageSeen := len(messages)

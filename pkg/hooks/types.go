@@ -77,15 +77,25 @@ const (
 	// "overflow", or "manual") so handlers can decide based on real
 	// session pressure.
 	//
+	// [Input.ContextLimit] may be 0 when the model definition is
+	// unavailable (e.g. an unknown model ID); hooks should treat 0 as
+	// "unknown" rather than as a real limit.
+	//
 	// Hook authors should be cautious about denying when
 	// CompactionReason == "overflow": the runtime is recovering from a
-	// context-overflow error and a denial here will leave the session
-	// unable to make progress.
+	// context-overflow error. A denial here means the next LLM call will
+	// hit the same overflow; the runtime allows at most one
+	// retry-with-compaction (see maxOverflowCompactions in loop.go), so a
+	// second denial fails the turn and surfaces the overflow as an Error
+	// event.
 	EventBeforeCompaction EventType = "before_compaction"
 	// EventAfterCompaction fires after a session compaction completes
 	// successfully (a summary was applied to the session). The Input
-	// carries the produced [Input.Summary] for observability or
-	// downstream pipelines (audit logs, telemetry, ...). It is purely
+	// carries the produced [Input.Summary] together with the
+	// *pre-compaction* [Input.InputTokens] / [Input.OutputTokens] (what
+	// was summarized) so observability handlers can naturally express
+	// "compacted from X to Y". The post-compaction counts are reflected
+	// in the next runtime token-usage event. AfterCompaction is purely
 	// observational; output is ignored.
 	EventAfterCompaction EventType = "after_compaction"
 )
@@ -145,11 +155,18 @@ type Input struct {
 	// Compaction fields (BeforeCompaction, AfterCompaction).
 	InputTokens  int64 `json:"input_tokens,omitempty"`
 	OutputTokens int64 `json:"output_tokens,omitempty"`
-	// ContextLimit is the model's context-window size in tokens, when known.
+	// ContextLimit is the model's context-window size in tokens. It is
+	// 0 when the model definition is unavailable (e.g. an unknown
+	// model ID); hooks should treat 0 as "unknown" rather than as a
+	// real limit.
 	ContextLimit int64 `json:"context_limit,omitempty"`
 	// CompactionReason is one of "threshold", "overflow", "manual".
 	CompactionReason string `json:"compaction_reason,omitempty"`
-	// Summary is populated only on AfterCompaction with the final summary text.
+	// Summary is the produced compaction summary text. It is populated
+	// only on AfterCompaction (BeforeCompaction fires before any
+	// summary exists); on AfterCompaction it carries the actual text
+	// applied to the session so observability handlers can audit /
+	// archive what was summarized.
 	Summary string `json:"summary,omitempty"`
 }
 

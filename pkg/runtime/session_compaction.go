@@ -101,6 +101,14 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 		}
 	}
 
+	// Capture the pre-compaction token counts so the after_compaction
+	// hook can observe what was summarized ("compacted from X to Y").
+	// We snapshot before applying the result because the apply step
+	// resets sess.OutputTokens to 0 and replaces sess.InputTokens with
+	// the new summary's estimated size.
+	preInputTokens := sess.InputTokens
+	preOutputTokens := sess.OutputTokens
+
 	// Apply the summary to the session. This is intrinsically
 	// runtime-private: it mutates session-internal state and persists
 	// through the runtime's session store.
@@ -117,8 +125,12 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	events <- SessionSummary(sess.ID, result.Summary, a.Name(), result.FirstKeptEntry)
 
 	// after_compaction: observational. Fired only when a summary was
-	// actually applied to the session.
-	r.executeAfterCompactionHooks(ctx, sess, a, reason, contextLimit, result.Summary, events)
+	// actually applied to the session. The hook receives the
+	// pre-compaction token counts (what was summarized) so observability
+	// handlers can compute "compacted from X to Y"; the new (lower)
+	// counts live on sess.InputTokens / sess.OutputTokens after this
+	// returns and are exposed via the next TokenUsageEvent.
+	r.executeAfterCompactionHooks(ctx, sess, a, reason, contextLimit, preInputTokens, preOutputTokens, result.Summary, events)
 }
 
 // summaryFromHook lifts a before_compaction hook's Summary verdict into
@@ -128,8 +140,9 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 //
 // The hook only contributes the summary text; the runtime fills in the
 // kept-tail boundary (matching the LLM path's policy) and estimates the
-// summary's token count for session bookkeeping. Cost is zero since no
-// LLM call ran.
+// summary's token count for session bookkeeping. The Result.Cost is
+// left at its zero value because no LLM call ran — the hook produced
+// the summary itself, so there's nothing to bill.
 func summaryFromHook(sess *session.Session, a *agent.Agent, pre *hooks.Result) *compactor.Result {
 	if pre == nil || pre.Summary == "" {
 		return nil
@@ -139,6 +152,8 @@ func summaryFromHook(sess *session.Session, a *agent.Agent, pre *hooks.Result) *
 	return &compactor.Result{
 		Summary:        pre.Summary,
 		FirstKeptEntry: compactor.ComputeFirstKeptEntry(sess, a),
+		// Estimate the summary's token count for session bookkeeping;
+		// no LLM was called so Cost stays at the zero value.
 		InputTokens: compaction.EstimateMessageTokens(&chat.Message{
 			Role:    chat.MessageRoleAssistant,
 			Content: pre.Summary,
