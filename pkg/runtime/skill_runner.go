@@ -70,18 +70,18 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 	// If the skill declares a model override, apply it for the duration of
 	// the sub-session. WithAgentModel handles every accepted form (named
 	// model, alloy, inline provider/model, inline alloy) and returns a
-	// CAS-safe restore func; on failure we log a warning and fall back to
-	// the agent's currently-active model.
+	// CAS-safe restore func that is always non-nil; on failure we log a
+	// warning and fall back to the agent's currently-active model.
 	if skill.Model != "" {
-		if restore, err := r.WithAgentModel(ctx, ca, skill.Model); err != nil {
+		restore, err := r.WithAgentModel(ctx, ca, skill.Model)
+		defer restore()
+		if err != nil {
 			slog.Warn("Failed to apply skill model override; using current model",
 				"agent", ca,
 				"skill", params.Name,
 				"model", skill.Model,
 				"error", err,
 			)
-		} else {
-			defer restore()
 		}
 	}
 
