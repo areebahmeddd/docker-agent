@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -137,10 +138,11 @@ type Session struct {
 	CustomModelsUsed []string `json:"custom_models_used,omitempty"`
 
 	// AttachedFiles records absolute paths of files the user attached to this
-	// session via @-mentions in the editor or /attach directives. Sub-sessions
-	// created via task transfer inherit this list so that delegated agents can
-	// reference the same files without having to scan the workspace or guess
-	// from a bare filename. Paths are deduplicated and order-preserved.
+	// session via the editor's @-mentions, the in-message /attach directive, or
+	// the CLI --attach flag. Sub-sessions created via task transfer inherit
+	// this list so that delegated agents can reference the same files without
+	// having to scan the workspace or guess from a bare filename. Paths are
+	// deduplicated and order-preserved.
 	AttachedFiles []string `json:"attached_files,omitempty"`
 
 	// ExcludedTools lists tool names that should be filtered out of the agent's
@@ -489,12 +491,20 @@ func (s *Session) AddMessageUsageRecord(agentName, model string, cost float64, u
 }
 
 // AddAttachedFile records absPath as a file the user attached to this session.
-// Empty paths are ignored; duplicates (already in AttachedFiles) are dropped.
+// The path must be absolute; relative paths are silently dropped (with a debug
+// log) since they would be ambiguous to sub-agents started in a fresh working
+// directory. Empty paths and duplicates already present in AttachedFiles are
+// also dropped.
+//
 // The recorded paths are propagated to sub-sessions created via task transfer
 // so that delegated agents can read the same files without having to scan the
 // workspace or guess from a bare filename.
 func (s *Session) AddAttachedFile(absPath string) {
 	if absPath == "" {
+		return
+	}
+	if !filepath.IsAbs(absPath) {
+		slog.Debug("ignoring non-absolute attached file path", "session_id", s.ID, "path", absPath)
 		return
 	}
 	s.mu.Lock()

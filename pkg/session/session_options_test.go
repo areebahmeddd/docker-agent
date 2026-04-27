@@ -83,6 +83,14 @@ func TestAddAttachedFile(t *testing.T) {
 		assert.Empty(t, s.AttachedFilesSnapshot())
 	})
 
+	t.Run("ignores non-absolute paths", func(t *testing.T) {
+		s := New()
+		s.AddAttachedFile("foo.go")
+		s.AddAttachedFile("./bar.go")
+		s.AddAttachedFile("../baz.go")
+		assert.Empty(t, s.AttachedFilesSnapshot())
+	})
+
 	t.Run("snapshot is independent of session storage", func(t *testing.T) {
 		s := New()
 		s.AddAttachedFile("/abs/foo.go")
@@ -93,6 +101,6 @@ func TestAddAttachedFile(t *testing.T) {
 }
 
 func TestWithAttachedFiles(t *testing.T) {
-	s := New(WithAttachedFiles([]string{"/abs/foo.go", "", "/abs/bar.go", "/abs/foo.go"}))
+	s := New(WithAttachedFiles([]string{"/abs/foo.go", "", "relative/path.go", "/abs/bar.go", "/abs/foo.go"}))
 	assert.Equal(t, []string{"/abs/foo.go", "/abs/bar.go"}, s.AttachedFilesSnapshot())
 }
