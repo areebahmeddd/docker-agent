@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -499,16 +500,31 @@ func formatProviderError(p *providerErrorBody) string {
 
 // firstJSONObject returns the first complete JSON object found in s, or nil.
 // encoding/json handles escaped quotes and braces inside string values.
+// Limits parsing to 1MB to prevent memory exhaustion from malicious or
+// accidentally huge error responses.
+//
+// To handle '{' characters in URLs or status text (e.g., "param={value}"),
+// we try parsing from each '{' position until we find valid JSON.
 func firstJSONObject(s string) []byte {
-	start := strings.IndexByte(s, '{')
-	if start < 0 {
-		return nil
+	const maxJSONSize = 1 << 20 // 1MB
+
+	pos := 0
+	for {
+		idx := strings.IndexByte(s[pos:], '{')
+		if idx < 0 {
+			return nil
+		}
+		start := pos + idx
+
+		reader := io.LimitReader(strings.NewReader(s[start:]), maxJSONSize)
+		var raw json.RawMessage
+		if err := json.NewDecoder(reader).Decode(&raw); err == nil {
+			// Successfully decoded JSON
+			return raw
+		}
+		// Try next '{' position
+		pos = start + 1
 	}
-	var raw json.RawMessage
-	if err := json.NewDecoder(strings.NewReader(s[start:])).Decode(&raw); err != nil {
-		return nil
-	}
-	return raw
 }
 
 // scalarString renders a JSON scalar as text. JSON numbers decode to float64;
