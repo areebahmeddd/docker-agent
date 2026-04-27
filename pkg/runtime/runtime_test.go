@@ -2615,16 +2615,18 @@ func TestAppendNewlineToQueuedMessage(t *testing.T) {
 		assert.Equal(t, chat.MessagePartTypeImageURL, got.MultiContent[1].Type)
 	})
 
-	t.Run("multi-content message with no text part gets a new text part appended", func(t *testing.T) {
+	t.Run("multi-content message with no text part is returned unchanged", func(t *testing.T) {
 		sm := QueuedMessage{
 			MultiContent: []chat.MessagePart{
 				{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/img.png"}},
 			},
 		}
 		got := appendNewlineToQueuedMessage(sm)
-		require.Len(t, got.MultiContent, 2)
-		assert.Equal(t, chat.MessagePartTypeText, got.MultiContent[1].Type)
-		assert.Equal(t, "\n", got.MultiContent[1].Text)
+		// Image-only messages have no text part to append \n to; they are immune to
+		// the run-on tokenisation problem because non-text parts carry their own
+		// envelope that acts as a separator. Return unchanged.
+		require.Len(t, got.MultiContent, 1)
+		assert.Equal(t, chat.MessagePartTypeImageURL, got.MultiContent[0].Type)
 	})
 
 	t.Run("original QueuedMessage is not mutated", func(t *testing.T) {
@@ -2634,6 +2636,12 @@ func TestAppendNewlineToQueuedMessage(t *testing.T) {
 		sm := QueuedMessage{MultiContent: parts}
 		_ = appendNewlineToQueuedMessage(sm)
 		assert.Equal(t, "original", parts[0].Text, "original slice must not be mutated")
+	})
+
+	t.Run("plain-text original not mutated", func(t *testing.T) {
+		sm := QueuedMessage{Content: "x"}
+		_ = appendNewlineToQueuedMessage(sm)
+		assert.Equal(t, "x", sm.Content)
 	})
 }
 
@@ -2661,7 +2669,7 @@ func TestDrainAndEmitSteered_MultipleMessages(t *testing.T) {
 	sess := session.New()
 	events := make(chan Event, 16)
 
-	drained := rt.drainAndEmitSteered(t.Context(), sess, events)
+	drained, _ := rt.drainAndEmitSteered(t.Context(), sess, events)
 	close(events)
 
 	assert.True(t, drained, "should report messages were drained")
@@ -2725,7 +2733,7 @@ func TestDrainAndEmitSteered_MultiContent(t *testing.T) {
 	sess := session.New()
 	events := make(chan Event, 16)
 
-	drained := rt.drainAndEmitSteered(t.Context(), sess, events)
+	drained, _ := rt.drainAndEmitSteered(t.Context(), sess, events)
 	close(events)
 
 	assert.True(t, drained)
