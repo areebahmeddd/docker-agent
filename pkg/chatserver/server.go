@@ -420,7 +420,13 @@ func (s *server) maybeStoreConversation(id string, sess *session.Session, isNew 
 // chatCompletion runs the agent to completion and replies with one
 // non-streaming OpenAI ChatCompletion object.
 func (s *server) chatCompletion(c echo.Context, rt runtime.Runtime, sess *session.Session, model string) error {
-	if err := runAgentLoop(c.Request().Context(), rt, sess, nil); err != nil {
+	var toolCalls []ToolCallReference
+	emit := agentEmit{
+		onToolCall: func(tc ToolCallReference) {
+			toolCalls = append(toolCalls, tc)
+		},
+	}
+	if err := runAgentLoop(c.Request().Context(), rt, sess, emit); err != nil {
 		return writeError(c, http.StatusInternalServerError, fmt.Sprintf("agent execution failed: %v", err))
 	}
 
@@ -432,8 +438,9 @@ func (s *server) chatCompletion(c echo.Context, rt runtime.Runtime, sess *sessio
 		Choices: []ChatCompletionChoice{{
 			Index: 0,
 			Message: ChatCompletionMessage{
-				Role:    "assistant",
-				Content: sess.GetLastAssistantMessageContent(),
+				Role:      "assistant",
+				Content:   sess.GetLastAssistantMessageContent(),
+				ToolCalls: toolCalls,
 			},
 			FinishReason: "stop",
 		}},
@@ -453,11 +460,22 @@ func (s *server) streamChatCompletion(c echo.Context, rt runtime.Runtime, sess *
 	// Initial "role: assistant" delta so clients can start rendering.
 	stream.send(ChatCompletionStreamDelta{Role: "assistant"}, "")
 
-	runErr := runAgentLoop(c.Request().Context(), rt, sess, func(content string) {
-		if content != "" {
-			stream.send(ChatCompletionStreamDelta{Content: content}, "")
-		}
-	})
+	emit := agentEmit{
+		onContent: func(content string) {
+			if content != "" {
+				stream.send(ChatCompletionStreamDelta{Content: content}, "")
+			}
+		},
+		onToolCall: func(tc ToolCallReference) {
+			// Surface tool calls to the client using OpenAI's exact wire
+			// shape: a single delta carrying the full tool_call entry.
+			// (OpenAI streams arguments token-by-token; we have them all
+			// at once, so one chunk per call is enough.) Tools still run
+			// server-side — this is purely for client visibility.
+			stream.send(ChatCompletionStreamDelta{ToolCalls: []ToolCallReference{tc}}, "")
+		},
+	}
+	runErr := runAgentLoop(c.Request().Context(), rt, sess, emit)
 	if runErr != nil {
 		// Emit a structured error envelope (OpenAI streams use a regular
 		// `data:` line carrying an `error` object, then close the stream

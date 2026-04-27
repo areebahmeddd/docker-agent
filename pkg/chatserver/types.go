@@ -76,10 +76,36 @@ func (s *StopSequences) UnmarshalJSON(data []byte) error {
 // content (image parts, audio, etc.) is not supported and falls back to the
 // `Content` string.
 type ChatCompletionMessage struct {
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	Name       string `json:"name,omitempty"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
+	Role       string              `json:"role"`
+	Content    string              `json:"content"`
+	Name       string              `json:"name,omitempty"`
+	ToolCallID string              `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCallReference `json:"tool_calls,omitempty"`
+}
+
+// ToolCallReference mirrors OpenAI's `tool_calls` entry. The server fills
+// it in on the *response* side so clients can introspect what tools the
+// agent invoked. Tools are still executed server-side; this is purely
+// informational.
+type ToolCallReference struct {
+	// Index is the position of the tool call in the assistant message.
+	// In streaming mode multiple chunks targeting the same Index are
+	// concatenated by the client.
+	Index int `json:"index,omitempty"`
+	// ID matches what is later echoed back as ToolCallID on `tool` role
+	// messages — useful when correlating tool calls with their results.
+	ID string `json:"id,omitempty"`
+	// Type is always "function" today; OpenAI reserves the field for
+	// future expansion.
+	Type string `json:"type,omitempty"`
+	// Function carries the tool's name and JSON-encoded arguments.
+	Function ToolCallFunction `json:"function"`
+}
+
+// ToolCallFunction mirrors OpenAI's nested tool function descriptor.
+type ToolCallFunction struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 // --- Non-streaming response -----------------------------------------------
@@ -126,8 +152,9 @@ type ChatCompletionStreamChoice struct {
 }
 
 type ChatCompletionStreamDelta struct {
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content,omitempty"`
+	Role      string              `json:"role,omitempty"`
+	Content   string              `json:"content,omitempty"`
+	ToolCalls []ToolCallReference `json:"tool_calls,omitempty"`
 }
 
 // --- Models endpoint ------------------------------------------------------

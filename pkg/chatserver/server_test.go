@@ -367,6 +367,26 @@ func TestStopSequences_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestSSEStream_ToolCallDelta(t *testing.T) {
+	rec := httptest.NewRecorder()
+	s := newSSEStream(rec, "chatcmpl-x", "root")
+	s.send(ChatCompletionStreamDelta{ToolCalls: []ToolCallReference{{
+		Index: 0,
+		ID:    "call_1",
+		Type:  "function",
+		Function: ToolCallFunction{
+			Name:      "search",
+			Arguments: `{"q":"docker"}`,
+		},
+	}}}, "")
+
+	body := rec.Body.String()
+	assert.Contains(t, body, `"tool_calls":[`)
+	assert.Contains(t, body, `"id":"call_1"`)
+	assert.Contains(t, body, `"name":"search"`)
+	assert.Contains(t, body, `"arguments":"{\"q\":\"docker\"}"`)
+}
+
 func TestSSEStream_SendError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s := newSSEStream(rec, "chatcmpl-x", "root")

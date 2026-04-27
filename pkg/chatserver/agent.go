@@ -126,8 +126,19 @@ func appendLatestUser(sess *session.Session, msgs []ChatCompletionMessage) {
 	}
 }
 
-// runAgentLoop drives the runtime to completion, forwarding assistant
-// content to emit (which may be nil for non-streaming mode).
+// agentEmit collects the side-effect callbacks invoked by runAgentLoop as
+// it drives the runtime. All callbacks are optional; nil means "ignore
+// this kind of event".
+type agentEmit struct {
+	// onContent fires for every assistant text delta from the model.
+	onContent func(string)
+	// onToolCall fires when the agent dispatches a tool. Called once per
+	// tool, with the tool already populated with its arguments.
+	onToolCall func(ToolCallReference)
+}
+
+// runAgentLoop drives the runtime to completion, forwarding events to
+// the supplied callbacks.
 //
 // The session is built with ToolsApproved=true and NonInteractive=true,
 // which means the runtime auto-approves tool calls and auto-stops on
@@ -140,13 +151,24 @@ func appendLatestUser(sess *session.Session, msgs []ChatCompletionMessage) {
 // All ErrorEvents seen in the run are joined into the returned error so
 // callers can see the full picture; the loop keeps draining until the
 // stream closes so the runtime can shut down cleanly.
-func runAgentLoop(ctx context.Context, rt runtime.Runtime, sess *session.Session, emit func(string)) error {
+func runAgentLoop(ctx context.Context, rt runtime.Runtime, sess *session.Session, emit agentEmit) error {
 	var runErrs []error
+	toolIndex := 0
 	for ev := range rt.RunStream(ctx, sess) {
 		switch e := ev.(type) {
 		case *runtime.AgentChoiceEvent:
-			if emit != nil {
-				emit(e.Content)
+			if emit.onContent != nil {
+				emit.onContent(e.Content)
+			}
+		case *runtime.ToolCallEvent:
+			if emit.onToolCall != nil {
+				emit.onToolCall(ToolCallReference{
+					Index:    toolIndex,
+					ID:       e.ToolCall.ID,
+					Type:     string(e.ToolCall.Type),
+					Function: ToolCallFunction{Name: e.ToolCall.Function.Name, Arguments: e.ToolCall.Function.Arguments},
+				})
+				toolIndex++
 			}
 		case *runtime.ToolCallConfirmationEvent:
 			// Defensive: should never fire while ToolsApproved=true.
