@@ -29,7 +29,8 @@ var newIDFn = func() string { return uuid.New().String() }
 const (
 	// DefaultMaxOldToolCallTokens is the default maximum number of tokens to keep from tool call
 	// arguments and results. Older tool calls beyond this budget will have their
-	// content replaced with a placeholder. Tokens are approximated as len/4.
+	// content replaced with a placeholder. Tokens are approximated by
+	// approximateTokens (len/4).
 	DefaultMaxOldToolCallTokens = 40000
 
 	// toolContentPlaceholder is the text used to replace truncated tool content
@@ -121,7 +122,8 @@ type Session struct {
 
 	// MaxOldToolCallTokens is the maximum number of tokens to keep from old tool call
 	// arguments and results. Older tool calls beyond this budget will have their
-	// content replaced with a placeholder. Tokens are approximated as len/4.
+	// content replaced with a placeholder. Tokens are approximated by
+	// approximateTokens (len/4).
 	// Set to -1 to disable truncation (unlimited tool content).
 	// Default: 40000 (when not configured or set to 0).
 	MaxOldToolCallTokens int `json:"max_old_tool_call_tokens,omitempty"`
@@ -1136,6 +1138,15 @@ func sanitizeToolCalls(messages []chat.Message) []chat.Message {
 	return out
 }
 
+// approximateTokens returns a coarse token count for a string, using the
+// industry rule-of-thumb of ~4 characters per token. The heuristic is good
+// enough for budgeting tool-content truncation; we do not need provider-exact
+// counts here. Centralised so tests can reason about budgets without
+// hard-coding the divisor.
+func approximateTokens(s string) int {
+	return len(s) / 4
+}
+
 // truncateOldToolContent replaces tool results with placeholders for older
 // messages that exceed the token budget. It processes messages from newest to
 // oldest, keeping recent tool content intact while truncating older content
@@ -1154,7 +1165,7 @@ func truncateOldToolContent(messages []chat.Message, maxTokens int) []chat.Messa
 		msg := &result[i]
 
 		if msg.Role == chat.MessageRoleTool {
-			tokens := len(msg.Content) / 4
+			tokens := approximateTokens(msg.Content)
 			if tokenBudget >= tokens {
 				tokenBudget -= tokens
 			} else {
