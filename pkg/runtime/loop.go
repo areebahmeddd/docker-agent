@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -16,7 +15,6 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/compaction"
-	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -265,71 +263,11 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			events <- ToolsetInfo(len(agentTools), false, a.Name())
 
 			// Check iteration limit
-			if runtimeMaxIterations > 0 && iteration >= runtimeMaxIterations {
-				slog.Debug(
-					"Maximum iterations reached",
-					"agent", a.Name(),
-					"iterations", iteration,
-					"max", runtimeMaxIterations,
-				)
-
-				events <- MaxIterationsReached(runtimeMaxIterations)
-
-				maxIterMsg := fmt.Sprintf("Maximum iterations reached (%d)", runtimeMaxIterations)
-				r.notifyMaxIterations(ctx, a, sess.ID, maxIterMsg)
-				r.executeOnUserInputHooks(ctx, sess.ID, "max iterations reached")
-
-				// In non-interactive mode (e.g. MCP server), auto-stop instead of
-				// blocking forever waiting for user input.
-				if sess.NonInteractive {
-					slog.Debug("Auto-stopping after max iterations (non-interactive)", "agent", a.Name())
-
-					assistantMessage := chat.Message{
-						Role: chat.MessageRoleAssistant,
-						Content: fmt.Sprintf(
-							"Execution stopped after reaching the configured max_iterations limit (%d).",
-							runtimeMaxIterations,
-						),
-						CreatedAt: r.now().Format(time.RFC3339),
-					}
-
-					addAgentMessage(sess, a, &assistantMessage, events)
-					return
-				}
-
-				// Wait for user decision (resume / reject)
-				select {
-				case req := <-r.resumeChan:
-					if req.Type == ResumeTypeApprove {
-						slog.Debug("User chose to continue after max iterations", "agent", a.Name())
-						newMax := iteration + 10
-						r.executeOnSessionResumeHooks(ctx, a, sess.ID, runtimeMaxIterations, newMax)
-						runtimeMaxIterations = newMax
-					} else {
-						slog.Debug("User rejected continuation", "agent", a.Name())
-
-						assistantMessage := chat.Message{
-							Role: chat.MessageRoleAssistant,
-							Content: fmt.Sprintf(
-								"Execution stopped after reaching the configured max_iterations limit (%d).",
-								runtimeMaxIterations,
-							),
-							CreatedAt: r.now().Format(time.RFC3339),
-						}
-
-						addAgentMessage(sess, a, &assistantMessage, events)
-						return
-					}
-
-				case <-ctx.Done():
-					slog.Debug(
-						"Context cancelled while waiting for resume confirmation",
-						"agent", a.Name(),
-						"session_id", sess.ID,
-					)
-					return
-				}
+			newMax, decision := r.enforceMaxIterations(ctx, sess, a, iteration, runtimeMaxIterations, events)
+			if decision == iterationStop {
+				return
 			}
+			runtimeMaxIterations = newMax
 
 			iteration++
 
@@ -423,51 +361,11 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			// Try primary model with fallback chain if configured
 			res, usedModel, err := r.tryModelWithFallback(streamCtx, a, model, messages, agentTools, sess, m, events)
 			if err != nil {
-				// Treat context cancellation as a graceful stop
-				if errors.Is(err, context.Canceled) {
-					slog.Debug("Model stream canceled by context", "agent", a.Name(), "session_id", sess.ID)
-					streamSpan.End()
-					return
-				}
-
-				// Auto-recovery: if the error is a context overflow and
-				// session compaction is enabled, compact the conversation
-				// and retry the request instead of surfacing raw errors.
-				// We allow at most r.maxOverflowCompactions consecutive attempts
-				// to avoid an infinite loop when compaction cannot reduce
-				// the context enough.
-				if _, ok := errors.AsType[*modelerrors.ContextOverflowError](err); ok && r.sessionCompaction && overflowCompactions < r.maxOverflowCompactions {
-					overflowCompactions++
-					slog.Warn("Context window overflow detected, attempting auto-compaction",
-						"agent", a.Name(),
-						"session_id", sess.ID,
-						"input_tokens", sess.InputTokens,
-						"output_tokens", sess.OutputTokens,
-						"context_limit", contextLimit,
-						"attempt", overflowCompactions,
-					)
-					events <- Warning(
-						"The conversation has exceeded the model's context window. Automatically compacting the conversation history...",
-						a.Name(),
-					)
-					r.Summarize(ctx, sess, "", events)
-
-					// After compaction, loop back to retry with the
-					// compacted context. The next iteration will re-fetch
-					// messages from the (now compacted) session.
-					streamSpan.End()
+				outcome := r.handleStreamError(ctx, sess, a, err, contextLimit, &overflowCompactions, streamSpan, events)
+				streamSpan.End()
+				if outcome == streamErrorRetry {
 					continue
 				}
-
-				streamSpan.RecordError(err)
-				streamSpan.SetStatus(codes.Error, "error handling stream")
-				slog.Error("All models failed", "agent", a.Name(), "error", err)
-				// Track error in telemetry
-				r.telemetry.RecordError(ctx, err.Error())
-				errMsg := modelerrors.FormatError(err)
-				events <- Error(errMsg)
-				r.notifyError(ctx, a, sess.ID, errMsg)
-				streamSpan.End()
 				return
 			}
 
