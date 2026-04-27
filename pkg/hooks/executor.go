@@ -68,8 +68,10 @@ func NewExecutorWithRegistry(config *Config, workingDir string, env []string, re
 	}
 }
 
-// compileEvents builds the per-event matcher lookup. Adding a new event
-// is a one-line change here.
+// compileEvents builds the per-event matcher lookup. This is the only
+// place in the runtime that enumerates events; the persisted side
+// owns the struct itself, its IsEmpty, and validate, all on
+// [latest.HooksConfig]. Adding a new event is a one-line change here.
 func compileEvents(c *Config) map[EventType][]matcher {
 	flat := func(hooks []Hook) []matcher {
 		if len(hooks) == 0 {
@@ -176,7 +178,7 @@ func (e *Executor) hooksFor(event EventType, toolName string) []Hook {
 // dedupKey returns a deterministic key identifying a hook by (type, command, args).
 func dedupKey(h Hook) string {
 	var b strings.Builder
-	b.WriteString(string(h.Type))
+	b.WriteString(h.Type)
 	b.WriteByte(0)
 	b.WriteString(h.Command)
 	for _, a := range h.Args {

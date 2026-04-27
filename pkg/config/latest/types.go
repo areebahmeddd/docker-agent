@@ -1727,6 +1727,15 @@ type HookDefinition struct {
 	Timeout int `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 }
 
+// GetTimeout returns the per-hook execution timeout, defaulting to 60
+// seconds when [HookDefinition.Timeout] is zero or negative.
+func (h *HookDefinition) GetTimeout() time.Duration {
+	if h.Timeout <= 0 {
+		return 60 * time.Second
+	}
+	return time.Duration(h.Timeout) * time.Second
+}
+
 // validate validates the HooksConfig
 func (h *HooksConfig) validate() error {
 	// Validate PreToolUse matchers

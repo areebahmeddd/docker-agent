@@ -6,7 +6,6 @@ package hooks
 
 import (
 	"encoding/json"
-	"time"
 )
 
 // EventType identifies a hook event.
@@ -42,8 +41,11 @@ const (
 	EventOnMaxIterations EventType = "on_max_iterations"
 )
 
-// HookType identifies the kind of handler used to run a hook.
-type HookType string
+// HookType values populate [Hook.Type]. It is an alias for string so a
+// hook authored in YAML round-trips through [latest.HookDefinition]
+// without any conversion; the executor validates the value at registry
+// lookup time.
+type HookType = string
 
 const (
 	// HookTypeCommand runs a shell command.
@@ -53,58 +55,6 @@ const (
 	// [Hook.Command].
 	HookTypeBuiltin HookType = "builtin"
 )
-
-// Hook is a single hook configuration entry.
-type Hook struct {
-	Type    HookType `json:"type" yaml:"type"`
-	Command string   `json:"command,omitempty" yaml:"command,omitempty"`
-	// Args are arbitrary string arguments passed to the hook handler.
-	// Builtin hooks receive them as the args parameter of [BuiltinFunc].
-	Args []string `json:"args,omitempty" yaml:"args,omitempty"`
-	// Timeout is the execution timeout in seconds (default: 60).
-	Timeout int `json:"timeout,omitempty" yaml:"timeout,omitempty"`
-}
-
-// GetTimeout returns the timeout duration, defaulting to 60 seconds.
-func (h *Hook) GetTimeout() time.Duration {
-	if h.Timeout <= 0 {
-		return 60 * time.Second
-	}
-	return time.Duration(h.Timeout) * time.Second
-}
-
-// MatcherConfig is a hook matcher with its hooks. Matcher is a regex
-// pattern matched against tool names; "" or "*" matches all tools.
-type MatcherConfig struct {
-	Matcher string `json:"matcher,omitempty" yaml:"matcher,omitempty"`
-	Hooks   []Hook `json:"hooks" yaml:"hooks"`
-}
-
-// Config is the hooks configuration for an agent.
-type Config struct {
-	PreToolUse      []MatcherConfig `json:"pre_tool_use,omitempty" yaml:"pre_tool_use,omitempty"`
-	PostToolUse     []MatcherConfig `json:"post_tool_use,omitempty" yaml:"post_tool_use,omitempty"`
-	SessionStart    []Hook          `json:"session_start,omitempty" yaml:"session_start,omitempty"`
-	TurnStart       []Hook          `json:"turn_start,omitempty" yaml:"turn_start,omitempty"`
-	BeforeLLMCall   []Hook          `json:"before_llm_call,omitempty" yaml:"before_llm_call,omitempty"`
-	AfterLLMCall    []Hook          `json:"after_llm_call,omitempty" yaml:"after_llm_call,omitempty"`
-	SessionEnd      []Hook          `json:"session_end,omitempty" yaml:"session_end,omitempty"`
-	OnUserInput     []Hook          `json:"on_user_input,omitempty" yaml:"on_user_input,omitempty"`
-	Stop            []Hook          `json:"stop,omitempty" yaml:"stop,omitempty"`
-	Notification    []Hook          `json:"notification,omitempty" yaml:"notification,omitempty"`
-	OnError         []Hook          `json:"on_error,omitempty" yaml:"on_error,omitempty"`
-	OnMaxIterations []Hook          `json:"on_max_iterations,omitempty" yaml:"on_max_iterations,omitempty"`
-}
-
-// IsEmpty returns true if no hooks are configured.
-func (c *Config) IsEmpty() bool {
-	return len(c.PreToolUse) == 0 && len(c.PostToolUse) == 0 &&
-		len(c.SessionStart) == 0 && len(c.TurnStart) == 0 &&
-		len(c.BeforeLLMCall) == 0 && len(c.AfterLLMCall) == 0 &&
-		len(c.SessionEnd) == 0 && len(c.OnUserInput) == 0 &&
-		len(c.Stop) == 0 && len(c.Notification) == 0 &&
-		len(c.OnError) == 0 && len(c.OnMaxIterations) == 0
-}
 
 // Input is the JSON-serializable payload passed to hooks via stdin.
 type Input struct {

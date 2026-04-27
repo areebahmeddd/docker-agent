@@ -28,7 +28,7 @@ func (r *LocalRuntime) buildHooksExecutors() {
 		if err != nil {
 			continue
 		}
-		cfg := builtins.ApplyAgentDefaults(hooks.FromConfig(a.Hooks()), builtins.AgentDefaults{
+		cfg := builtins.ApplyAgentDefaults(a.Hooks(), builtins.AgentDefaults{
 			AddDate:            a.AddDate(),
 			AddEnvironmentInfo: a.AddEnvironmentInfo(),
 			AddPromptFiles:     a.AddPromptFiles(),
