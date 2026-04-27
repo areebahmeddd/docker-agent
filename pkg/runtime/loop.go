@@ -84,8 +84,7 @@ func appendNewlineToQueuedMessage(sm QueuedMessage) QueuedMessage {
 		return sm
 	}
 	// Shallow-copy the slice so we don't mutate the original.
-	parts := make([]chat.MessagePart, len(sm.MultiContent))
-	copy(parts, sm.MultiContent)
+	parts := append([]chat.MessagePart(nil), sm.MultiContent...)
 	// Find the last text part and append \n to it.
 	for i := len(parts) - 1; i >= 0; i-- {
 		if parts[i].Type == chat.MessagePartTypeText {
