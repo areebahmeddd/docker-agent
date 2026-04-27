@@ -218,10 +218,16 @@ func (e *Executor) runHook(ctx context.Context, hook Hook, inputJSON []byte) hoo
 		if errors.Is(ctxErr, context.DeadlineExceeded) {
 			reason = fmt.Sprintf("timed out after %s", hook.GetTimeout())
 		}
-		return hookResult{err: fmt.Errorf("hook %q %s: %w", hook.Command, reason, ctxErr)}
+		return hookResult{
+			HandlerResult: HandlerResult{Stderr: res.Stderr, ExitCode: -1},
+			err:           fmt.Errorf("hook %q %s: %w", hook.Command, reason, ctxErr),
+		}
 	}
 	if err != nil {
-		return hookResult{err: err}
+		return hookResult{
+			HandlerResult: HandlerResult{Stderr: res.Stderr, ExitCode: -1},
+			err:           err,
+		}
 	}
 
 	// Fall back to the legacy "parse JSON from stdout" protocol.
