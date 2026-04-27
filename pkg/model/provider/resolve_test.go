@@ -54,7 +54,7 @@ func TestIsOpenAICompatibleProvider(t *testing.T) {
 	}
 
 	// Aliases that point to the openai api — the previously-uncovered tail.
-	for name, alias := range Aliases {
+	for name, alias := range EachAlias() {
 		if alias.APIType == "openai" {
 			t.Run("alias/"+name, func(t *testing.T) {
 				t.Parallel()

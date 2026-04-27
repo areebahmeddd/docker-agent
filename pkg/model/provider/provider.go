@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"iter"
 	"log/slog"
 	"maps"
 	"slices"
@@ -54,7 +55,7 @@ func IsKnownProvider(name string) bool {
 	if slices.Contains(CoreProviders, strings.ToLower(name)) {
 		return true
 	}
-	_, exists := Aliases[strings.ToLower(name)]
+	_, exists := LookupAlias(strings.ToLower(name))
 	return exists
 }
 
@@ -68,7 +69,7 @@ func CatalogProviders() []string {
 	providers = append(providers, CoreProviders...)
 
 	// Add aliases that have a defined BaseURL (they work out of the box)
-	for name, alias := range Aliases {
+	for name, alias := range EachAlias() {
 		if alias.BaseURL != "" {
 			providers = append(providers, name)
 		}
@@ -84,13 +85,17 @@ func IsCatalogProvider(name string) bool {
 		return true
 	}
 	// Check aliases with BaseURL
-	if alias, exists := Aliases[name]; exists && alias.BaseURL != "" {
+	if alias, exists := LookupAlias(name); exists && alias.BaseURL != "" {
 		return true
 	}
 	return false
 }
 
-// Aliases maps provider names to their corresponding configurations
+// Aliases maps provider names to their corresponding configurations.
+//
+// Most consumers should call [LookupAlias] for a single lookup or [EachAlias]
+// to iterate, both of which keep the rest of the codebase decoupled from this
+// concrete map. Direct mutation of Aliases is not supported.
 var Aliases = map[string]Alias{
 	"requesty": {
 		APIType:     "openai",
@@ -130,6 +135,27 @@ var Aliases = map[string]Alias{
 		BaseURL:     "https://api.githubcopilot.com",
 		TokenEnvVar: "GITHUB_TOKEN",
 	},
+}
+
+// LookupAlias returns the Alias registered for the given name (if any).
+// Lookup is case-sensitive; callers that need case-insensitive matching
+// should normalise the name first (e.g. [strings.ToLower]).
+func LookupAlias(name string) (Alias, bool) {
+	alias, ok := Aliases[name]
+	return alias, ok
+}
+
+// EachAlias returns an iterator over every registered (name, Alias) pair.
+// Iteration order is not guaranteed; callers that need a deterministic order
+// should sort by name.
+func EachAlias() iter.Seq2[string, Alias] {
+	return func(yield func(string, Alias) bool) {
+		for name, alias := range Aliases {
+			if !yield(name, alias) {
+				return
+			}
+		}
+	}
 }
 
 // Provider defines the interface for model providers
@@ -305,7 +331,7 @@ func resolveProviderType(cfg *latest.ModelConfig) string {
 			return apiType
 		}
 	}
-	if alias, exists := Aliases[cfg.Provider]; exists && alias.APIType != "" {
+	if alias, exists := LookupAlias(cfg.Provider); exists && alias.APIType != "" {
 		return alias.APIType
 	}
 	return cfg.Provider
@@ -337,7 +363,7 @@ func applyProviderDefaults(cfg *latest.ModelConfig, customProviders map[string]l
 		return enhancedCfg
 	}
 
-	if alias, exists := Aliases[cfg.Provider]; exists {
+	if alias, exists := LookupAlias(cfg.Provider); exists {
 		applyAliasFallbacks(enhancedCfg, alias)
 	}
 
@@ -571,7 +597,7 @@ func isOpenAICompatibleProvider(providerType string) bool {
 		return true
 	default:
 		// Check if it's an alias that maps to openai
-		if alias, exists := Aliases[providerType]; exists {
+		if alias, exists := LookupAlias(providerType); exists {
 			return alias.APIType == "openai"
 		}
 		return false
