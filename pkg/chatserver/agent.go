@@ -72,11 +72,29 @@ func buildSession(messages []ChatCompletionMessage) *session.Session {
 
 	hasUser := false
 	for _, m := range messages {
+		role := strings.ToLower(strings.TrimSpace(m.Role))
+		if len(m.Parts) > 0 && (role == "" || (role != "system" && role != "assistant" && role != "tool")) {
+			// Multi-part content: route through chat.MultiContent so the
+			// runtime/provider sees image parts. Only user-style messages
+			// support images today.
+			parts := convertParts(m.Parts)
+			if len(parts) == 0 {
+				continue
+			}
+			sess.AddMessage(&session.Message{Message: chat.Message{
+				Role:         chat.MessageRoleUser,
+				Content:      m.Content,
+				MultiContent: parts,
+			}})
+			hasUser = true
+			continue
+		}
+
 		content := m.Content
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(m.Role)) {
+		switch role {
 		case "system":
 			sess.AddMessage(session.SystemMessage(content))
 		case "assistant":
@@ -104,6 +122,38 @@ func buildSession(messages []ChatCompletionMessage) *session.Session {
 	return sess
 }
 
+// convertParts maps the chatserver wire shape to chat.MessagePart so
+// images and (future) other typed parts reach the runtime intact.
+// Unknown part types are dropped; an empty result tells the caller to
+// skip the message entirely.
+func convertParts(in []ContentPart) []chat.MessagePart {
+	out := make([]chat.MessagePart, 0, len(in))
+	for _, p := range in {
+		switch p.Type {
+		case "text":
+			if strings.TrimSpace(p.Text) == "" {
+				continue
+			}
+			out = append(out, chat.MessagePart{
+				Type: chat.MessagePartTypeText,
+				Text: p.Text,
+			})
+		case "image_url":
+			if p.ImageURL == nil || p.ImageURL.URL == "" {
+				continue
+			}
+			out = append(out, chat.MessagePart{
+				Type: chat.MessagePartTypeImageURL,
+				ImageURL: &chat.MessageImageURL{
+					URL:    p.ImageURL.URL,
+					Detail: chat.ImageURLDetail(p.ImageURL.Detail),
+				},
+			})
+		}
+	}
+	return out
+}
+
 // appendLatestUser walks msgs from the end and appends only the last
 // user-role message into sess. Used by conversation continuation, where
 // the session already contains the full prior history and we just need
@@ -111,14 +161,23 @@ func buildSession(messages []ChatCompletionMessage) *session.Session {
 func appendLatestUser(sess *session.Session, msgs []ChatCompletionMessage) {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
-		content := strings.TrimSpace(m.Content)
-		if content == "" {
-			continue
-		}
 		role := strings.ToLower(strings.TrimSpace(m.Role))
 		// Treat any non-system/assistant/tool role as user (matches
 		// buildSession's policy).
 		if role == "system" || role == "assistant" || role == "tool" {
+			continue
+		}
+		parts := convertParts(m.Parts)
+		if len(parts) > 0 {
+			sess.AddMessage(&session.Message{Message: chat.Message{
+				Role:         chat.MessageRoleUser,
+				Content:      m.Content,
+				MultiContent: parts,
+			}})
+			return
+		}
+		content := strings.TrimSpace(m.Content)
+		if content == "" {
 			continue
 		}
 		sess.AddMessage(session.UserMessage(m.Content))

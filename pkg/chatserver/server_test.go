@@ -2,6 +2,7 @@ package chatserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -338,6 +339,75 @@ func TestValidateSamplingParams(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
+}
+
+func TestChatCompletionMessage_UnmarshalContentString(t *testing.T) {
+	var m ChatCompletionMessage
+	require.NoError(t, json.Unmarshal([]byte(`{"role":"user","content":"hello"}`), &m))
+	assert.Equal(t, "user", m.Role)
+	assert.Equal(t, "hello", m.Content)
+	assert.Empty(t, m.Parts)
+}
+
+func TestChatCompletionMessage_UnmarshalContentParts(t *testing.T) {
+	var m ChatCompletionMessage
+	input := `{
+		"role":"user",
+		"content":[
+			{"type":"text","text":"What is in this picture?"},
+			{"type":"image_url","image_url":{"url":"https://example.com/x.png","detail":"high"}}
+		]
+	}`
+	require.NoError(t, json.Unmarshal([]byte(input), &m))
+	assert.Equal(t, "user", m.Role)
+	require.Len(t, m.Parts, 2)
+	assert.Equal(t, "text", m.Parts[0].Type)
+	assert.Equal(t, "image_url", m.Parts[1].Type)
+	require.NotNil(t, m.Parts[1].ImageURL)
+	assert.Equal(t, "https://example.com/x.png", m.Parts[1].ImageURL.URL)
+	// Flat text is pre-computed for callers that don't care about parts.
+	assert.Equal(t, "What is in this picture?", m.Content)
+}
+
+func TestChatCompletionMessage_RoundTripText(t *testing.T) {
+	in := ChatCompletionMessage{Role: "assistant", Content: "hi there"}
+	raw, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"role":"assistant","content":"hi there"}`, string(raw))
+}
+
+func TestChatCompletionMessage_RoundTripParts(t *testing.T) {
+	in := ChatCompletionMessage{
+		Role: "user",
+		Parts: []ContentPart{
+			{Type: "text", Text: "hi"},
+			{Type: "image_url", ImageURL: &ContentImageURL{URL: "http://x/y"}},
+		},
+	}
+	raw, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"http://x/y"}}]}`, string(raw))
+}
+
+func TestBuildSession_AcceptsImageParts(t *testing.T) {
+	sess := buildSession([]ChatCompletionMessage{{
+		Role: "user",
+		Parts: []ContentPart{
+			{Type: "text", Text: "What is this?"},
+			{Type: "image_url", ImageURL: &ContentImageURL{URL: "https://example.com/x.png"}},
+		},
+	}})
+	require.NotNil(t, sess)
+
+	all := sess.GetAllMessages()
+	require.Len(t, all, 1)
+	last := all[0].Message
+	assert.Equal(t, chat.MessageRoleUser, last.Role)
+	require.Len(t, last.MultiContent, 2)
+	assert.Equal(t, chat.MessagePartTypeText, last.MultiContent[0].Type)
+	assert.Equal(t, chat.MessagePartTypeImageURL, last.MultiContent[1].Type)
+	require.NotNil(t, last.MultiContent[1].ImageURL)
+	assert.Equal(t, "https://example.com/x.png", last.MultiContent[1].ImageURL.URL)
 }
 
 func TestStopSequences_UnmarshalJSON(t *testing.T) {

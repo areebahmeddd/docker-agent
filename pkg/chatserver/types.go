@@ -3,6 +3,7 @@ package chatserver
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/openai/openai-go/v3"
 )
@@ -72,15 +73,123 @@ func (s *StopSequences) UnmarshalJSON(data []byte) error {
 	}
 }
 
-// ChatCompletionMessage is a single message in the conversation. Multi-modal
-// content (image parts, audio, etc.) is not supported and falls back to the
-// `Content` string.
+// ChatCompletionMessage is a single message in the conversation.
+//
+// On the wire OpenAI accepts message content in two shapes: either a
+// plain string (`"content": "hello"`) or an array of typed parts
+// (`"content": [{"type":"text",...}, {"type":"image_url",...}]`).
+// Both shapes are accepted on the request side; the response always
+// uses the string form for text-only content and the parts form when
+// images or other non-text content are present. The custom JSON
+// (un)marshallers below preserve that union without forcing every Go
+// caller to deal with it.
 type ChatCompletionMessage struct {
-	Role       string              `json:"role"`
-	Content    string              `json:"content"`
+	Role string `json:"role"`
+	// Content is the text content of the message. Populated whether the
+	// wire format used a string or a parts array (the parts' text values
+	// are concatenated).
+	Content string `json:"-"`
+	// Parts holds the original typed parts when the wire format used an
+	// array. Empty when the wire format was a plain string.
+	Parts []ContentPart `json:"-"`
+
 	Name       string              `json:"name,omitempty"`
 	ToolCallID string              `json:"tool_call_id,omitempty"`
 	ToolCalls  []ToolCallReference `json:"tool_calls,omitempty"`
+}
+
+// ContentPart mirrors one entry in OpenAI's typed-parts array. Today the
+// server understands `text` and `image_url` parts; unknown types are
+// preserved in the request payload but ignored when building the
+// session, so future part types degrade gracefully.
+type ContentPart struct {
+	Type     string           `json:"type"`
+	Text     string           `json:"text,omitempty"`
+	ImageURL *ContentImageURL `json:"image_url,omitempty"`
+}
+
+// ContentImageURL carries an image part. URL may be a regular http(s)
+// URL or a data URL (`data:image/png;base64,...`).
+type ContentImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// jsonMessageEnvelope is the on-the-wire form of ChatCompletionMessage.
+// It exists so we can run the union-shape decoding for `content` without
+// duplicating every other field.
+type jsonMessageEnvelope struct {
+	Role       string              `json:"role"`
+	Content    json.RawMessage     `json:"content,omitempty"`
+	Name       string              `json:"name,omitempty"`
+	ToolCallID string              `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCallReference `json:"tool_calls,omitempty"`
+}
+
+// UnmarshalJSON accepts either a string `content` field or an array of
+// typed parts (OpenAI's multimodal shape).
+func (m *ChatCompletionMessage) UnmarshalJSON(data []byte) error {
+	var env jsonMessageEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return err
+	}
+	m.Role = env.Role
+	m.Name = env.Name
+	m.ToolCallID = env.ToolCallID
+	m.ToolCalls = env.ToolCalls
+
+	if len(env.Content) == 0 || string(env.Content) == "null" {
+		return nil
+	}
+	switch env.Content[0] {
+	case '"':
+		return json.Unmarshal(env.Content, &m.Content)
+	case '[':
+		if err := json.Unmarshal(env.Content, &m.Parts); err != nil {
+			return err
+		}
+		// Pre-compute the flat text so callers that don't care about
+		// images can keep using m.Content.
+		var buf strings.Builder
+		for _, p := range m.Parts {
+			if p.Type == "text" {
+				if buf.Len() > 0 {
+					buf.WriteByte(' ')
+				}
+				buf.WriteString(p.Text)
+			}
+		}
+		m.Content = buf.String()
+		return nil
+	default:
+		return errors.New("content must be a string or array of parts")
+	}
+}
+
+// MarshalJSON emits the parts array when present, otherwise a plain
+// string. Tool/role/name/tool_call_id round-trip verbatim.
+func (m ChatCompletionMessage) MarshalJSON() ([]byte, error) {
+	env := jsonMessageEnvelope{
+		Role:       m.Role,
+		Name:       m.Name,
+		ToolCallID: m.ToolCallID,
+		ToolCalls:  m.ToolCalls,
+	}
+	switch {
+	case len(m.Parts) > 0:
+		raw, err := json.Marshal(m.Parts)
+		if err != nil {
+			return nil, err
+		}
+		env.Content = raw
+	case m.Content != "":
+		raw, err := json.Marshal(m.Content)
+		if err != nil {
+			return nil, err
+		}
+		env.Content = raw
+	}
+	return json.Marshal(env)
 }
 
 // ToolCallReference mirrors OpenAI's `tool_calls` entry. The server fills
