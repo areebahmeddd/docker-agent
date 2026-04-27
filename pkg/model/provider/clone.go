@@ -42,20 +42,19 @@ func mergeCloneOptions(cfg base.Config, opts []options.Opt) (latest.ModelConfig,
 	baseOpts := options.FromModelOptions(cfg.ModelOptions)
 	mergedOpts := append(baseOpts, opts...)
 
-	// Apply max_tokens override if present in options
-	// We need to apply it to the ModelConfig itself since that's what providers use
-	// Only update MaxTokens if an option explicitly sets it (non-zero value)
-	modelConfig := cfg.ModelConfig
+	// Apply every option to a single accumulator so we can read the final
+	// effective values directly. "Later opt wins" semantics fall out naturally.
+	var merged options.ModelOptions
 	for _, opt := range mergedOpts {
-		tempOpts := &options.ModelOptions{}
-		opt(tempOpts)
-		if mt := tempOpts.MaxTokens(); mt != 0 {
-			modelConfig.MaxTokens = &mt
-		}
-		if tempOpts.NoThinking() {
-			modelConfig.ThinkingBudget = nil
-		}
+		opt(&merged)
 	}
 
+	modelConfig := cfg.ModelConfig
+	if mt := merged.MaxTokens(); mt != 0 {
+		modelConfig.MaxTokens = &mt
+	}
+	if merged.NoThinking() {
+		modelConfig.ThinkingBudget = nil
+	}
 	return modelConfig, mergedOpts
 }

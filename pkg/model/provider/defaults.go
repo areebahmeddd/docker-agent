@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"cmp"
 	"log/slog"
 	"maps"
 	"strings"
@@ -14,11 +15,10 @@ import (
 
 // resolveProviderType determines the effective API type for a config.
 // Priority: ProviderOpts["api_type"] > built-in alias > provider name.
+// Reading from a nil ProviderOpts map is safe and yields the zero value.
 func resolveProviderType(cfg *latest.ModelConfig) string {
-	if cfg.ProviderOpts != nil {
-		if apiType, ok := cfg.ProviderOpts["api_type"].(string); ok && apiType != "" {
-			return apiType
-		}
+	if apiType, ok := cfg.ProviderOpts["api_type"].(string); ok && apiType != "" {
+		return apiType
 	}
 	if alias, exists := LookupAlias(cfg.Provider); exists && alias.APIType != "" {
 		return alias.APIType
@@ -29,10 +29,7 @@ func resolveProviderType(cfg *latest.ModelConfig) string {
 // resolveEffectiveProvider returns the effective provider type for a ProviderConfig.
 // If Provider is explicitly set, returns that. Otherwise returns "openai" (backward compat).
 func resolveEffectiveProvider(cfg latest.ProviderConfig) string {
-	if cfg.Provider != "" {
-		return cfg.Provider
-	}
-	return "openai"
+	return cmp.Or(cfg.Provider, "openai")
 }
 
 // isOpenAICompatibleProvider returns true if the provider type uses the OpenAI API protocol.
@@ -40,13 +37,10 @@ func isOpenAICompatibleProvider(providerType string) bool {
 	switch providerType {
 	case "openai", "openai_chatcompletions", "openai_responses":
 		return true
-	default:
-		// Check if it's an alias that maps to openai
-		if alias, exists := LookupAlias(providerType); exists {
-			return alias.APIType == "openai"
-		}
-		return false
 	}
+	// Otherwise, the type is OpenAI-compatible iff it's an alias that maps to OpenAI.
+	alias, exists := LookupAlias(providerType)
+	return exists && alias.APIType == "openai"
 }
 
 // ---------------------------------------------------------------------------
@@ -114,12 +108,7 @@ func mergeFromProviderConfig(dst *latest.ModelConfig, src latest.ProviderConfig)
 
 	// Merge provider_opts from provider config (model opts take precedence).
 	for k, v := range src.ProviderOpts {
-		if dst.ProviderOpts == nil {
-			dst.ProviderOpts = make(map[string]any)
-		}
-		if _, has := dst.ProviderOpts[k]; !has {
-			dst.ProviderOpts[k] = v
-		}
+		setProviderOptIfAbsent(dst, k, v)
 	}
 
 	// Set api_type in ProviderOpts if not already set.
