@@ -25,17 +25,20 @@ func (j JSONSchema) MarshalJSON() ([]byte, error) {
 
 // ConvertMultiContent converts chat.MessagePart slices to OpenAI content parts.
 func ConvertMultiContent(multiContent []chat.MessagePart) []openai.ChatCompletionContentPartUnionParam {
-	parts := make([]openai.ChatCompletionContentPartUnionParam, len(multiContent))
-	for i, part := range multiContent {
+	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(multiContent))
+	for _, part := range multiContent {
 		switch part.Type {
 		case chat.MessagePartTypeText:
-			parts[i] = openai.TextContentPart(part.Text)
+			if strings.TrimSpace(part.Text) == "" {
+				continue
+			}
+			parts = append(parts, openai.TextContentPart(part.Text))
 		case chat.MessagePartTypeImageURL:
 			if part.ImageURL != nil {
-				parts[i] = openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
 					URL:    part.ImageURL.URL,
 					Detail: string(part.ImageURL.Detail),
-				})
+				}))
 			}
 		}
 	}
@@ -139,6 +142,9 @@ func ConvertMessages(messages []chat.Message) []openai.ChatCompletionMessagePara
 				textParts := make([]openai.ChatCompletionContentPartTextParam, 0)
 				for _, part := range msg.MultiContent {
 					if part.Type == chat.MessagePartTypeText {
+						if strings.TrimSpace(part.Text) == "" {
+							continue
+						}
 						textParts = append(textParts, openai.ChatCompletionContentPartTextParam{
 							Text: part.Text,
 						})

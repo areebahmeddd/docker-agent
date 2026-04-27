@@ -41,9 +41,17 @@ func TestConvertMultiContent(t *testing.T) {
 			wantCount: 2,
 		},
 		{
-			name: "image without URL",
+			name: "image with nil URL produces no part",
 			multiContent: []chat.MessagePart{
 				{Type: chat.MessagePartTypeImageURL, ImageURL: nil},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "whitespace-only text part skipped",
+			multiContent: []chat.MessagePart{
+				{Type: chat.MessagePartTypeText, Text: "   "},
+				{Type: chat.MessagePartTypeText, Text: "hello"},
 			},
 			wantCount: 1,
 		},

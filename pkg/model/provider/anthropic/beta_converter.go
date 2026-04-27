@@ -43,11 +43,11 @@ func (c *Client) convertBetaMessages(ctx context.Context, messages []chat.Messag
 						Content: contentBlocks,
 					})
 				}
-			} else if txt := strings.TrimSpace(msg.Content); txt != "" {
+			} else if strings.TrimSpace(msg.Content) != "" {
 				betaMessages = append(betaMessages, anthropic.BetaMessageParam{
 					Role: anthropic.BetaMessageParamRoleUser,
 					Content: []anthropic.BetaContentBlockParamUnion{
-						{OfText: &anthropic.BetaTextBlockParam{Text: txt}},
+						{OfText: &anthropic.BetaTextBlockParam{Text: msg.Content}},
 					},
 				})
 			}
@@ -138,11 +138,17 @@ func (c *Client) convertBetaMessages(ctx context.Context, messages []chat.Messag
 // including any image content from MultiContent.
 func convertBetaToolResultBlock(msg *chat.Message) anthropic.BetaContentBlockParamUnion {
 	if !hasImageMultiContent(msg.MultiContent) {
+		// tool_result must be present for every preceding tool_use; we cannot skip
+		// it. Normalize whitespace-only content to empty string rather than skipping.
+		content := msg.Content
+		if strings.TrimSpace(content) == "" {
+			content = ""
+		}
 		return anthropic.BetaContentBlockParamUnion{
 			OfToolResult: &anthropic.BetaToolResultBlockParam{
 				ToolUseID: msg.ToolCallID,
 				Content: []anthropic.BetaToolResultBlockParamContentUnion{
-					{OfText: &anthropic.BetaTextBlockParam{Text: strings.TrimSpace(msg.Content)}},
+					{OfText: &anthropic.BetaTextBlockParam{Text: content}},
 				},
 			},
 		}
@@ -152,9 +158,9 @@ func convertBetaToolResultBlock(msg *chat.Message) anthropic.BetaContentBlockPar
 	for _, part := range msg.MultiContent {
 		switch part.Type {
 		case chat.MessagePartTypeText:
-			if txt := strings.TrimSpace(part.Text); txt != "" {
+			if strings.TrimSpace(part.Text) != "" {
 				content = append(content, anthropic.BetaToolResultBlockParamContentUnion{
-					OfText: &anthropic.BetaTextBlockParam{Text: txt},
+					OfText: &anthropic.BetaTextBlockParam{Text: part.Text},
 				})
 			}
 		case chat.MessagePartTypeImageURL:
@@ -194,9 +200,9 @@ func (c *Client) convertBetaUserMultiContent(ctx context.Context, parts []chat.M
 	for _, part := range parts {
 		switch part.Type {
 		case chat.MessagePartTypeText:
-			if txt := strings.TrimSpace(part.Text); txt != "" {
+			if strings.TrimSpace(part.Text) != "" {
 				contentBlocks = append(contentBlocks, anthropic.BetaContentBlockParamUnion{
-					OfText: &anthropic.BetaTextBlockParam{Text: txt},
+					OfText: &anthropic.BetaTextBlockParam{Text: part.Text},
 				})
 			}
 

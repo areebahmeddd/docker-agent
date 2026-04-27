@@ -305,8 +305,8 @@ func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) (
 					anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(contentBlocks...))
 				}
 			} else {
-				if txt := strings.TrimSpace(msg.Content); txt != "" {
-					anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(anthropic.NewTextBlock(txt)))
+				if strings.TrimSpace(msg.Content) != "" {
+					anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Content)))
 				}
 			}
 			continue
@@ -404,7 +404,13 @@ func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) (
 func convertToolResultBlock(msg *chat.Message) anthropic.ContentBlockParamUnion {
 	// If there are no images in MultiContent, use the simple text-only format.
 	if !hasImageMultiContent(msg.MultiContent) {
-		return anthropic.NewToolResultBlock(msg.ToolCallID, strings.TrimSpace(msg.Content), msg.IsError)
+		// tool_result must be present for every preceding tool_use; we cannot skip
+		// it. Normalize whitespace-only content to empty string rather than skipping.
+		content := msg.Content
+		if strings.TrimSpace(content) == "" {
+			content = ""
+		}
+		return anthropic.NewToolResultBlock(msg.ToolCallID, content, msg.IsError)
 	}
 
 	// Build content blocks with text + images for the tool result.
@@ -412,9 +418,9 @@ func convertToolResultBlock(msg *chat.Message) anthropic.ContentBlockParamUnion 
 	for _, part := range msg.MultiContent {
 		switch part.Type {
 		case chat.MessagePartTypeText:
-			if txt := strings.TrimSpace(part.Text); txt != "" {
+			if strings.TrimSpace(part.Text) != "" {
 				content = append(content, anthropic.ToolResultBlockParamContentUnion{
-					OfText: &anthropic.TextBlockParam{Text: txt},
+					OfText: &anthropic.TextBlockParam{Text: part.Text},
 				})
 			}
 		case chat.MessagePartTypeImageURL:
@@ -483,8 +489,8 @@ func (c *Client) convertUserMultiContent(_ context.Context, parts []chat.Message
 	for _, part := range parts {
 		switch part.Type {
 		case chat.MessagePartTypeText:
-			if txt := strings.TrimSpace(part.Text); txt != "" {
-				contentBlocks = append(contentBlocks, anthropic.NewTextBlock(txt))
+			if strings.TrimSpace(part.Text) != "" {
+				contentBlocks = append(contentBlocks, anthropic.NewTextBlock(part.Text))
 			}
 
 		case chat.MessagePartTypeImageURL:
