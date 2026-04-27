@@ -61,3 +61,55 @@ func EstimateMessageTokens(msg *chat.Message) int64 {
 	}
 	return int64(chars/charsPerToken) + perMessageOverhead
 }
+
+// SplitIndexForKeep walks messages from the end and returns the earliest
+// index whose suffix fits in maxTokens, snapping to user/assistant
+// boundaries. All messages from the returned index onward are intended
+// to be preserved verbatim across a compaction; messages before it are
+// the candidates to summarize. Returns len(messages) when everything
+// fits in the keep budget — i.e. compact everything.
+//
+// The boundary snap matters for providers (notably Anthropic) that
+// reject conversations starting on a tool-result message: by stopping
+// the kept window on a user/assistant turn, we guarantee the kept
+// suffix begins on a clean conversational turn.
+func SplitIndexForKeep(messages []chat.Message, maxTokens int64) int {
+	if len(messages) == 0 {
+		return 0
+	}
+
+	var tokens int64
+	lastValidBoundary := len(messages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		tokens += EstimateMessageTokens(&messages[i])
+		if tokens > maxTokens {
+			return lastValidBoundary
+		}
+		role := messages[i].Role
+		if role == chat.MessageRoleUser || role == chat.MessageRoleAssistant {
+			lastValidBoundary = i
+		}
+	}
+	return len(messages)
+}
+
+// FirstIndexInBudget walks messages from the end and returns the
+// earliest index whose suffix fits in contextLimit, snapping to
+// user/assistant boundaries. Used to truncate the conversation we
+// hand to the summarization model so the request itself doesn't
+// blow the context window.
+func FirstIndexInBudget(messages []chat.Message, contextLimit int64) int {
+	var tokens int64
+	lastValidMessageSeen := len(messages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		tokens += EstimateMessageTokens(&messages[i])
+		if tokens > contextLimit {
+			return lastValidMessageSeen
+		}
+		role := messages[i].Role
+		if role == chat.MessageRoleUser || role == chat.MessageRoleAssistant {
+			lastValidMessageSeen = i
+		}
+	}
+	return lastValidMessageSeen
+}
