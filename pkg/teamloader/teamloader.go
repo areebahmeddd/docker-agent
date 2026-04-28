@@ -567,7 +567,10 @@ func resolveAgentRefs(
 		}
 
 		// Rename the external agent so it doesn't collide with locally-defined
-		// agents (external agents typically have the name "root").
+		// agents. External agents resolve to their team's default agent (one
+		// explicitly named "root" if it exists, otherwise the first agent
+		// declared), which we may want to expose under a different name in
+		// the importing team.
 		agent.WithName(agentName)(a)
 
 		*agents = append(*agents, a)

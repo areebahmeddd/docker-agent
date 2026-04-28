@@ -71,7 +71,16 @@ func completeMessage(cmd *cobra.Command, args []string, toComplete string) ([]st
 
 	agent, _ := cmd.Flags().GetString("agent")
 	if agent == "" {
-		agent = "root"
+		if len(cfg.Agents) == 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		// Mirror team.DefaultAgent: prefer "root" when present, otherwise
+		// the first agent declared. This keeps shell completion in sync
+		// with the agent the runtime would actually run.
+		agent = cfg.Agents[0].Name
+		if _, hasRoot := cfg.Agents.Lookup("root"); hasRoot {
+			agent = "root"
+		}
 	}
 	agentCfg, found := cfg.Agents.Lookup(agent)
 	if !found {
