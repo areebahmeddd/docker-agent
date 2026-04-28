@@ -118,11 +118,19 @@ If the agent hangs or times out, check that you can reach the provider's API end
 
 ### Tool lifecycle issues
 
+MCP and LSP toolsets are managed by a supervisor that auto-restarts them when they crash or drop their session. The TUI exposes that supervisor through two slash commands:
+
+- `/toolsets` — lists every toolset with its current state (`Stopped`, `Starting`, `Ready`, `Degraded`, `Restarting`, `Failed`), restart count, and last error. Start here whenever a tool seems missing or stuck.
+- `/toolset-restart <name>` — force a supervisor-driven reconnect of the named toolset. Useful after completing OAuth, when a remote MCP server has been redeployed, or when a language server like `gopls` is unresponsive.
+
 MCP tools using stdio transport must complete the initialization handshake before becoming available. If tools fail silently:
 
-1. Enable `--debug` and look for MCP protocol messages in the log
-2. Check that the MCP server process starts and responds to `initialize`
-3. Verify environment variables required by the tool are set (check `env` and `env_file` in the toolset config)
+1. Run `/toolsets` to see whether the toolset is `Failed` or stuck in `Restarting`, and what the last error was.
+2. Enable `--debug` and look for MCP protocol messages in the log
+3. Check that the MCP server process starts and responds to `initialize`
+4. Verify environment variables required by the tool are set (check `env` and `env_file` in the toolset config)
+
+If a toolset keeps crashing in a tight loop, tune the [`lifecycle`]({{ '/configuration/tools/#toolset-lifecycle' | relative_url }}) block on the toolset (e.g. raise `backoff.initial`, lower `max_restarts`, or switch to the `best-effort` profile) so a flaky dependency does not amplify into a restart storm.
 
 ## Configuration Errors
 
@@ -223,16 +231,16 @@ $ docker agent share pull docker.io/username/agent:latest
 
 When reviewing debug logs, search for these key patterns:
 
-| Log Pattern                 | What It Indicates                                                          |
-| --------------------------- | -------------------------------------------------------------------------- |
-| `"Starting runtime stream"` | Agent execution beginning                                                  |
-| `"Tool call"`               | A tool is being executed                                                   |
-| `"Tool call result"`        | Tool execution completed                                                   |
-| `"Stream stopped"`          | Agent finished processing                                                  |
+| Log Pattern                 | What It Indicates                                                              |
+| --------------------------- | ------------------------------------------------------------------------------ | ---------------- |
+| `"Starting runtime stream"` | Agent execution beginning                                                      |
+| `"Tool call"`               | A tool is being executed                                                       |
+| `"Tool call result"`        | Tool execution completed                                                       |
+| `"Stream stopped"`          | Agent finished processing                                                      |
 | `HTTP 429`                  | Rate limiting — consider adding a [fallback model]({{ '/configuration/agents/' | relative_url }}) |
-| `context canceled`          | Operation was interrupted (timeout or user cancel)                         |
-| `[RAG Manager]`             | RAG retrieval operations                                                   |
-| `[Reranker]`                | Reranking operations                                                       |
+| `context canceled`          | Operation was interrupted (timeout or user cancel)                             |
+| `[RAG Manager]`             | RAG retrieval operations                                                       |
+| `[Reranker]`                | Reranking operations                                                           |
 
 <div class="callout callout-warning" markdown="1">
 <div class="callout-title">⚠️ Still stuck?
