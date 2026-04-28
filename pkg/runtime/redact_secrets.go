@@ -55,19 +55,33 @@ func (r *LocalRuntime) redactSecretsTransform(
 	return out, nil
 }
 
-// redactMessage scrubs every text-bearing field of m: [chat.Message.Content],
-// the text parts of [chat.Message.MultiContent], and the JSON-encoded
-// arguments of any [chat.Message.ToolCalls] (so a previous turn's tool
-// call doesn't carry a secret forward into the next LLM call).
+// redactMessage scrubs every text-bearing field of m that round-trips
+// to a model provider:
 //
-// MultiContent and ToolCalls slices are cloned before being mutated
-// so the caller's message history is left untouched. We don't bother
-// with copy-on-write: secretsscan.Redact is essentially free on
-// inputs that don't match a rule (it returns the same string), so the
-// only cost on a clean conversation is the per-message slice clone —
-// negligible compared to the LLM call this transform is gating.
+//   - [chat.Message.Content]
+//   - [chat.Message.ReasoningContent] (sent back to Anthropic, Bedrock,
+//     DeepSeek as a thinking block, so a previous turn's reasoning
+//     trace must not leak a secret it mentioned)
+//   - text parts of [chat.Message.MultiContent]
+//   - the legacy singular [chat.Message.FunctionCall].Arguments
+//     (still sent by the OpenAI provider when set)
+//   - the JSON-encoded arguments of every entry in
+//     [chat.Message.ToolCalls]
+//
+// Other fields (image URLs, file references, ThinkingSignature,
+// ThoughtSignature) are not scanned: they're either opaque provider
+// tokens or non-text payloads outside the secretsscan ruleset's reach.
+//
+// MultiContent and ToolCalls slices are cloned (and FunctionCall
+// pointers are deep-copied) before being mutated so the caller's
+// message history is left untouched. We don't bother with
+// copy-on-write: secretsscan.Redact is essentially free on inputs
+// that don't match a rule (it returns the same string), so the only
+// cost on a clean conversation is the per-message slice/struct clone
+// — negligible compared to the LLM call this transform is gating.
 func redactMessage(m chat.Message) chat.Message {
 	m.Content = secretsscan.Redact(m.Content)
+	m.ReasoningContent = secretsscan.Redact(m.ReasoningContent)
 
 	if len(m.MultiContent) > 0 {
 		m.MultiContent = slices.Clone(m.MultiContent)
@@ -76,6 +90,12 @@ func redactMessage(m chat.Message) chat.Message {
 				m.MultiContent[i].Text = secretsscan.Redact(m.MultiContent[i].Text)
 			}
 		}
+	}
+
+	if m.FunctionCall != nil {
+		fc := *m.FunctionCall
+		fc.Arguments = secretsscan.Redact(fc.Arguments)
+		m.FunctionCall = &fc
 	}
 
 	if len(m.ToolCalls) > 0 {

@@ -25,29 +25,51 @@ const RedactSecrets = "redact_secrets"
 // with [secretsscan.RedactionMarker]. When nothing matched it returns
 // a nil [hooks.Output] so unaffected tool calls take the cheap path
 // through the executor.
+//
+// The returned UpdatedInput contains ONLY keys whose value was
+// actually rewritten. This matters because pre_tool_use hooks run
+// concurrently and aggregate via shallow maps.Copy: emitting unchanged
+// keys would clobber another hook's modifications on the same input.
 func redactSecrets(_ context.Context, in *hooks.Input, _ []string) (*hooks.Output, error) {
 	if in == nil || len(in.ToolInput) == 0 {
 		return nil, nil
 	}
-	updated, changed := redactAny(in.ToolInput)
-	if !changed {
+	updated := redactToolInput(in.ToolInput)
+	if len(updated) == 0 {
 		return nil, nil
 	}
 	return &hooks.Output{
 		SystemMessage: fmt.Sprintf("redact_secrets: redacted secret material from arguments of tool %q", in.ToolName),
 		HookSpecificOutput: &hooks.HookSpecificOutput{
 			HookEventName: hooks.EventPreToolUse,
-			UpdatedInput:  updated.(map[string]any),
+			UpdatedInput:  updated,
 		},
 	}, nil
+}
+
+// redactToolInput returns a map containing only the top-level keys of
+// m whose redacted value differs from the original. Returns nil when
+// nothing changed so the caller can short-circuit cheaply.
+func redactToolInput(m map[string]any) map[string]any {
+	var changed map[string]any
+	for k, v := range m {
+		nv, c := redactAny(v)
+		if !c {
+			continue
+		}
+		if changed == nil {
+			changed = make(map[string]any, 1)
+		}
+		changed[k] = nv
+	}
+	return changed
 }
 
 // redactAny recursively scrubs secrets out of v, returning the new
 // value and a "did anything change" flag. Strings go through
 // [secretsscan.Redact]; map[string]any / []any are walked to catch
-// secrets nested inside JSON-style payloads (e.g. an MCP tool's
-// structured arguments). Every other Go type passes through unchanged
-// because the scanner only operates on text.
+// secrets nested inside JSON-style payloads. Every other Go type
+// passes through unchanged because the scanner only operates on text.
 func redactAny(v any) (any, bool) {
 	switch val := v.(type) {
 	case string:

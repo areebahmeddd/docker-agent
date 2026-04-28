@@ -4,7 +4,10 @@ import (
 	"strings"
 )
 
-// RedactionMarker replaces every detected secret span.
+// RedactionMarker replaces every detected secret span. Chosen so it
+// doesn't match any rule's keyword pre-filter — see
+// TestRedactionMarkerIsNotASecret for the safety property that makes
+// [Redact] idempotent.
 const RedactionMarker = "[REDACTED]"
 
 // ContainsSecrets reports whether text matches any detection rule.
@@ -33,9 +36,17 @@ func Redact(text string) string {
 	if text == "" {
 		return text
 	}
+	// Lower-case once outside the rule loop. The redaction can only
+	// REMOVE keywords from the input (RedactionMarker contains none —
+	// see TestRedactionMarkerIsNotASecret), so the keyword pre-filter
+	// stays correct against the original lower-cased text even after
+	// earlier rules have rewritten part of out: a false-positive on
+	// the filter just means we run a regex that won't match.
+	rules := compiledRules()
+	lower := strings.ToLower(text)
 	out := text
-	for _, r := range compiledRules() {
-		if !hasAnyKeyword(strings.ToLower(out), r.keywords) {
+	for _, r := range rules {
+		if !hasAnyKeyword(lower, r.keywords) {
 			continue
 		}
 		out = redactWithRule(r, out)

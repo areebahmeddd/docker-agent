@@ -11,8 +11,11 @@ import (
 )
 
 // TestRedactSecretsScrubsTopLevelStringValue: a recognised secret in
-// a top-level string argument is replaced and other scalars pass
-// through untouched.
+// a top-level string argument is replaced and ONLY the rewritten key
+// is emitted in UpdatedInput. The latter is critical because
+// pre_tool_use hooks aggregate via shallow maps.Copy in config order
+// — returning unchanged keys would clobber concurrent hooks'
+// modifications.
 func TestRedactSecretsScrubsTopLevelStringValue(t *testing.T) {
 	t.Parallel()
 
@@ -33,10 +36,12 @@ func TestRedactSecretsScrubsTopLevelStringValue(t *testing.T) {
 	require.NotNil(t, out.HookSpecificOutput)
 
 	updated := out.HookSpecificOutput.UpdatedInput
-	cmd, _ := updated["command"].(string)
+	cmd, ok := updated["command"].(string)
+	require.True(t, ok, "changed key must appear in UpdatedInput")
 	assert.NotContains(t, cmd, secret, "raw secret must be gone")
 	assert.Contains(t, cmd, secretsscan.RedactionMarker)
-	assert.Equal(t, 30, updated["timeout"], "non-string scalars pass through unchanged")
+	assert.NotContains(t, updated, "timeout",
+		"unchanged keys must NOT appear in UpdatedInput (would clobber concurrent hooks)")
 	assert.Equal(t, hooks.EventPreToolUse, out.HookSpecificOutput.HookEventName)
 }
 
@@ -73,7 +78,10 @@ func TestRedactSecretsHandlesNilAndEmptyInputs(t *testing.T) {
 
 // TestRedactSecretsWalksNestedStructures: secrets nested inside
 // map[string]any / []any payloads (the shape MCP and OpenAPI bridges
-// pass through) are caught alongside top-level values.
+// pass through) are caught alongside top-level values. The rebuilt
+// nested container preserves unchanged sibling values — the
+// "only changed keys" rule applies at the TOP level only, since the
+// executor's maps.Copy is shallow.
 func TestRedactSecretsWalksNestedStructures(t *testing.T) {
 	t.Parallel()
 

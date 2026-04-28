@@ -122,3 +122,27 @@ func TestRedactHandlesMultipleSecretsInOneInput(t *testing.T) {
 	assert.Contains(t, out, " and second ")
 	assert.Contains(t, out, " end")
 }
+
+// TestRedactionMarkerIsNotASecret locks in the safety property that
+// makes [secretsscan.Redact] idempotent and the keyword pre-filter
+// hoist in [secretsscan.Redact] sound: the literal RedactionMarker
+// must not match any detection rule. If a future rule were added
+// whose keyword overlapped "[redacted]", redaction would either
+// recurse forever or amplify the marker on every pass, and any
+// downstream pipeline that calls Redact twice (the pre_tool_use
+// builtin + the before_llm_call transform on the same string) would
+// silently corrupt content.
+func TestRedactionMarkerIsNotASecret(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, secretsscan.ContainsSecrets(secretsscan.RedactionMarker),
+		"the redaction marker must not match any rule")
+	assert.Equal(t, secretsscan.RedactionMarker,
+		secretsscan.Redact(secretsscan.RedactionMarker),
+		"redacting the marker must be a no-op")
+
+	// Embedded in arbitrary surrounding text the marker still must not
+	// match — some rules only fire mid-string after a non-word boundary.
+	assert.Equal(t, "prefix "+secretsscan.RedactionMarker+" suffix",
+		secretsscan.Redact("prefix "+secretsscan.RedactionMarker+" suffix"))
+}
