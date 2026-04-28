@@ -291,6 +291,12 @@ func createFetchTool(_ context.Context, toolset latest.Toolset, _ string, _ *con
 		timeout := time.Duration(toolset.Timeout) * time.Second
 		opts = append(opts, builtin.WithTimeout(timeout))
 	}
+	if len(toolset.AllowedDomains) > 0 {
+		opts = append(opts, builtin.WithAllowedDomains(toolset.AllowedDomains))
+	}
+	if len(toolset.BlockedDomains) > 0 {
+		opts = append(opts, builtin.WithBlockedDomains(toolset.BlockedDomains))
+	}
 	return builtin.NewFetchTool(opts...), nil
 }
 

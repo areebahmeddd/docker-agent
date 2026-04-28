@@ -217,6 +217,135 @@ agents:
 	}
 }
 
+func TestToolset_Validate_Fetch_Domains(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "fetch with allowed_domains",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        allowed_domains:
+          - docker.com
+          - github.com
+`,
+			wantErr: "",
+		},
+		{
+			name: "fetch with blocked_domains",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        blocked_domains:
+          - 169.254.169.254
+`,
+			wantErr: "",
+		},
+		{
+			name: "fetch with both is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        allowed_domains:
+          - docker.com
+        blocked_domains:
+          - example.com
+`,
+			wantErr: "allowed_domains and blocked_domains are mutually exclusive",
+		},
+		{
+			name: "allowed_domains on non-fetch toolset is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: shell
+        allowed_domains:
+          - docker.com
+`,
+			wantErr: "allowed_domains can only be used with type 'fetch'",
+		},
+		{
+			name: "blocked_domains on non-fetch toolset is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: shell
+        blocked_domains:
+          - docker.com
+`,
+			wantErr: "blocked_domains can only be used with type 'fetch'",
+		},
+		{
+			name: "empty allowed_domains entry is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        allowed_domains:
+          - ""
+          - docker.com
+`,
+			wantErr: "allowed_domains[0] must not be empty",
+		},
+		{
+			name: "whitespace-only blocked_domains entry is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        blocked_domains:
+          - "   "
+`,
+			wantErr: "blocked_domains[0] must not be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg Config
+			err := yaml.Unmarshal([]byte(tt.config), &cfg)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestToolset_Validate_MCP_RemoteOAuth_CallbackRedirectURL(t *testing.T) {
 	t.Parallel()
 

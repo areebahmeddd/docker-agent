@@ -816,6 +816,18 @@ type Toolset struct {
 	// For the `fetch` tool
 	Timeout int `json:"timeout,omitempty"`
 
+	// For the `fetch` tool - allow-list of domains the tool is permitted to fetch.
+	// A pattern matches the host exactly (case-insensitive) and any of its subdomains;
+	// e.g. "example.com" matches "example.com" and "docs.example.com" but not
+	// "badexample.com". A leading dot (".example.com") restricts the match to
+	// strict subdomains. Mutually exclusive with `blocked_domains`.
+	AllowedDomains []string `json:"allowed_domains,omitempty" yaml:"allowed_domains,omitempty"`
+
+	// For the `fetch` tool - deny-list of domains the tool is forbidden to fetch.
+	// Uses the same matching rules as `allowed_domains`. Mutually exclusive with
+	// `allowed_domains`.
+	BlockedDomains []string `json:"blocked_domains,omitempty" yaml:"blocked_domains,omitempty"`
+
 	// For the `rag` tool
 	RAGConfig *RAGConfig `json:"rag_config,omitempty" yaml:"rag_config,omitempty"`
 

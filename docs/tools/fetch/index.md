@@ -28,9 +28,30 @@ toolsets:
 
 ### Options
 
-| Property  | Type | Default | Description                                                       |
-| --------- | ---- | ------- | ----------------------------------------------------------------- |
-| `timeout` | int  | `30`    | Default request timeout in seconds (overridable per tool call).   |
+| Property          | Type           | Default | Description                                                                                                                                                                                                                                                                                                                  |
+| ----------------- | -------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `timeout`         | int            | `30`    | Default request timeout in seconds (overridable per tool call).                                                                                                                                                                                                                                                              |
+| `allowed_domains` | array[string]  | _none_  | Allow-list of hosts the tool may fetch. When set, every URL whose host is **not** in the list is rejected before any network call is made. Mutually exclusive with `blocked_domains`.                                                                                                                                        |
+| `blocked_domains` | array[string]  | _none_  | Deny-list of hosts the tool must not fetch. URLs whose host matches one of these patterns are rejected before any network call (including `robots.txt`) is made. Mutually exclusive with `allowed_domains`.                                                                                                                  |
+
+### Domain matching
+
+Domain patterns in `allowed_domains` and `blocked_domains` use the following rules (case-insensitive):
+
+- **Bare domain** — `example.com` matches the host `example.com` _and_ any subdomain such as `docs.example.com`. It does **not** match unrelated hosts that share a suffix (e.g. `badexample.com`).
+- **Leading dot** — `.example.com` matches **only** strict subdomains (`docs.example.com`, `a.b.example.com`), not the apex `example.com`.
+- **IP literal** — IP addresses are matched exactly (`169.254.169.254`).
+- **Trailing dots** in FQDN-form URLs (`http://example.com./`) are stripped before matching, so they cannot bypass a deny-list entry.
+
+The lists are mutually exclusive: a single fetch toolset may set either `allowed_domains` or `blocked_domains`, but not both.
+
+When a list is configured, every redirect target is re-checked against the same list. A request to an allowed origin that redirects to a forbidden host is rejected before any data is read from the redirect.
+
+<div class="callout callout-warning" markdown="1">
+<div class="callout-title">⚠️ Limitations
+</div>
+  <p>Matching is purely string-based on the URL host. It does <strong>not</strong> perform DNS resolution and does <strong>not</strong> normalise alternative IP encodings (decimal <code>2852039166</code>, hex <code>0xa9.0xfe.0xa9.0xfe</code>, octal, IPv4-mapped IPv6, etc.). If you need to deny access to a specific IP, also list its alternative encodings, or block at the network layer.</p>
+</div>
 
 ### Custom Timeout
 
@@ -38,6 +59,27 @@ toolsets:
 toolsets:
   - type: fetch
     timeout: 60
+```
+
+### Restrict to specific domains
+
+```yaml
+toolsets:
+  - type: fetch
+    allowed_domains:
+      - docker.com          # docker.com and *.docker.com
+      - github.com          # github.com and *.github.com
+      - .githubusercontent.com  # only subdomains, e.g. raw.githubusercontent.com
+```
+
+### Block sensitive hosts
+
+```yaml
+toolsets:
+  - type: fetch
+    blocked_domains:
+      - 169.254.169.254       # cloud metadata endpoint
+      - internal.example.com  # internal corporate hostnames
 ```
 
 ## Tool Interface

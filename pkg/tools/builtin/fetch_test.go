@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"testing"
 	"time"
 
@@ -378,4 +379,209 @@ func TestFetchTool_ParametersAreObjects(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "object", m["type"])
 	}
+}
+
+func TestFetchTool_WithAllowedDomainsOption(t *testing.T) {
+	tool := NewFetchTool(WithAllowedDomains([]string{"example.com"}))
+
+	assert.Equal(t, []string{"example.com"}, tool.handler.allowedDomains)
+	assert.Empty(t, tool.handler.blockedDomains)
+}
+
+func TestFetchTool_WithBlockedDomainsOption(t *testing.T) {
+	tool := NewFetchTool(WithBlockedDomains([]string{"evil.example.com"}))
+
+	assert.Equal(t, []string{"evil.example.com"}, tool.handler.blockedDomains)
+	assert.Empty(t, tool.handler.allowedDomains)
+}
+
+func TestFetchTool_AllowedDomainsAppearInInstructions(t *testing.T) {
+	tool := NewFetchTool(WithAllowedDomains([]string{"docker.com", "github.com"}))
+
+	instructions := tools.GetInstructions(tool)
+
+	assert.Contains(t, instructions, "restricted to these domains")
+	assert.Contains(t, instructions, "docker.com")
+	assert.Contains(t, instructions, "github.com")
+}
+
+func TestFetchTool_BlockedDomainsAppearInInstructions(t *testing.T) {
+	tool := NewFetchTool(WithBlockedDomains([]string{"169.254.169.254"}))
+
+	instructions := tools.GetInstructions(tool)
+
+	assert.Contains(t, instructions, "must not fetch")
+	assert.Contains(t, instructions, "169.254.169.254")
+}
+
+func TestMatchesDomain(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		pattern string
+		want    bool
+	}{
+		{"exact match", "example.com", "example.com", true},
+		{"case insensitive", "Example.COM", "example.com", true},
+		{"subdomain match", "docs.example.com", "example.com", true},
+		{"deep subdomain match", "a.b.example.com", "example.com", true},
+		{"unrelated suffix does NOT match", "badexample.com", "example.com", false},
+		{"different domain", "other.com", "example.com", false},
+		{"leading dot pattern excludes apex", "example.com", ".example.com", false},
+		{"leading dot pattern allows subdomain", "docs.example.com", ".example.com", true},
+		{"empty host", "", "example.com", false},
+		{"empty pattern", "example.com", "", false},
+		{"only-dot pattern matches nothing", "example.com", ".", false},
+		{"whitespace tolerated", " example.com ", " example.com ", true},
+		{"ip address exact", "169.254.169.254", "169.254.169.254", true},
+		// FQDN trailing dot (regression: must not bypass the matcher).
+		{"trailing dot host matches apex pattern", "example.com.", "example.com", true},
+		{"trailing dot host matches subdomain pattern", "docs.example.com.", "example.com", true},
+		{"trailing dot pattern matches apex host", "example.com", "example.com.", true},
+		{"trailing dot host matches strict-subdomain pattern", "docs.example.com.", ".example.com", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, matchesDomain(tc.host, tc.pattern))
+		})
+	}
+}
+
+func TestFetch_AllowedDomains_DeniesUnknownHost(t *testing.T) {
+	url := runHTTPServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "should not be reached")
+	})
+
+	// httptest servers run on 127.0.0.1; an allow-list that does not include
+	// it must short-circuit the request.
+	tool := NewFetchTool(WithAllowedDomains([]string{"example.com"}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/whatever"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Error fetching")
+	assert.Contains(t, result.Output, "is not in allowed_domains")
+}
+
+func TestFetch_AllowedDomains_PermitsKnownHost(t *testing.T) {
+	requests := 0
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "hello")
+	})
+
+	tool := NewFetchTool(WithAllowedDomains([]string{"127.0.0.1"}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/page"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Successfully fetched")
+	assert.Contains(t, result.Output, "hello")
+	assert.Positive(t, requests, "the upstream should have been hit when the host is allow-listed")
+}
+
+func TestFetch_BlockedDomains_DeniesMatchingHost(t *testing.T) {
+	url := runHTTPServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "should not be reached")
+	})
+
+	tool := NewFetchTool(WithBlockedDomains([]string{"127.0.0.1"}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/page"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Error fetching")
+	assert.Contains(t, result.Output, "is blocked by blocked_domains")
+}
+
+func TestFetch_BlockedDomains_DeniesIgnoringRobots(t *testing.T) {
+	// The deny check must happen before robots.txt is fetched, so a server
+	// that errors on /robots.txt should still produce a clear domain error.
+	robotsRequested := false
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			robotsRequested = true
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprint(w, "should not be reached")
+	})
+
+	tool := NewFetchTool(WithBlockedDomains([]string{"127.0.0.1"}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/page"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "is blocked by blocked_domains")
+	assert.False(t, robotsRequested, "blocked URLs must not trigger any network call, including robots.txt")
+}
+
+// TestFetch_AllowedDomains_RejectsRedirectToBlockedHost is a regression test for an
+// SSRF-style bypass: an allow-listed origin returning a redirect to a host
+// that is NOT in the allow-list must be rejected before the redirect is
+// followed, otherwise the policy is hollow.
+func TestFetch_AllowedDomains_RejectsRedirectToBlockedHost(t *testing.T) {
+	redirected := false
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		redirected = true
+		http.Redirect(w, r, "http://attacker.example.com/secret", http.StatusFound)
+	})
+	parsed, err := neturl.Parse(url)
+	require.NoError(t, err)
+
+	// Allow only the test server's host. The redirect target must be
+	// rejected without any network call to attacker.example.com.
+	tool := NewFetchTool(WithAllowedDomains([]string{parsed.Hostname()}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/start"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.True(t, redirected, "the test server should have been hit at least once to issue the redirect")
+	assert.Contains(t, result.Output, "Error fetching")
+	assert.Contains(t, result.Output, "attacker.example.com", "the error should mention the rejected redirect target")
+	assert.Contains(t, result.Output, "is not in allowed_domains")
+}
+
+// TestFetch_BlockedDomains_RejectsRedirectToBlockedHost mirrors the allow-list
+// regression test for the deny-list path: a redirect to a deny-listed host
+// must not be followed.
+func TestFetch_BlockedDomains_RejectsRedirectToBlockedHost(t *testing.T) {
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "http://169.254.169.254/metadata", http.StatusFound)
+	})
+
+	tool := NewFetchTool(WithBlockedDomains([]string{"169.254.169.254"}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/innocent"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Error fetching")
+	assert.Contains(t, result.Output, "is blocked by blocked_domains")
+	assert.Contains(t, result.Output, "169.254.169.254")
 }

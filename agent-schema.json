@@ -1319,6 +1319,28 @@
           "description": "Timeout in seconds for the fetch tool",
           "minimum": 1
         },
+        "allowed_domains": {
+          "type": "array",
+          "description": "Allow-list of domains the fetch tool is permitted to fetch (only valid for type 'fetch'). A pattern matches the host exactly (case-insensitive) and any of its subdomains; e.g. 'example.com' matches 'example.com' and 'docs.example.com' but not 'badexample.com'. A leading dot ('.example.com') restricts the match to strict subdomains. Mutually exclusive with 'blocked_domains'.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            ["docker.com", "docs.docker.com"],
+            ["github.com", "raw.githubusercontent.com"]
+          ]
+        },
+        "blocked_domains": {
+          "type": "array",
+          "description": "Deny-list of domains the fetch tool is forbidden to fetch (only valid for type 'fetch'). Uses the same matching rules as 'allowed_domains'. Mutually exclusive with 'allowed_domains'.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            ["internal.example.com"],
+            ["169.254.169.254"]
+          ]
+        },
         "url": {
           "type": "string",
           "description": "URL for the a2a or openapi tool",
