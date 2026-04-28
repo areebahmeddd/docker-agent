@@ -523,7 +523,14 @@
         },
         "post_tool_use": {
           "type": "array",
-          "description": "Hooks that run after a tool completes. Can provide validation or additional context.",
+          "description": "Hooks that run after a tool completes (both success and failure). The result is delivered in tool_response (failed calls carry an is_error flag and any error text). Returning decision=block or exit code 2 stops the run loop after the current tool batch — useful for circuit-breaker patterns.",
+          "items": {
+            "$ref": "#/definitions/HookMatcherConfig"
+          }
+        },
+        "permission_request": {
+          "type": "array",
+          "description": "Hooks that run just before the runtime prompts the user to approve a tool call (i.e. when --yolo and permission rules did not short-circuit the decision). Hooks may auto-allow or auto-deny via hook_specific_output.permission_decision; otherwise control falls through to the interactive confirmation. Tool-matched, like pre_tool_use.",
           "items": {
             "$ref": "#/definitions/HookMatcherConfig"
           }
@@ -531,6 +538,13 @@
         "session_start": {
           "type": "array",
           "description": "Hooks that run when a session begins. Can load context or setup environment.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
+        },
+        "user_prompt_submit": {
+          "type": "array",
+          "description": "Hooks that run once per user message, after the user has submitted their prompt and before the first model call of the turn. The submitted text is passed in the prompt field. Hooks can block submission (decision=block / continue=false / exit code 2) or contribute additional_context that is spliced into the conversation as a transient system message for that turn only. Sub-sessions (transferred tasks, background agents) do NOT fire this event because their kick-off message is synthesised by the runtime.",
           "items": {
             "$ref": "#/definitions/HookDefinition"
           }
@@ -559,6 +573,20 @@
         "session_end": {
           "type": "array",
           "description": "Hooks that run when a session ends. Can perform cleanup or logging.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
+        },
+        "pre_compact": {
+          "type": "array",
+          "description": "Hooks that run just before the runtime compacts the session transcript into a summary. The trigger is reported in source: 'manual' (user-initiated /compact), 'auto' (proactive threshold), 'overflow' (context-overflow recovery), or 'tool_overflow' (proactive after tool results pushed past the threshold). Hooks may block compaction (decision=block / continue=false / exit code 2) or contribute additional_context that is appended to the compaction prompt — useful for steering the summary without modifying the agent's instruction.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
+        },
+        "subagent_stop": {
+          "type": "array",
+          "description": "Hooks that run when a sub-agent (transferred task, background agent, skill sub-session) finishes. Fires against the parent agent's executor so handlers configured on the orchestrator see every child completion. The sub-agent's name is in agent_name and its final assistant message in stop_response.",
           "items": {
             "$ref": "#/definitions/HookDefinition"
           }

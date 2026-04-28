@@ -10,12 +10,17 @@
 # Events:
 #
 #   pre_tool_use      - allow / deny / modify a tool call
-#   post_tool_use     - inspect a tool call's result (logging, audits)
+#   post_tool_use     - inspect a tool call's result (success OR failure)
+#   permission_request- programmatically approve / deny tool calls without
+#                       prompting the user
 #   session_start     - one-time setup; AdditionalContext PERSISTS in the session
+#   user_prompt_submit- runs once per user message, before the first LLM call
 #   turn_start        - per-turn context; AdditionalContext is TRANSIENT
 #   before_llm_call   - just before each model call (observability, guardrails)
 #   after_llm_call    - just after a successful model call
 #   session_end       - cleanup when the session terminates
+#   pre_compact       - just before context compaction; can steer or veto
+#   subagent_stop     - a sub-agent (transferred task / background) finished
 #   on_user_input     - the agent is waiting on the user
 #   stop              - the model finished its response
 #   notification      - errors / warnings emitted by the runtime (catch-all)
@@ -41,6 +46,12 @@
 #               add_recent_commits    (session_start; args = ["<N>"], default 10)
 #               max_iterations        (before_llm_call; args = ["<N>"], hard stop)
 #
+# Requirements: the command-style hooks below pipe stdin through `jq` for
+# convenient JSON access. If you don't have jq installed (`brew install jq`
+# on macOS, `apt-get install jq` on Debian/Ubuntu), a hook will exit non-zero
+# and the runtime will log a 'Hook execution error' warning but otherwise
+# continue — use plain `awk`/`sed`/`grep` or any other parser if you prefer.
+#
 # Try these prompts:
 #   "Run: echo hello"           → allowed
 #   "Run: rm -rf /tmp/test"     → denied by pre_tool_use
@@ -49,7 +60,12 @@
 #
 # Logs (tail these in another terminal):
 #   /tmp/agent-session.log         (session_start, session_end)
+#   /tmp/agent-prompts.log         (user_prompt_submit)
 #   /tmp/agent-llm-calls.log       (before_llm_call, after_llm_call)
+#   /tmp/agent-tool-results.log    (post_tool_use)
+#   /tmp/agent-permissions.log     (permission_request)
+#   /tmp/agent-compactions.log     (pre_compact)
+#   /tmp/agent-subagents.log       (subagent_stop)
 #   /tmp/agent-responses.log       (stop)
 #   /tmp/agent-notifications.log   (notification)
 #   /tmp/agent-errors.log          (on_error)
@@ -109,6 +125,8 @@ agents:
 
       # ====================================================================
       # POST-TOOL-USE - run AFTER a tool completes (logging, audits).
+      # Fires for BOTH success and failure: branch on tool_response.is_error
+      # to handle them differently if you only care about one outcome.
       # ====================================================================
       post_tool_use:
         - matcher: "shell"
@@ -126,6 +144,26 @@ agents:
                 ERROR=$(echo "$INPUT" | jq -r '.tool_error // false')
                 OUTPUT_LEN=$(echo "$INPUT" | jq -r '.tool_response // ""' | wc -c | tr -d ' ')
                 echo "✅ Post-hook: $TOOL completed (error=$ERROR, output=$OUTPUT_LEN chars, profile=$HOOK_PROFILE)"
+
+      # ====================================================================
+      # PERMISSION-REQUEST - run just before the runtime would prompt the
+      # user to approve a tool call. Auto-allow safe read-only commands so
+      # the user is never asked; auto-deny anything you don't want to even
+      # show in the confirmation UI. Returning nothing falls through to the
+      # interactive prompt.
+      # ====================================================================
+      permission_request:
+        - matcher: "shell"
+          hooks:
+            - type: command
+              timeout: 5
+              command: |
+                INPUT=$(cat)
+                CMD=$(echo "$INPUT" | jq -r '.tool_input.cmd // ""')
+                echo "[$(date)] permission request: $CMD" >> /tmp/agent-permissions.log
+                if echo "$CMD" | grep -qE '^(ls|pwd|cat|echo|date|whoami)( |$)'; then
+                  echo '{"hook_specific_output":{"permission_decision":"allow","permission_decision_reason":"safe read-only command"}}'
+                fi
 
       # ====================================================================
       # SESSION-START - runs ONCE when the session begins.
@@ -146,6 +184,26 @@ agents:
             SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
             echo "🚀 Session $SESSION_ID started at $(date)" >> /tmp/agent-session.log
             echo '{"hook_specific_output":{"additional_context":"Session log: /tmp/agent-session.log"}}'
+
+      # ====================================================================
+      # USER-PROMPT-SUBMIT - runs ONCE per user message, after the prompt
+      # has been recorded in the session and before the first LLM call.
+      # Use it to validate / redact / enrich the prompt, or to inject
+      # per-turn context (additional_context becomes a transient system
+      # message for that turn).
+      # ====================================================================
+      user_prompt_submit:
+        - type: command
+          timeout: 5
+          command: |
+            INPUT=$(cat)
+            SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+            PROMPT=$(echo "$INPUT" | jq -r '.prompt // ""')
+            echo "[$(date)] [$SESSION_ID] $PROMPT" >> /tmp/agent-prompts.log
+            # Example: inject a hint when the user asks about logs.
+            if echo "$PROMPT" | grep -qiE '\blogs?\b'; then
+              echo '{"hook_specific_output":{"additional_context":"Hook hint: agent log files live under /tmp/agent-*.log"}}'
+            fi
 
       # ====================================================================
       # TURN-START - runs at the start of every model call.
@@ -207,6 +265,41 @@ agents:
             SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
             REASON=$(echo "$INPUT" | jq -r '.reason // "unknown"')
             echo "👋 Session $SESSION_ID ended (reason: $REASON) at $(date)" >> /tmp/agent-session.log
+
+      # ====================================================================
+      # PRE-COMPACT - runs just before the runtime compacts the transcript.
+      # source is one of: manual (user /compact), auto (proactive threshold),
+      # overflow (context-overflow recovery), tool_overflow (proactive after
+      # tool results pushed past threshold). Return additional_context to
+      # steer the summary without editing the agent's instruction; return
+      # decision=block to cancel compaction entirely.
+      # ====================================================================
+      pre_compact:
+        - type: command
+          timeout: 5
+          command: |
+            INPUT=$(cat)
+            SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+            SOURCE=$(echo "$INPUT" | jq -r '.source // "unknown"')
+            echo "[$(date)] $SESSION_ID compacting (source=$SOURCE)" >> /tmp/agent-compactions.log
+            echo '{"hook_specific_output":{"additional_context":"When summarizing, please preserve any TODOs, file paths, and command outputs verbatim."}}'
+
+      # ====================================================================
+      # SUBAGENT-STOP - fires when a sub-agent (transfer_task, background
+      # agent, skill sub-session) completes. Runs against the PARENT
+      # agent's hooks executor, so handlers placed on the orchestrator
+      # see every child completion in one place.
+      # ====================================================================
+      subagent_stop:
+        - type: command
+          timeout: 5
+          command: |
+            INPUT=$(cat)
+            AGENT=$(echo "$INPUT" | jq -r '.agent_name // "unknown"')
+            CHILD=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+            PARENT=$(echo "$INPUT" | jq -r '.parent_session_id // "unknown"')
+            LEN=$(echo "$INPUT" | jq -r '.stop_response // ""' | wc -c | tr -d ' ')
+            echo "[$(date)] $AGENT child=$CHILD parent=$PARENT len=$LEN" >> /tmp/agent-subagents.log
 
       # ====================================================================
       # ON-USER-INPUT - the agent is waiting on the user.

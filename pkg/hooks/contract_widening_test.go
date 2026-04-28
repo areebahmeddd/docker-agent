@@ -120,3 +120,179 @@ func TestPostToolUseContinueFalseProducesDenyResult(t *testing.T) {
 	assert.False(t, res.Allowed)
 	assert.Contains(t, res.Message, "budget exhausted")
 }
+
+// TestUserPromptSubmitBlockProducesDenyResult pins the contract for
+// the user_prompt_submit event: a hook returning decision="block" must
+// produce Result.Allowed=false so the runtime can short-circuit the
+// turn before the model is invoked.
+func TestUserPromptSubmitBlockProducesDenyResult(t *testing.T) {
+	t.Parallel()
+
+	r := hooks.NewRegistry()
+	require.NoError(t, r.RegisterBuiltin("redactor", func(_ context.Context, in *hooks.Input, _ []string) (*hooks.Output, error) {
+		return &hooks.Output{
+			Decision: hooks.DecisionBlockValue,
+			Reason:   "prompt rejected: " + in.Prompt,
+		}, nil
+	}))
+
+	exec := hooks.NewExecutorWithRegistry(&hooks.Config{
+		UserPromptSubmit: []hooks.Hook{{
+			Type:    hooks.HookTypeBuiltin,
+			Command: "redactor",
+		}},
+	}, t.TempDir(), nil, r)
+
+	res, err := exec.Dispatch(t.Context(), hooks.EventUserPromptSubmit, &hooks.Input{
+		SessionID: "s",
+		Prompt:    "do the dangerous thing",
+	})
+	require.NoError(t, err)
+	assert.False(t, res.Allowed)
+	assert.Contains(t, res.Message, "do the dangerous thing",
+		"hook must see the user prompt via Input.Prompt")
+}
+
+// TestPreCompactBlockProducesDenyResult pins the contract for the
+// pre_compact event: a hook returning decision="block" must produce
+// Result.Allowed=false so summarizeWithSource skips compaction.
+func TestPreCompactBlockProducesDenyResult(t *testing.T) {
+	t.Parallel()
+
+	r := hooks.NewRegistry()
+	require.NoError(t, r.RegisterBuiltin("veto", func(_ context.Context, in *hooks.Input, _ []string) (*hooks.Output, error) {
+		return &hooks.Output{
+			Decision: hooks.DecisionBlockValue,
+			Reason:   "vetoed compaction (source=" + in.Source + ")",
+		}, nil
+	}))
+
+	exec := hooks.NewExecutorWithRegistry(&hooks.Config{
+		PreCompact: []hooks.Hook{{
+			Type:    hooks.HookTypeBuiltin,
+			Command: "veto",
+		}},
+	}, t.TempDir(), nil, r)
+
+	res, err := exec.Dispatch(t.Context(), hooks.EventPreCompact, &hooks.Input{
+		SessionID: "s",
+		Source:    "manual",
+	})
+	require.NoError(t, err)
+	assert.False(t, res.Allowed)
+	assert.Contains(t, res.Message, "source=manual",
+		"hook must see the compaction trigger via Input.Source")
+}
+
+// TestSubagentStopReceivesAgentName pins the contract for the
+// subagent_stop event: agent_name and stop_response must reach the
+// hook so handlers can identify which child finished and inspect its
+// final assistant message.
+func TestSubagentStopReceivesAgentName(t *testing.T) {
+	t.Parallel()
+
+	var gotName, gotResponse, gotParent string
+	r := hooks.NewRegistry()
+	require.NoError(t, r.RegisterBuiltin("capture", func(_ context.Context, in *hooks.Input, _ []string) (*hooks.Output, error) {
+		gotName = in.AgentName
+		gotResponse = in.StopResponse
+		gotParent = in.ParentSessionID
+		return nil, nil
+	}))
+
+	exec := hooks.NewExecutorWithRegistry(&hooks.Config{
+		SubagentStop: []hooks.Hook{{
+			Type:    hooks.HookTypeBuiltin,
+			Command: "capture",
+		}},
+	}, t.TempDir(), nil, r)
+
+	_, err := exec.Dispatch(t.Context(), hooks.EventSubagentStop, &hooks.Input{
+		SessionID:       "child-id",
+		ParentSessionID: "parent-id",
+		AgentName:       "researcher",
+		StopResponse:    "done",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "researcher", gotName)
+	assert.Equal(t, "done", gotResponse)
+	assert.Equal(t, "parent-id", gotParent)
+}
+
+// TestPermissionRequestAllowProducesPermissionAllowed pins the
+// contract for the permission_request event: a hook returning
+// permission_decision="allow" must produce
+// Result.PermissionAllowed=true so the runtime skips the interactive
+// confirmation. A bare deny (decision="block") must continue to
+// produce Allowed=false, consistent with pre_tool_use.
+func TestPermissionRequestAllowProducesPermissionAllowed(t *testing.T) {
+	t.Parallel()
+
+	r := hooks.NewRegistry()
+	require.NoError(t, r.RegisterBuiltin("approver", func(_ context.Context, _ *hooks.Input, _ []string) (*hooks.Output, error) {
+		return &hooks.Output{
+			HookSpecificOutput: &hooks.HookSpecificOutput{
+				HookEventName:            hooks.EventPermissionRequest,
+				PermissionDecision:       hooks.DecisionAllow,
+				PermissionDecisionReason: "safe",
+			},
+		}, nil
+	}))
+
+	exec := hooks.NewExecutorWithRegistry(&hooks.Config{
+		PermissionRequest: []hooks.MatcherConfig{{
+			Matcher: "*",
+			Hooks: []hooks.Hook{{
+				Type:    hooks.HookTypeBuiltin,
+				Command: "approver",
+			}},
+		}},
+	}, t.TempDir(), nil, r)
+
+	res, err := exec.Dispatch(t.Context(), hooks.EventPermissionRequest, &hooks.Input{
+		SessionID: "s",
+		ToolName:  "shell",
+	})
+	require.NoError(t, err)
+	assert.True(t, res.Allowed,
+		"allow decision must NOT flip Result.Allowed")
+	assert.True(t, res.PermissionAllowed,
+		"permission_decision=allow must produce PermissionAllowed=true")
+}
+
+// TestPermissionRequestDenyProducesDenyResult is the symmetric pin:
+// permission_decision="deny" must flip Allowed=false and propagate
+// the reason via Result.Message, mirroring pre_tool_use behaviour.
+func TestPermissionRequestDenyProducesDenyResult(t *testing.T) {
+	t.Parallel()
+
+	r := hooks.NewRegistry()
+	require.NoError(t, r.RegisterBuiltin("denier", func(_ context.Context, _ *hooks.Input, _ []string) (*hooks.Output, error) {
+		return &hooks.Output{
+			HookSpecificOutput: &hooks.HookSpecificOutput{
+				HookEventName:            hooks.EventPermissionRequest,
+				PermissionDecision:       hooks.DecisionDeny,
+				PermissionDecisionReason: "policy violation",
+			},
+		}, nil
+	}))
+
+	exec := hooks.NewExecutorWithRegistry(&hooks.Config{
+		PermissionRequest: []hooks.MatcherConfig{{
+			Matcher: "*",
+			Hooks: []hooks.Hook{{
+				Type:    hooks.HookTypeBuiltin,
+				Command: "denier",
+			}},
+		}},
+	}, t.TempDir(), nil, r)
+
+	res, err := exec.Dispatch(t.Context(), hooks.EventPermissionRequest, &hooks.Input{
+		SessionID: "s",
+		ToolName:  "shell",
+	})
+	require.NoError(t, err)
+	assert.False(t, res.Allowed)
+	assert.False(t, res.PermissionAllowed)
+	assert.Contains(t, res.Message, "policy violation")
+}

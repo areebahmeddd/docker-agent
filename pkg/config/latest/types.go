@@ -1645,11 +1645,35 @@ type HooksConfig struct {
 	// PreToolUse hooks run before tool execution
 	PreToolUse []HookMatcherConfig `json:"pre_tool_use,omitempty" yaml:"pre_tool_use,omitempty"`
 
-	// PostToolUse hooks run after tool execution
+	// PostToolUse hooks run after a tool completes — both success and
+	// failure: a failed tool call still fires this event, with the
+	// failure surfaced in tool_response (notably the is_error flag and
+	// any error text). Use post_tool_use to react to either outcome
+	// (logging, audits, circuit-breakers); branch on tool_response.is_error
+	// in the handler when you only want to act on one of them.
 	PostToolUse []HookMatcherConfig `json:"post_tool_use,omitempty" yaml:"post_tool_use,omitempty"`
+
+	// PermissionRequest hooks run just before the runtime would prompt
+	// the user to approve a tool call (i.e. when neither --yolo nor a
+	// permissions rule short-circuited the decision). Hooks may auto-allow
+	// or auto-deny via hook_specific_output.permission_decision so the
+	// user is not prompted; otherwise the runtime falls through to the
+	// usual interactive confirmation. Tool-matched, like pre_tool_use.
+	PermissionRequest []HookMatcherConfig `json:"permission_request,omitempty" yaml:"permission_request,omitempty"`
 
 	// SessionStart hooks run when a session begins
 	SessionStart []HookDefinition `json:"session_start,omitempty" yaml:"session_start,omitempty"`
+
+	// UserPromptSubmit hooks run once per user message, after the user
+	// has submitted their prompt and before the first model call of the
+	// turn. The submitted text is passed in the prompt field. Hooks can
+	// block submission (decision="block" / continue=false / exit code 2)
+	// or contribute additional_context that is spliced into the
+	// conversation as a transient system message for that turn only.
+	// Sub-sessions (transferred tasks, background agents) do not fire
+	// this event because their kick-off message is synthesised by the
+	// runtime, not authored by the user.
+	UserPromptSubmit []HookDefinition `json:"user_prompt_submit,omitempty" yaml:"user_prompt_submit,omitempty"`
 
 	// TurnStart hooks run at the start of every agent turn (each model
 	// call). Their AdditionalContext is appended as transient system
@@ -1672,6 +1696,24 @@ type HooksConfig struct {
 
 	// SessionEnd hooks run when a session ends
 	SessionEnd []HookDefinition `json:"session_end,omitempty" yaml:"session_end,omitempty"`
+
+	// PreCompact hooks run just before the runtime compacts the session
+	// transcript into a summary. The trigger is reported in the source
+	// field: "manual" (user-initiated /compact), "auto" (proactive
+	// threshold), "overflow" (context-overflow recovery), or
+	// "tool_overflow" (proactive after tool results pushed past the
+	// threshold). Hooks may block compaction (decision="block" /
+	// continue=false / exit code 2) or contribute additional_context
+	// that is appended to the compaction prompt — useful for steering
+	// the summary without modifying the agent's instruction.
+	PreCompact []HookDefinition `json:"pre_compact,omitempty" yaml:"pre_compact,omitempty"`
+
+	// SubagentStop hooks run when a sub-agent (transferred task,
+	// background agent, skill sub-session) finishes. The sub-agent's
+	// name is passed in agent_name and its final assistant message in
+	// stop_response. Useful for handoff auditing and per-sub-agent
+	// metrics, separately from the parent's stop event.
+	SubagentStop []HookDefinition `json:"subagent_stop,omitempty" yaml:"subagent_stop,omitempty"`
 
 	// OnUserInput hooks run when the agent needs user input
 	OnUserInput []HookDefinition `json:"on_user_input,omitempty" yaml:"on_user_input,omitempty"`
@@ -1730,11 +1772,15 @@ func (h *HooksConfig) IsEmpty() bool {
 	}
 	return len(h.PreToolUse) == 0 &&
 		len(h.PostToolUse) == 0 &&
+		len(h.PermissionRequest) == 0 &&
 		len(h.SessionStart) == 0 &&
+		len(h.UserPromptSubmit) == 0 &&
 		len(h.TurnStart) == 0 &&
 		len(h.BeforeLLMCall) == 0 &&
 		len(h.AfterLLMCall) == 0 &&
 		len(h.SessionEnd) == 0 &&
+		len(h.PreCompact) == 0 &&
+		len(h.SubagentStop) == 0 &&
 		len(h.OnUserInput) == 0 &&
 		len(h.Stop) == 0 &&
 		len(h.Notification) == 0 &&
@@ -1832,9 +1878,23 @@ func (h *HooksConfig) validate() error {
 		}
 	}
 
+	// Validate PermissionRequest matchers
+	for i, m := range h.PermissionRequest {
+		if err := m.validate("permission_request", i); err != nil {
+			return err
+		}
+	}
+
 	// Validate SessionStart hooks
 	for i, hook := range h.SessionStart {
 		if err := hook.validate("session_start", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate UserPromptSubmit hooks
+	for i, hook := range h.UserPromptSubmit {
+		if err := hook.validate("user_prompt_submit", i); err != nil {
 			return err
 		}
 	}
@@ -1863,6 +1923,20 @@ func (h *HooksConfig) validate() error {
 	// Validate SessionEnd hooks
 	for i, hook := range h.SessionEnd {
 		if err := hook.validate("session_end", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate PreCompact hooks
+	for i, hook := range h.PreCompact {
+		if err := hook.validate("pre_compact", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate SubagentStop hooks
+	for i, hook := range h.SubagentStop {
+		if err := hook.validate("subagent_stop", i); err != nil {
 			return err
 		}
 	}

@@ -19,6 +19,10 @@ Hooks allow you to execute shell commands or scripts at key points in an agent's
 - Validate or transform tool inputs before execution
 - Log all tool calls to an audit file
 - Block dangerous operations based on custom rules
+- Validate, redact, or enrich user prompts before they reach the model
+- Programmatically approve or deny tool calls without prompting the user
+- Steer or veto context-window compaction
+- Audit sub-agent handoffs in multi-agent setups
 - Set up the environment when a session starts
 - Clean up resources when a session ends
 - Log or validate model responses before returning to the user
@@ -30,15 +34,19 @@ Hooks allow you to execute shell commands or scripts at key points in an agent's
 
 There are seven hook event types:
 
-| Event            | When it fires                                          | Can block? |
-| ---------------- | ------------------------------------------------------ | ---------- |
-| `pre_tool_use`   | Before a tool call executes                            | Yes        |
-| `post_tool_use`  | After a tool completes successfully                    | No         |
-| `session_start`  | When a session begins or resumes                       | No         |
-| `session_end`    | When a session terminates                              | No         |
-| `on_user_input`  | When the agent is waiting for user input               | No         |
-| `stop`           | When the model finishes responding                     | No         |
-| `notification`   | When the agent emits a notification (error or warning) | No         |
+| Event               | When it fires                                                       | Can block? |
+| ------------------- | ------------------------------------------------------------------- | ---------- |
+| `pre_tool_use`      | Before a tool call executes                                         | Yes        |
+| `post_tool_use`     | After a tool completes — fires for both success and failure         | Yes        |
+| `permission_request`| Just before the runtime would prompt the user to approve a tool     | Yes        |
+| `session_start`     | When a session begins or resumes                                    | No         |
+| `user_prompt_submit`| Once per user message, after submission and before the model runs   | Yes        |
+| `session_end`       | When a session terminates                                           | No         |
+| `pre_compact`       | Just before the runtime compacts the session transcript             | Yes        |
+| `subagent_stop`     | When a sub-agent (transferred task / background) finishes           | No         |
+| `on_user_input`     | When the agent is waiting for user input                            | No         |
+| `stop`              | When the model finishes responding                                  | No         |
+| `notification`      | When the agent emits a notification (error or warning)              | No         |
 
 ## Configuration
 
@@ -178,26 +186,34 @@ Hooks receive JSON input via stdin with context about the event:
 
 ### Input Fields by Event Type
 
-| Field                  | pre_tool_use | post_tool_use | session_start | session_end | on_user_input | stop | notification |
-| ---------------------- | ------------ | ------------- | ------------- | ----------- | ------------- | ---- | ------------ |
-| `session_id`           | ✓            | ✓             | ✓             | ✓           | ✓             | ✓    | ✓            |
-| `cwd`                  | ✓            | ✓             | ✓             | ✓           | ✓             | ✓    | ✓            |
-| `hook_event_name`      | ✓            | ✓             | ✓             | ✓           | ✓             | ✓    | ✓            |
-| `tool_name`            | ✓            | ✓             |               |             |               |      |              |
-| `tool_use_id`          | ✓            | ✓             |               |             |               |      |              |
-| `tool_input`           | ✓            | ✓             |               |             |               |      |              |
-| `tool_response`        |              | ✓             |               |             |               |      |              |
-| `source`               |              |               | ✓             |             |               |      |              |
-| `reason`               |              |               |               | ✓           |               |      |              |
-| `stop_response`        |              |               |               |             |               | ✓    |              |
-| `notification_level`   |              |               |               |             |               |      | ✓            |
-| `notification_message` |              |               |               |             |               |      | ✓            |
+| Field                  | pre_tool_use | post_tool_use | permission_request | session_start | user_prompt_submit | session_end | pre_compact | subagent_stop | on_user_input | stop | notification |
+| ---------------------- | ------------ | ------------- | ------------------ | ------------- | ------------------ | ----------- | ----------- | ------------- | ------------- | ---- | ------------ |
+| `session_id`           | ✓            | ✓             | ✓                  | ✓             | ✓                  | ✓           | ✓           | ✓             | ✓             | ✓    | ✓            |
+| `cwd`                  | ✓            | ✓             | ✓                  | ✓             | ✓                  | ✓           | ✓           | ✓             | ✓             | ✓    | ✓            |
+| `hook_event_name`      | ✓            | ✓             | ✓                  | ✓             | ✓                  | ✓           | ✓           | ✓             | ✓             | ✓    | ✓            |
+| `tool_name`            | ✓            | ✓             | ✓                  |               |                    |             |             |               |               |      |              |
+| `tool_use_id`          | ✓            | ✓             | ✓                  |               |                    |             |             |               |               |      |              |
+| `tool_input`           | ✓            | ✓             | ✓                  |               |                    |             |             |               |               |      |              |
+| `tool_response`        |              | ✓             |                    |               |                    |             |             |               |               |      |              |
+| `source`               |              |               |                    | ✓             |                    |             | ✓           |               |               |      |              |
+| `reason`               |              |               |                    |               |                    | ✓           |             |               |               |      |              |
+| `prompt`               |              |               |                    |               | ✓                  |             |             |               |               |      |              |
+| `agent_name`           |              |               |                    |               |                    |             |             | ✓             |               |      |              |
+| `parent_session_id`    |              |               |                    |               |                    |             |             | ✓             |               |      |              |
+| `stop_response`        |              |               |                    |               |                    |             |             | ✓             |               | ✓    |              |
+| `notification_level`   |              |               |                    |               |                    |             |             |               |               |      | ✓            |
+| `notification_message` |              |               |                    |               |                    |             |             |               |               |      | ✓            |
 
 The `source` field for `session_start` can be: `startup`, `resume`, `clear`, or `compact`.
+The `source` field for `pre_compact` can be: `manual` (user-initiated `/compact`), `auto` (proactive threshold), `overflow` (context-overflow recovery), or `tool_overflow` (proactive recovery after tool results pushed past the threshold).
 
 The `reason` field for `session_end` can be: `clear`, `logout`, `prompt_input_exit`, or `other`.
 
-The `stop_response` field contains the model's final text response.
+The `prompt` field for `user_prompt_submit` is the text the user just submitted. Sub-sessions (transferred tasks, background agents, skills) do **not** fire this event because their kick-off message is synthesised by the runtime, not authored by the user.
+
+The `agent_name` field for `subagent_stop` is the name of the sub-agent that just finished; `parent_session_id` is the session that spawned it.
+
+The `stop_response` field contains the model's final text response (for both `stop` and `subagent_stop`).
 
 The `notification_level` field can be: `error` or `warning`.
 
@@ -245,7 +261,7 @@ The `hook_specific_output` for `pre_tool_use` supports:
 
 ### Plain Text Output
 
-For `session_start`, `post_tool_use`, and `stop` hooks, plain text written to stdout (i.e., output that is not valid JSON) is captured as additional context for the agent.
+For `session_start`, `user_prompt_submit`, `post_tool_use`, `pre_compact`, and `stop` hooks, plain text written to stdout (i.e., output that is not valid JSON) is captured as additional context for the agent. For `pre_compact` it is appended to the compaction prompt; for the others it is spliced into the conversation as a (transient or persisted) system message depending on the event.
 
 ## Exit Codes
 
@@ -409,6 +425,51 @@ The `notification` hook fires when:
 - The model returns an error (all models failed)
 - A degenerate tool call loop is detected
 - The maximum iteration limit is reached
+
+### Pre-Compact: steer the summary
+
+`pre_compact` fires just before the runtime compacts the session transcript. Its `source` field tells you why compaction was triggered:
+
+- `manual` — the user invoked `/compact`
+- `auto` — proactive compaction at the configured threshold
+- `overflow` — emergency compaction after a context-overflow error
+- `tool_overflow` — proactive compaction triggered by tool results pushing the estimated context past the threshold
+
+Return `additional_context` (or plain stdout) to append guidance to the compaction prompt without modifying the agent's instruction. Block the event (`decision: block` / exit code 2) to cancel compaction — useful when you want to handle truncation yourself.
+
+### User-Prompt-Submit: gate or enrich every user message
+
+`user_prompt_submit` fires once per user message, after the prompt is recorded in the session and before the first model call. The submitted text is in `prompt`. Use it to:
+
+- block prompts that violate policy (`decision: block` / exit code 2),
+- inject per-prompt context (`additional_context` is spliced as a transient system message for that turn),
+- audit user prompts to a log.
+
+It does **not** fire for sub-sessions (transferred tasks, background agents, skill sub-sessions) because their kick-off message is synthesised by the runtime.
+
+### Subagent-Stop: observe handoff completions
+
+`subagent_stop` fires whenever a sub-agent finishes — `transfer_task` returns, a background agent completes, or a skill sub-session ends. It runs against the *parent* agent's hooks executor, so handlers configured on the orchestrator see every child completion in one place. The sub-agent's name is in `agent_name`, the parent's session ID in `parent_session_id`, and the child's final assistant message in `stop_response`.
+
+### Permission-Request: programmatic tool approval
+
+`permission_request` fires just before the runtime would prompt the user to approve a tool call (i.e. when neither `--yolo` nor a permissions rule short-circuited the decision and the tool is not read-only). Use the same `hook_specific_output.permission_decision` shape as `pre_tool_use` to auto-approve or auto-deny the call:
+
+```yaml
+hooks:
+  permission_request:
+    - matcher: "shell"
+      hooks:
+        - type: command
+          command: |
+            INPUT=$(cat)
+            CMD=$(echo "$INPUT" | jq -r '.tool_input.cmd // ""')
+            if echo "$CMD" | grep -qE '^(ls|pwd|cat) '; then
+              echo '{"hook_specific_output":{"permission_decision":"allow","permission_decision_reason":"safe read-only command"}}'
+            fi
+```
+
+Return nothing to fall through to the usual interactive confirmation.
 
 </div>
 

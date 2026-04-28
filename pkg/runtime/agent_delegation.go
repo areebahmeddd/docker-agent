@@ -258,6 +258,17 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 
 	s := newSubSession(parent, req.SubSessionConfig, child)
 
+	// subagent_stop fires after the child's stream has fully drained,
+	// using the *parent* agent's executor so handlers configured on the
+	// orchestrator see every child completion in one place — success or
+	// failure. The deferred call ensures we don't lose the event when an
+	// ErrorEvent triggers an early return below; handlers can detect a
+	// failed run by an empty stop_response (or by correlating with the
+	// session-level error event the parent already received).
+	defer func() {
+		r.executeSubagentStopHooks(ctx, parent, s, callerAgent, req.AgentName, s.GetLastAssistantMessageContent())
+	}()
+
 	childEvents := r.RunStream(ctx, s)
 	for event := range childEvents {
 		evts <- event
@@ -277,6 +288,7 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 	parent.ToolsApproved = s.ToolsApproved
 	parent.AddSubSession(s)
 	evts <- SubSessionCompleted(parent.ID, s, callerAgent.Name())
+
 	span.SetStatus(codes.Ok, "sub-session completed")
 	return tools.ResultSuccess(s.GetLastAssistantMessageContent()), nil
 }
@@ -297,6 +309,17 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 	}
 
 	s := newSubSession(parent, cfg, child)
+
+	// subagent_stop fires after the background sub-session has fully
+	// drained — success or failure. The parent agent at the time of
+	// dispatch (whoever called run_background_agent) owns the executor;
+	// we resolve it via CurrentAgent because the background path doesn't
+	// carry the parent agent name. dispatchHook silently no-ops when
+	// CurrentAgent is nil. The deferred call ensures the hook fires even
+	// when an ErrorEvent or ctx cancellation breaks us out of the loop.
+	defer func() {
+		r.executeSubagentStopHooks(ctx, parent, s, r.CurrentAgent(), cfg.AgentName, s.GetLastAssistantMessageContent())
+	}()
 
 	var errMsg string
 	events := r.RunStream(ctx, s)
@@ -325,6 +348,7 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 
 	result := s.GetLastAssistantMessageContent()
 	parent.AddSubSession(s)
+
 	return &agenttool.RunResult{Result: result}
 }
 

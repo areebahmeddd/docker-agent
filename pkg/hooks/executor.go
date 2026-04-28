@@ -75,11 +75,15 @@ func compileEvents(c *Config) map[EventType][]matcher {
 	return map[EventType][]matcher{
 		EventPreToolUse:             compileMatchers(c.PreToolUse),
 		EventPostToolUse:            compileMatchers(c.PostToolUse),
+		EventPermissionRequest:      compileMatchers(c.PermissionRequest),
 		EventSessionStart:           flat(c.SessionStart),
+		EventUserPromptSubmit:       flat(c.UserPromptSubmit),
 		EventTurnStart:              flat(c.TurnStart),
 		EventBeforeLLMCall:          flat(c.BeforeLLMCall),
 		EventAfterLLMCall:           flat(c.AfterLLMCall),
 		EventSessionEnd:             flat(c.SessionEnd),
+		EventPreCompact:             flat(c.PreCompact),
+		EventSubagentStop:           flat(c.SubagentStop),
 		EventOnUserInput:            flat(c.OnUserInput),
 		EventStop:                   flat(c.Stop),
 		EventNotification:           flat(c.Notification),
@@ -330,19 +334,25 @@ func aggregate(results []hookResult, event EventType) *Result {
 			sysMsgs = append(sysMsgs, out.SystemMessage)
 		}
 		if hso := out.HookSpecificOutput; hso != nil {
-			if event == EventPreToolUse {
-				if hso.PermissionDecision == DecisionDeny {
+			if event == EventPreToolUse || event == EventPermissionRequest {
+				switch hso.PermissionDecision {
+				case DecisionDeny:
 					final.Allowed = false
 					if hso.PermissionDecisionReason != "" {
 						messages = append(messages, hso.PermissionDecisionReason)
 					}
-				}
-				if hso.UpdatedInput != nil {
-					if final.ModifiedInput == nil {
-						final.ModifiedInput = make(map[string]any)
+				case DecisionAllow:
+					final.PermissionAllowed = true
+					if hso.PermissionDecisionReason != "" {
+						contexts = append(contexts, hso.PermissionDecisionReason)
 					}
-					maps.Copy(final.ModifiedInput, hso.UpdatedInput)
 				}
+			}
+			if event == EventPreToolUse && hso.UpdatedInput != nil {
+				if final.ModifiedInput == nil {
+					final.ModifiedInput = make(map[string]any)
+				}
+				maps.Copy(final.ModifiedInput, hso.UpdatedInput)
 			}
 			if event == EventBeforeCompaction && hso.Summary != "" && final.Summary == "" {
 				// First non-empty summary in CONFIG ORDER wins. Hooks run

@@ -375,3 +375,57 @@ func (r *LocalRuntime) executeAfterCompactionHooks(
 		Summary:          summary,
 	}, events)
 }
+
+// executeUserPromptSubmitHooks fires user_prompt_submit once per user
+// message, after the prompt has been added to the session and before
+// the first model call of the turn. A terminating verdict
+// (decision="block" / continue=false / exit 2) stops the run loop;
+// AdditionalContext is returned as a transient system message that
+// callers splice into the conversation for that turn only.
+func (r *LocalRuntime) executeUserPromptSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, prompt string, events chan Event) (stop bool, message string, contextMsgs []chat.Message) {
+	result := r.dispatchHook(ctx, a, hooks.EventUserPromptSubmit, &hooks.Input{
+		SessionID: sess.ID,
+		Prompt:    prompt,
+	}, events)
+	if result == nil {
+		return false, "", nil
+	}
+	if !result.Allowed {
+		return true, result.Message, nil
+	}
+	return false, "", contextMessages(result)
+}
+
+// executePreCompactHooks fires pre_compact just before compaction.
+// The trigger reason ("manual", "auto", "overflow", "tool_overflow")
+// is reported in [hooks.Input.Source]. A terminating verdict skips
+// compaction entirely; AdditionalContext is appended to the
+// compaction prompt so handlers can steer the summary.
+func (r *LocalRuntime) executePreCompactHooks(ctx context.Context, sess *session.Session, a *agent.Agent, source string, events chan Event) (skip bool, message, additionalPrompt string) {
+	result := r.dispatchHook(ctx, a, hooks.EventPreCompact, &hooks.Input{
+		SessionID: sess.ID,
+		Source:    source,
+	}, events)
+	if result == nil {
+		return false, "", ""
+	}
+	if !result.Allowed {
+		return true, result.Message, ""
+	}
+	return false, "", result.AdditionalContext
+}
+
+// executeSubagentStopHooks fires subagent_stop when a sub-agent
+// (transferred task, background agent, skill sub-session) finishes.
+// It always runs against the *parent* agent's executor: subagent_stop
+// is by design observed by whoever spawned the sub-agent, so handlers
+// configured on the parent see every child completion in one place
+// without having to be replicated on each child.
+func (r *LocalRuntime) executeSubagentStopHooks(ctx context.Context, parent, child *session.Session, parentAgent *agent.Agent, subAgentName, response string) {
+	r.dispatchHook(ctx, parentAgent, hooks.EventSubagentStop, &hooks.Input{
+		SessionID:       child.ID,
+		ParentSessionID: parent.ID,
+		AgentName:       subAgentName,
+		StopResponse:    response,
+	}, nil)
+}

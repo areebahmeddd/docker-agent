@@ -982,7 +982,8 @@ func (r *LocalRuntime) startSpan(ctx context.Context, name string, opts ...trace
 // for the summarization (e.g., "focus on code changes" or "include action items").
 //
 // Summarize is the public entry point used by user-driven /compact actions; it
-// reports compactionReasonManual to BeforeCompaction / AfterCompaction hooks.
+// reports compactionReasonManual to BeforeCompaction / AfterCompaction hooks
+// and "manual" to PreCompact hooks.
 // Internal callers (proactive threshold, overflow recovery) use
 // [LocalRuntime.compactWithReason] directly to forward a more specific reason.
 func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan Event) {
@@ -996,9 +997,29 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 // reason is reported to BeforeCompaction / AfterCompaction hooks as
 // CompactionReason. Use [compactionReasonThreshold] for proactive
 // 90%-of-context triggers, [compactionReasonOverflow] for post-overflow
-// auto-recovery, or [compactionReasonManual] for user-invoked compactions.
+// auto-recovery, [compactionReasonToolOverflow] for tool-result-driven
+// 90% triggers, or [compactionReasonManual] for user-invoked compactions.
+//
+// PreCompact hooks fire first via the legacy [hooks.Input.Source] field
+// ("auto" / "tool_overflow" / "overflow" / "manual"); they may cancel the
+// compaction or contribute additional steering text. BeforeCompaction
+// hooks then fire inside [LocalRuntime.doCompact] with [Input.CompactionReason]
+// set to the canonical reason; they may veto or supply a custom summary.
 func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Session, additionalPrompt, reason string, events chan Event) {
 	a := r.resolveSessionAgent(sess)
+
+	source := preCompactSourceFor(reason)
+	skip, msg, extraPrompt := r.executePreCompactHooks(ctx, sess, a, source, events)
+	if skip {
+		slog.Warn("pre_compact hook signalled skip",
+			"agent", a.Name(), "session_id", sess.ID, "source", source, "reason", msg)
+		if msg != "" {
+			events <- Warning(msg, a.Name())
+		}
+		return
+	}
+	additionalPrompt = joinPrompts(additionalPrompt, extraPrompt)
+
 	r.doCompact(ctx, sess, a, additionalPrompt, reason, events)
 
 	// Emit a TokenUsageEvent so the sidebar immediately reflects the
@@ -1010,4 +1031,40 @@ func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Sess
 		contextLimit = int64(m.Limit.Context)
 	}
 	events <- NewTokenUsageEvent(sess.ID, a.Name(), SessionUsage(sess, contextLimit))
+}
+
+// preCompactSourceFor maps the canonical compaction reason
+// ([compactionReasonThreshold] / [compactionReasonOverflow] /
+// [compactionReasonManual]) onto the [hooks.Input.Source] string
+// surfaced by the pre_compact hook ("auto" / "overflow" / "manual").
+// Unknown reasons fall through unchanged so future, more specific
+// reasons (e.g. "tool_overflow") can be forwarded verbatim without
+// touching this map.
+func preCompactSourceFor(reason string) string {
+	switch reason {
+	case compactionReasonThreshold:
+		return "auto"
+	case compactionReasonOverflow:
+		return "overflow"
+	case compactionReasonManual:
+		return "manual"
+	default:
+		return reason
+	}
+}
+
+// joinPrompts concatenates two non-empty prompt fragments with a blank
+// line, returning whichever is non-empty when the other isn't. Used by
+// compactWithReason to splice pre_compact's additional_context into
+// the caller's additionalPrompt without having to special-case empty
+// strings at the callsite.
+func joinPrompts(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + "\n\n" + b
+	}
 }

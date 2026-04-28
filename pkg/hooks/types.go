@@ -14,13 +14,38 @@ type EventType string
 const (
 	// EventPreToolUse fires before a tool call. Can allow/deny/modify it.
 	EventPreToolUse EventType = "pre_tool_use"
-	// EventPostToolUse fires after a tool completes successfully.
-	// Returning decision="block" (or continue=false / exit code 2)
-	// stops the run loop after the current tool batch — useful for
-	// circuit-breaker patterns like a tool-call loop detector.
+	// EventPostToolUse fires after a tool completes — both success and
+	// failure. The result is delivered in [Input.ToolResponse]; failed
+	// calls carry an is_error flag and any error text. Returning
+	// decision="block" (or continue=false / exit code 2) stops the run
+	// loop after the current tool batch — useful for circuit-breaker
+	// patterns like a tool-call loop detector.
 	EventPostToolUse EventType = "post_tool_use"
+	// EventPermissionRequest fires just before the runtime would prompt
+	// the user to confirm a tool call (i.e. when neither --yolo nor a
+	// permissions rule short-circuited the decision and the tool is not
+	// read-only). The hook can short-circuit the prompt by returning
+	// [HookSpecificOutput.PermissionDecision] = "allow" (sets
+	// [Result.PermissionAllowed] true — the runtime invokes the tool
+	// without asking) or "deny" (sets [Result.Allowed] false — the
+	// runtime rejects the tool with the hook's reason). Returning
+	// nothing falls through to the interactive confirmation.
+	//
+	// Unlike pre_tool_use — where allow is the implicit default and only
+	// deny carries new information — here allow is the explicit
+	// auto-approve verdict; that asymmetry is why permission_request
+	// has its own [Result.PermissionAllowed] flag separate from
+	// [Result.Allowed].
+	EventPermissionRequest EventType = "permission_request"
 	// EventSessionStart fires when a session begins or resumes.
 	EventSessionStart EventType = "session_start"
+	// EventUserPromptSubmit fires once per user prompt, after the user
+	// has submitted their message and before the first model call of
+	// the turn. Returning decision="block" (or continue=false / exit
+	// code 2) stops the run loop before the model is invoked.
+	// AdditionalContext is spliced into the conversation as a transient
+	// system message for that turn only.
+	EventUserPromptSubmit EventType = "user_prompt_submit"
 	// EventTurnStart fires at the start of every agent turn (each model
 	// call). AdditionalContext is injected transiently and never persisted.
 	EventTurnStart EventType = "turn_start"
@@ -35,6 +60,18 @@ const (
 	EventAfterLLMCall EventType = "after_llm_call"
 	// EventSessionEnd fires when a session terminates.
 	EventSessionEnd EventType = "session_end"
+	// EventPreCompact fires just before the runtime compacts the session
+	// transcript. The trigger is reported in [Input.Source]: "manual",
+	// "auto", "overflow", or "tool_overflow". Returning decision="block"
+	// (or continue=false / exit code 2) cancels the compaction.
+	// AdditionalContext is appended to the compaction prompt and lets
+	// the hook steer the summary without modifying the agent's instruction.
+	EventPreCompact EventType = "pre_compact"
+	// EventSubagentStop fires when a sub-agent (transferred task,
+	// background agent, skill sub-session) finishes. The sub-agent's
+	// name is in [Input.AgentName] and its final assistant message in
+	// [Input.StopResponse].
+	EventSubagentStop EventType = "subagent_stop"
 	// EventOnUserInput fires when the agent needs input from the user.
 	EventOnUserInput EventType = "on_user_input"
 	// EventStop fires when the model finishes its response.
@@ -117,7 +154,7 @@ type Input struct {
 	// turn-scoped (session_start, session_end, notification, ...).
 	LastUserMessage string `json:"last_user_message,omitempty"`
 
-	// Tool-related fields (PreToolUse and PostToolUse).
+	// Tool-related fields (PreToolUse, PostToolUse, PermissionRequest).
 	ToolName  string         `json:"tool_name,omitempty"`
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	ToolInput map[string]any `json:"tool_input,omitempty"`
@@ -126,12 +163,19 @@ type Input struct {
 	ToolResponse any  `json:"tool_response,omitempty"`
 	ToolError    bool `json:"tool_error,omitempty"`
 
-	// SessionStart specific: "startup", "resume", "clear".
+	// SessionStart specific: "startup", "resume", "clear", "compact".
+	// PreCompact specific: "manual", "auto", "overflow", "tool_overflow".
 	Source string `json:"source,omitempty"`
 	// SessionEnd specific: "clear", "logout", "prompt_input_exit", "other".
 	Reason string `json:"reason,omitempty"`
-	// Stop / AfterLLMCall: the model's final response content.
+	// Stop / AfterLLMCall / SubagentStop: the model's final response content.
 	StopResponse string `json:"stop_response,omitempty"`
+	// UserPromptSubmit specific: the text the user just submitted.
+	Prompt string `json:"prompt,omitempty"`
+	// SubagentStop populates [Input.AgentName] (above) with the name of
+	// the sub-agent that just finished.
+	// SubagentStop specific: ID of the parent session that spawned the sub-agent.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 	// Notification specific.
 	NotificationLevel   string `json:"notification_level,omitempty"`
 	NotificationMessage string `json:"notification_message,omitempty"`
@@ -268,6 +312,10 @@ type HookSpecificOutput struct {
 type Result struct {
 	// Allowed indicates if the operation should proceed.
 	Allowed bool
+	// PermissionAllowed is set when a [EventPermissionRequest] hook
+	// returned permission_decision="allow". The runtime treats this as
+	// an explicit auto-approve and skips the interactive confirmation.
+	PermissionAllowed bool
 	// Message is feedback to include in the response.
 	Message string
 	// ModifiedInput contains modifications to tool input (PreToolUse).

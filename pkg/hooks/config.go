@@ -23,7 +23,8 @@ type (
 	// the executor at registry lookup.
 	Hook = latest.HookDefinition
 	// MatcherConfig pairs a tool-name regex with the hooks to run when
-	// it matches (used by EventPreToolUse and EventPostToolUse).
+	// it matches (used by EventPreToolUse, EventPostToolUse, and
+	// EventPermissionRequest).
 	MatcherConfig = latest.HookMatcherConfig
 )
 

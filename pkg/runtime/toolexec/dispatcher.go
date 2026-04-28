@@ -384,7 +384,15 @@ func denySourceForChecker(checkerSource string) string {
 // askUser sends a confirmation event and waits for the user's response
 // on the resume channel or for ctx cancellation. Only called when no
 // permission rule auto-approved the tool.
+//
+// permission_request hooks fire first and may short-circuit the prompt
+// with an explicit allow or deny verdict; returning nothing falls
+// through to the interactive confirmation.
 func (c *call) askUser(ctx context.Context, runTool func() CallOutcome) CallOutcome {
+	if outcome, handled := c.runPermissionRequestHook(ctx, runTool); handled {
+		return outcome
+	}
+
 	slog.Debug("Tools not approved, waiting for resume", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 	c.em.EmitToolCallConfirmation(c.tc, c.tool, c.a.Name())
 
@@ -401,6 +409,46 @@ func (c *call) askUser(ctx context.Context, runTool func() CallOutcome) CallOutc
 		c.errorResponse("The tool call was canceled by the user.")
 		return CallOutcome{Canceled: true}
 	}
+}
+
+// runPermissionRequestHook dispatches the permission_request hook just
+// before the runtime would prompt the user for confirmation. The hook
+// can short-circuit the prompt by returning permission_decision
+// ("allow" or "deny") in hook_specific_output. A bare deny (Decision=
+// "block" without permission_decision) is also honoured. Returning
+// nothing keeps the existing behaviour and asks the user.
+func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() CallOutcome) (CallOutcome, bool) {
+	if c.d.Hooks == nil {
+		return CallOutcome{}, false
+	}
+
+	toolName := c.tc.Function.Name
+	result := c.d.Hooks.Dispatch(ctx, c.a, hooks.EventPermissionRequest, &hooks.Input{
+		SessionID: c.sess.ID,
+		ToolName:  toolName,
+		ToolUseID: c.tc.ID,
+		ToolInput: ParseToolInput(c.tc.Function.Arguments),
+	})
+	if result == nil {
+		return CallOutcome{}, false
+	}
+
+	if !result.Allowed {
+		slog.Debug("Tool denied by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.Message)
+		rejectMsg := "The tool call was rejected by a permission_request hook."
+		if reason := strings.TrimSpace(result.Message); reason != "" {
+			rejectMsg += " Reason: " + reason
+		}
+		c.errorResponse(rejectMsg)
+		return CallOutcome{}, true
+	}
+
+	if result.PermissionAllowed {
+		slog.Debug("Tool auto-approved by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.AdditionalContext)
+		return runTool(), true
+	}
+
+	return CallOutcome{}, false
 }
 
 // handleResume applies the user's confirmation decision: run the tool
