@@ -405,10 +405,25 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	// cache_response it captures the runtime closure (to resolve the
 	// agent and its model from Input.AgentName) and is therefore
 	// registered here rather than in pkg/hooks/builtins.
-	r.transforms = append(r.transforms, registeredTransform{
-		name: BuiltinStripUnsupportedModalities,
-		fn:   r.stripUnsupportedModalitiesTransform,
-	})
+	//
+	// redact_secrets is the LLM-side peer of the redact_secrets
+	// pre_tool_use builtin hook (see pkg/hooks/builtins/redact_secrets.go).
+	// Both are gated on the agent's RedactSecrets flag so a single
+	// agent-level switch covers the two leak vectors (outgoing chat
+	// content + outgoing tool args). Like the strip transform, it
+	// captures the runtime closure to resolve the agent from
+	// Input.AgentName, so it must be registered here rather than as a
+	// stateless builtin in pkg/hooks/builtins.
+	r.transforms = append(r.transforms,
+		registeredTransform{
+			name: BuiltinStripUnsupportedModalities,
+			fn:   r.stripUnsupportedModalitiesTransform,
+		},
+		registeredTransform{
+			name: BuiltinRedactSecrets,
+			fn:   r.redactSecretsTransform,
+		},
+	)
 
 	for _, opt := range opts {
 		opt(r)
