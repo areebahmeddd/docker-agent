@@ -49,20 +49,30 @@ type LifecycleConfig struct {
 	// Empty means "resilient". Explicit fields override the profile.
 	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
 
-	// Required indicates the agent must refuse to start if this toolset
-	// cannot reach Ready within StartupTimeout. False (the default) means
-	// the agent boots without it and surfaces a warning.
+	// Required, when set, indicates the toolset is critical to the agent.
+	//
+	// NOTE: this field is currently informational — the runtime does NOT
+	// yet block agent startup on it. The wiring lives behind a planned
+	// eager-startup commit; until then, callers can read the effective
+	// value via IsRequired() but the supervisor itself does not act on it.
+	//
+	// nil pointer means "use the profile default" (true under "strict",
+	// false otherwise).
 	Required *bool `json:"required,omitempty" yaml:"required,omitempty"`
 
 	// StartupTimeout caps the duration of the initial Connect call.
-	// Zero means "no timeout" (use the caller's context). The runtime
-	// enforces this in the eager startup phase introduced alongside the
-	// /toolsets command.
+	//
+	// NOTE: this field is currently informational — the runtime does NOT
+	// yet enforce it. The supervisor's Start uses the caller's context
+	// for cancellation today; honouring StartupTimeout requires the same
+	// eager-startup wiring as Required.
+	//
+	// Zero means "no timeout".
 	StartupTimeout Duration `json:"startup_timeout,omitzero" yaml:"startup_timeout,omitempty"`
 
-	// CallTimeout is informational today; it documents the user's
-	// expectation for individual tool calls. The runtime currently uses
-	// the caller's context for cancellation.
+	// CallTimeout is informational; it documents the user's expectation
+	// for individual tool calls. The runtime currently uses the caller's
+	// context for cancellation.
 	CallTimeout Duration `json:"call_timeout,omitzero" yaml:"call_timeout,omitempty"`
 
 	// Restart controls how the supervisor reacts to an unexpected

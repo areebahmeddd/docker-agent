@@ -89,11 +89,11 @@
         },
         "required": {
           "type": "boolean",
-          "description": "When true, the agent refuses to start if this toolset cannot reach Ready within startup_timeout. Defaults to true under the 'strict' profile, false otherwise."
+          "description": "Marks the toolset as critical to the agent. NOTE: not yet enforced — a planned eager-startup phase will refuse to start the agent when a required toolset cannot reach Ready within startup_timeout. Defaults to true under the 'strict' profile, false otherwise."
         },
         "startup_timeout": {
           "type": "string",
-          "description": "Max wait for the initial Connect+initialize. Go duration format (e.g. '30s', '2m'). 0 means no timeout."
+          "description": "Cap on the initial Connect+initialize duration. NOTE: not yet enforced; documented for forward compatibility. Go duration format (e.g. '30s', '2m'). 0 means no timeout."
         },
         "call_timeout": {
           "type": "string",

@@ -270,16 +270,3 @@ func (s *lspSession) Close(ctx context.Context) error {
 	slog.Debug("LSP server stopped")
 	return nil
 }
-
-// readLspProcessHandle is exported for tests in the package to inspect
-// per-session state when verifying lifecycle behaviour. It is unused in
-// production paths.
-//
-// minimise churn between commits.
-//
-//nolint:unused // consumed by upcoming lifecycle tests; kept now to
-func (h *lspHandler) readLspProcessHandle() *exec.Cmd {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.cmd
-}

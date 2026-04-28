@@ -221,14 +221,28 @@ func (ts *Toolset) State() lifecycle.StateInfo {
 
 // Restart forces the supervisor to drop the current MCP session and
 // reconnect, blocking until either the new session reaches Ready or
-// sessionMissingRetryTimeout elapses. It is safe to call regardless of
-// state: a Stopped toolset is started, and a Failed/Restarting toolset
-// is nudged out of its current state.
+// sessionMissingRetryTimeout elapses.
+//
+// It is safe to call regardless of state: a Failed or Stopped (terminal)
+// supervisor is brought back via Start; a Ready/Restarting supervisor is
+// nudged via RestartAndWait. Stop'd supervisors stay Stopped (Stop is
+// permanent by contract).
 func (ts *Toolset) Restart(ctx context.Context) error {
 	if ts.supervisor == nil {
 		return errors.New("toolset has no supervisor: must be created via NewToolsetCommand or NewRemoteToolset")
 	}
-	return ts.supervisor.RestartAndWait(ctx, sessionMissingRetryTimeout)
+	switch ts.supervisor.State().State {
+	case lifecycle.StateFailed:
+		// Terminal-but-recoverable: the supervisor exhausted its restart
+		// budget. RestartAndWait would return immediately because `done`
+		// is closed; we want a fresh Connect attempt instead.
+		return ts.supervisor.Start(ctx)
+	case lifecycle.StateStopped:
+		// Initial state or post-failed-Start: bring it up.
+		return ts.supervisor.Start(ctx)
+	default:
+		return ts.supervisor.RestartAndWait(ctx, sessionMissingRetryTimeout)
+	}
 }
 
 // buildStdioDescription produces a user-visible description for a stdio MCP toolset.

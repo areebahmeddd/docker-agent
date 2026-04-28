@@ -3,7 +3,6 @@ package lifecycle
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math"
 	"math/rand/v2"
@@ -172,12 +171,18 @@ type Supervisor struct {
 	forceRestart bool          // set by RestartAndWait so the watcher reconnects
 	restarted    chan struct{} // closed and replaced on each successful restart
 
-	// done is closed exactly once: when the supervisor enters a terminal
-	// state (Stopped via Stop, or Failed because tryRestart gave up). It
-	// lets RestartAndWait return promptly instead of waiting for its
-	// timeout when no further restart will ever happen.
-	doneOnce sync.Once
-	done     chan struct{}
+	// done is closed when the supervisor enters a terminal state (Stopped
+	// via Stop, or Failed because tryRestart gave up). It lets
+	// RestartAndWait return promptly instead of waiting for its timeout
+	// when no further restart will ever happen.
+	//
+	// done is replaced with a fresh channel when Start brings the
+	// supervisor back out of a terminal state, so the same supervisor
+	// can be Failed → Start → Failed → Start without RestartAndWait
+	// seeing a stale closed channel. mu protects writes; readers either
+	// hold mu when capturing the reference or rely on it being captured
+	// inside the same critical section.
+	done chan struct{}
 
 	// randFloat is used for Backoff jitter; tests may override.
 	randFloat func() float64
@@ -197,11 +202,22 @@ func New(name string, connector Connector, policy Policy) *Supervisor {
 	}
 }
 
-// signalDone closes the done channel exactly once. It is the only way to
-// transition the supervisor into a terminal-from-RestartAndWait's-view
-// state; callers should signalDone whenever they enter Stopped or Failed.
+// signalDone closes the done channel if it is not already closed. It is
+// the only way to transition the supervisor into a terminal-from
+// -RestartAndWait's-view state; callers should signalDone whenever they
+// enter Stopped or Failed.
+//
+// It takes mu so that a concurrent Start can replace `done` without
+// racing with the close.
 func (s *Supervisor) signalDone() {
-	s.doneOnce.Do(func() { close(s.done) })
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.done:
+		// Already closed; nothing to do.
+	default:
+		close(s.done)
+	}
 }
 
 // State returns a snapshot of the supervisor's current state.
@@ -281,6 +297,17 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	if spawnWatcher {
 		s.watcherAlive = true
 	}
+	// Recovering from a terminal state (Failed → Start, or a watcher
+	// that previously exited): refresh `done` so RestartAndWait callers
+	// don't see a stale close, and clear forceRestart so a leftover
+	// flag from a prior session doesn't force-restart this fresh one
+	// on its first disconnect.
+	select {
+	case <-s.done:
+		s.done = make(chan struct{})
+	default:
+	}
+	s.forceRestart = false
 	s.mu.Unlock()
 
 	s.tracker.Set(StateReady)
@@ -330,6 +357,12 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 // cancellation, supervisor shutdown (Stop or Failed), or timeout.
 // It is the supervisor-level analogue of the previous
 // forceReconnectAndWait helper.
+//
+// Note: RestartAndWait does NOT recover the supervisor from a terminal
+// state (Stopped/Failed). Callers that want "restart even if Failed"
+// should consult State() first and call Start when terminal; the
+// Toolset.Restart implementations in pkg/tools/mcp and pkg/tools/builtin
+// do exactly this.
 func (s *Supervisor) RestartAndWait(ctx context.Context, timeout time.Duration) error {
 	s.mu.Lock()
 	if s.stopping {
@@ -337,6 +370,7 @@ func (s *Supervisor) RestartAndWait(ctx context.Context, timeout time.Duration) 
 		return ErrNotStarted
 	}
 	restartCh := s.restarted
+	doneCh := s.done
 	state := s.tracker.State()
 	sess := s.session
 	// Mark the next disconnect as forced so the watcher reconnects even
@@ -354,7 +388,7 @@ func (s *Supervisor) RestartAndWait(ctx context.Context, timeout time.Duration) 
 	select {
 	case <-restartCh:
 		return nil
-	case <-s.done:
+	case <-doneCh:
 		// Stop or terminal Failed; report the latest error if any so
 		// the caller can surface it.
 		if err := s.tracker.LastError(); err != nil {
@@ -518,21 +552,4 @@ func (s *Supervisor) tryRestart(ctx context.Context) bool {
 			"name", s.name, "attempt", attempt+1)
 		return true
 	}
-}
-
-// statusString returns a debug-friendly multi-line status, used by tests
-// and the upcoming /toolsets command.
-//
-// avoid churning the supervisor surface across commits.
-//
-//nolint:unused // consumed by Step 5 (TUI /toolsets command); kept now to
-func (s *Supervisor) statusString() string {
-	snap := s.tracker.Snapshot()
-	since := time.Since(snap.Since).Truncate(time.Second)
-	lastErr := "-"
-	if snap.LastError != nil {
-		lastErr = snap.LastError.Error()
-	}
-	return fmt.Sprintf("name=%s state=%s for=%s restarts=%d last_error=%s",
-		s.name, snap.State, since, snap.RestartCount, lastErr)
 }

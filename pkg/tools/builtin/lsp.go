@@ -401,10 +401,19 @@ func (t *LSPTool) State() lifecycle.StateInfo {
 }
 
 // Restart forces the supervisor to terminate the current LSP session and
-// reconnect. Blocks until the new session reaches Ready, ctx is cancelled,
-// or 35s elapses (matching the MCP toolset).
+// reconnect.
+//
+// It is safe to call regardless of state: a Failed or Stopped (terminal)
+// supervisor is brought back via Start; a Ready/Restarting supervisor is
+// nudged via RestartAndWait. Blocks until the new session reaches Ready,
+// ctx is cancelled, or 35s elapses (matching the MCP toolset).
 func (t *LSPTool) Restart(ctx context.Context) error {
-	return t.handler.supervisor.RestartAndWait(ctx, 35*time.Second)
+	switch t.handler.supervisor.State().State {
+	case lifecycle.StateFailed, lifecycle.StateStopped:
+		return t.handler.supervisor.Start(ctx)
+	default:
+		return t.handler.supervisor.RestartAndWait(ctx, 35*time.Second)
+	}
 }
 
 func (t *LSPTool) Instructions() string {
@@ -627,7 +636,15 @@ func isProviderEnabled(v any) bool {
 // state (open files, diagnostics) that survives reconnects.
 
 func (h *lspHandler) ensureInitialized() error {
-	if h.initialized.Load() && h.cmd != nil {
+	// Fast path: rely on the atomic initialized flag. lspConnector.Connect
+	// only sets initialized=true after publishing h.cmd / h.stdin /
+	// h.stdout under h.mu, and lspSession.Close clears initialized BEFORE
+	// nilling those fields, so observing initialized=true here implies
+	// the per-request methods can safely take h.mu and find a live
+	// session. We deliberately do NOT read h.cmd here: that field is
+	// guarded by h.mu, and reading it without the lock would race with
+	// Connect/Close.
+	if h.initialized.Load() {
 		return nil
 	}
 

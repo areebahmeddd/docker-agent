@@ -7,13 +7,15 @@ agents:
     instruction: |
       Use the configured tools to answer questions.
     toolsets:
-      # 1. Strict profile: the agent refuses to start unless gopls is up.
+      # 1. Strict profile: marks gopls as critical so a future eager-startup
+      #    phase will refuse to start the agent if it can't come up. Today
+      #    the agent still boots without it and surfaces a warning.
       - type: lsp
         command: gopls
         file_types: [".go"]
         lifecycle:
-          profile: strict          # required=true, no auto-restart
-          startup_timeout: 30s
+          profile: strict          # required=true (informational), no auto-restart
+          startup_timeout: 30s     # informational; not yet enforced
 
       # 2. Resilient profile (the default if 'lifecycle' is omitted).
       #    Auto-restart with exponential backoff and a higher restart budget.
