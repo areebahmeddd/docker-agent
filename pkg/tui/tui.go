@@ -1662,6 +1662,23 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Ctrl+c is intercepted before any dialog handling so that every dialog
+	// reacts to it consistently:
+	//   - With no dialog open: open the exit confirmation dialog.
+	//   - With any other dialog open: stack the exit confirmation on top so
+	//     that the user can confirm exit (a second ctrl+c or Y exits) or
+	//     cancel it (N/Esc) and return to the original dialog.
+	//   - With the exit confirmation already on top: forward the key so it
+	//     can exit the program via its own Yes binding.
+	if msg.String() == "ctrl+c" {
+		if m.dialogMgr.TopIsExitConfirmation() {
+			return m.forwardDialog(msg)
+		}
+		return m, core.CmdHandler(dialog.OpenDialogMsg{
+			Model: dialog.NewExitConfirmationDialog(),
+		})
+	}
+
 	// Dialog gets priority when open
 	if m.dialogMgr.Open() {
 		return m.forwardDialog(msg)
@@ -1689,11 +1706,6 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Global keyboard shortcuts (active even during history search)
 	switch {
-	case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))):
-		return m, core.CmdHandler(dialog.OpenDialogMsg{
-			Model: dialog.NewExitConfirmationDialog(),
-		})
-
 	case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+z"))):
 		return m, tea.Suspend
 

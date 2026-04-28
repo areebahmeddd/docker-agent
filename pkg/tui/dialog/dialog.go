@@ -31,6 +31,7 @@ type Manager interface {
 
 	GetLayers() []*lipgloss.Layer
 	Open() bool
+	TopIsExitConfirmation() bool
 }
 
 // dialogEntry pairs a dialog with its drag offset so the two stay in sync.
@@ -267,6 +268,18 @@ func (d *manager) handleCloseAll() (layout.Model, tea.Cmd) {
 // Open returns true if there is at least one active dialog
 func (d *manager) Open() bool {
 	return len(d.stack) > 0
+}
+
+// TopIsExitConfirmation returns true if the topmost dialog is the exit
+// confirmation dialog. Used by the top-level key handler to route ctrl+c to
+// the exit confirmation (which exits the program) instead of stacking another
+// exit confirmation on top.
+func (d *manager) TopIsExitConfirmation() bool {
+	if len(d.stack) == 0 {
+		return false
+	}
+	_, ok := d.stack[len(d.stack)-1].dialog.(*exitConfirmationDialog)
+	return ok
 }
 
 func (d *manager) SetSize(width, height int) tea.Cmd {

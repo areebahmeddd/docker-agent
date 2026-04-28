@@ -173,10 +173,6 @@ func (d *ElicitationDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		}
 		return d, nil
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+c" {
-			cmd := d.close(tools.ElicitationActionDecline, nil)
-			return d, tea.Sequence(cmd, tea.Quit)
-		}
 		return d.handleKeyPress(msg)
 	}
 	return d, nil
