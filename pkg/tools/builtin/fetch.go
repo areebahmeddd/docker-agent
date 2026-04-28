@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -270,56 +271,38 @@ func (h *fetchHandler) checkDomainAllowed(u *url.URL) error {
 	if host == "" {
 		return errors.New("URL has no host")
 	}
-	if len(h.blockedDomains) > 0 && matchesAnyDomain(host, h.blockedDomains) {
-		return fmt.Errorf("URL host %q is blocked by blocked_domains", host)
+	matchesAny := func(patterns []string) bool {
+		return slices.ContainsFunc(patterns, func(p string) bool {
+			return matchesDomain(host, p)
+		})
 	}
-	if len(h.allowedDomains) > 0 && !matchesAnyDomain(host, h.allowedDomains) {
+	switch {
+	case len(h.blockedDomains) > 0 && matchesAny(h.blockedDomains):
+		return fmt.Errorf("URL host %q is blocked by blocked_domains", host)
+	case len(h.allowedDomains) > 0 && !matchesAny(h.allowedDomains):
 		return fmt.Errorf("URL host %q is not in allowed_domains", host)
 	}
 	return nil
 }
 
-// matchesAnyDomain reports whether host matches any of the supplied patterns.
-// See matchesDomain for the matching rules.
-func matchesAnyDomain(host string, patterns []string) bool {
-	for _, p := range patterns {
-		if matchesDomain(host, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchesDomain reports whether host matches pattern.
+// matchesDomain reports whether host matches pattern (case-insensitive).
 //
-// Matching rules (case-insensitive):
-//   - An empty pattern matches nothing.
-//   - A pattern with a leading dot (".example.com") matches strict subdomains
-//     of example.com but NOT example.com itself.
-//   - Any other pattern ("example.com") matches the host exactly and any of
-//     its subdomains (e.g. "docs.example.com"). It does NOT match unrelated
-//     hosts that share a suffix (e.g. "badexample.com").
+// A bare pattern ("example.com") matches the host exactly or any subdomain
+// ("docs.example.com"); it does NOT match unrelated hosts that share a suffix
+// ("badexample.com"). A pattern with a leading dot (".example.com") matches
+// strict subdomains only — the apex "example.com" is excluded.
 func matchesDomain(host, pattern string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	pattern = strings.ToLower(strings.TrimSpace(pattern))
-	if host == "" || pattern == "" {
+	if host == "" || pattern == "" || pattern == "." {
 		return false
 	}
-	// Strip IPv6 brackets if any (url.URL.Hostname already does this, but be safe).
-	host = strings.Trim(host, "[]")
-
-	subdomainOnly := strings.HasPrefix(pattern, ".")
-	if subdomainOnly {
-		pattern = strings.TrimPrefix(pattern, ".")
-		if pattern == "" {
-			return false
-		}
-		return strings.HasSuffix(host, "."+pattern)
+	if strings.HasPrefix(pattern, ".") {
+		// Strict subdomain match: ".example.com" matches "x.example.com" but not "example.com".
+		return strings.HasSuffix(host, pattern)
 	}
-	if host == pattern {
-		return true
-	}
-	return strings.HasSuffix(host, "."+pattern)
+	// Apex or subdomain match.
+	return host == pattern || strings.HasSuffix(host, "."+pattern)
 }
 
 func htmlToMarkdown(html string) string {
@@ -376,17 +359,12 @@ func WithBlockedDomains(domains []string) FetchToolOption {
 
 func (t *FetchTool) Instructions() string {
 	var b strings.Builder
-	b.WriteString("## Fetch Tool\n\n")
-	b.WriteString("Fetch content from HTTP/HTTPS URLs. Supports multiple URLs per call, output format selection (text, markdown, html), and respects robots.txt.")
-	if len(t.handler.allowedDomains) > 0 {
-		b.WriteString("\n\nThis tool is restricted to the following domains (and their subdomains): ")
-		b.WriteString(strings.Join(t.handler.allowedDomains, ", "))
-		b.WriteString(". Requests to any other host will fail without making a network call.")
+	b.WriteString("## Fetch Tool\n\nFetch content from HTTP/HTTPS URLs. Supports multiple URLs per call, output format selection (text, markdown, html), and respects robots.txt.")
+	if d := t.handler.allowedDomains; len(d) > 0 {
+		fmt.Fprintf(&b, "\n\nThis tool is restricted to these domains (and any subdomain): %s. Other hosts are rejected without a network call.", strings.Join(d, ", "))
 	}
-	if len(t.handler.blockedDomains) > 0 {
-		b.WriteString("\n\nThis tool is forbidden from fetching the following domains (and their subdomains): ")
-		b.WriteString(strings.Join(t.handler.blockedDomains, ", "))
-		b.WriteString(". Requests to those hosts will fail without making a network call.")
+	if d := t.handler.blockedDomains; len(d) > 0 {
+		fmt.Fprintf(&b, "\n\nThis tool must not fetch these domains (or any subdomain): %s. They are rejected without a network call.", strings.Join(d, ", "))
 	}
 	return b.String()
 }

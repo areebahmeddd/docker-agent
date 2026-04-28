@@ -399,7 +399,7 @@ func TestFetchTool_AllowedDomainsAppearInInstructions(t *testing.T) {
 
 	instructions := tools.GetInstructions(tool)
 
-	assert.Contains(t, instructions, "restricted to the following domains")
+	assert.Contains(t, instructions, "restricted to these domains")
 	assert.Contains(t, instructions, "docker.com")
 	assert.Contains(t, instructions, "github.com")
 }
@@ -409,7 +409,7 @@ func TestFetchTool_BlockedDomainsAppearInInstructions(t *testing.T) {
 
 	instructions := tools.GetInstructions(tool)
 
-	assert.Contains(t, instructions, "forbidden from fetching")
+	assert.Contains(t, instructions, "must not fetch")
 	assert.Contains(t, instructions, "169.254.169.254")
 }
 
