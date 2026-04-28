@@ -21,25 +21,30 @@ func TestToolsetDescribe_StdioNoArgs(t *testing.T) {
 	assert.Check(t, is.Equal(ts.Describe(), "mcp(stdio cmd=my-server)"))
 }
 
+// Remote-toolset descriptions are exercised against buildRemoteDescription
+// directly rather than via NewRemoteToolset: the constructor wires up a real
+// OAuth-aware HTTP client backed by KeyringTokenStore, which is enough to
+// pop the macOS keychain permission dialog on developer machines that have
+// a real docker-agent-oauth keychain item from a prior login.
 func TestToolsetDescribe_RemoteHostAndPort(t *testing.T) {
 	t.Parallel()
 
-	ts := NewRemoteToolset("", "http://example.com:8443/mcp/v1?key=secret", "sse", nil, nil)
-	assert.Check(t, is.Equal(ts.Describe(), "mcp(remote host=example.com:8443 transport=sse)"))
+	desc := buildRemoteDescription("http://example.com:8443/mcp/v1?key=secret", "sse")
+	assert.Check(t, is.Equal(desc, "mcp(remote host=example.com:8443 transport=sse)"))
 }
 
 func TestToolsetDescribe_RemoteDefaultPort(t *testing.T) {
 	t.Parallel()
 
-	ts := NewRemoteToolset("", "https://api.example.com/mcp", "streamable", nil, nil)
-	assert.Check(t, is.Equal(ts.Describe(), "mcp(remote host=api.example.com transport=streamable)"))
+	desc := buildRemoteDescription("https://api.example.com/mcp", "streamable")
+	assert.Check(t, is.Equal(desc, "mcp(remote host=api.example.com transport=streamable)"))
 }
 
 func TestToolsetDescribe_RemoteInvalidURL(t *testing.T) {
 	t.Parallel()
 
-	ts := NewRemoteToolset("", "://bad-url", "sse", nil, nil)
-	assert.Check(t, is.Equal(ts.Describe(), "mcp(remote transport=sse)"))
+	desc := buildRemoteDescription("://bad-url", "sse")
+	assert.Check(t, is.Equal(desc, "mcp(remote transport=sse)"))
 }
 
 func TestToolsetDescribe_GatewayRef(t *testing.T) {
