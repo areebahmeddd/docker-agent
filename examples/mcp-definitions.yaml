@@ -17,7 +17,7 @@ mcps:
     ref: docker:context7
 
   github:
-    ref: docker:github
+    ref: docker:github-official
     env:
       GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
     tools:
