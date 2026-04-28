@@ -375,23 +375,26 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		messages := sess.GetMessages(a, slices.Concat(sessionStartMsgs, userPromptMsgs, turnStartMsgs)...)
 		slog.Debug("Retrieved messages for processing", "agent", a.Name(), "message_count", len(messages))
 
-		// Strip image content from messages if the model doesn't support image input.
-		// This prevents API errors when conversation history contains images (e.g. from
-		// tool results or user attachments) but the current model is text-only.
-		if m != nil && len(m.Modalities.Input) > 0 && !slices.Contains(m.Modalities.Input, "image") {
-			messages = stripImageContent(messages)
-		}
-
 		// before_llm_call hooks fire just before the model is invoked.
 		// A terminating verdict (e.g. from the max_iterations builtin)
 		// stops the run loop here, before any tokens are spent.
-		if stop, msg := r.executeBeforeLLMCallHooks(ctx, sess, a); stop {
+		if stop, msg := r.executeBeforeLLMCallHooks(ctx, sess, a, modelID); stop {
 			slog.Warn("before_llm_call hook signalled run termination",
 				"agent", a.Name(), "session_id", sess.ID, "reason", msg)
 			r.emitHookDrivenShutdown(ctx, a, sess, msg, events)
 			streamSpan.End()
 			return
 		}
+
+		// Apply registered before_llm_call message transforms (e.g.
+		// strip_unsupported_modalities for text-only models, plus any
+		// embedder-supplied redactor / scrubber registered via
+		// WithMessageTransform). Runs after the gate so a transform
+		// failure cannot waste the gate's allow verdict. modelID is
+		// passed explicitly so transforms see the actual model the
+		// loop chose (per-tool override + alloy-mode selection),
+		// not whatever a fresh agent.Model() call would re-randomize.
+		messages = r.applyBeforeLLMCallTransforms(ctx, sess, a, modelID, messages)
 
 		// Try primary model with fallback chain if configured
 		res, usedModel, err := r.fallback.execute(streamCtx, a, model, messages, agentTools, sess, m, events)

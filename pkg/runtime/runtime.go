@@ -161,6 +161,13 @@ type LocalRuntime struct {
 	// construction, so no locking is needed.
 	hooksExecByAgent map[string]*hooks.Executor
 
+	// transforms is the runtime's [MessageTransform] chain, applied to
+	// every LLM call in registration order. Populated by
+	// [NewLocalRuntime] (for the runtime-shipped strip transform) and by
+	// [WithMessageTransform] (for embedder-supplied transforms).
+	// Read-only after construction.
+	transforms []registeredTransform
+
 	fallback *fallbackExecutor
 
 	// observers receive every event the runtime produces, in
@@ -391,6 +398,17 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	if err := hooksRegistry.RegisterBuiltin(BuiltinCacheResponse, r.cacheResponseBuiltin); err != nil {
 		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
 	}
+
+	// strip_unsupported_modalities is the runtime-shipped
+	// before_llm_call message transform that drops image content from
+	// messages when the agent's model is text-only. Like
+	// cache_response it captures the runtime closure (to resolve the
+	// agent and its model from Input.AgentName) and is therefore
+	// registered here rather than in pkg/hooks/builtins.
+	r.transforms = append(r.transforms, registeredTransform{
+		name: BuiltinStripUnsupportedModalities,
+		fn:   r.stripUnsupportedModalitiesTransform,
+	})
 
 	for _, opt := range opts {
 		opt(r)
