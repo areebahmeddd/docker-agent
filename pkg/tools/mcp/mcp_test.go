@@ -126,19 +126,17 @@ func TestCallToolStripsNullArguments(t *testing.T) {
 
 			var capturedArgs map[string]any
 
-			ts := &Toolset{
-				started: true,
-				mcpClient: &mockMCPClient{
-					callToolFn: func(_ context.Context, request *mcp.CallToolParams) (*mcp.CallToolResult, error) {
-						if m, ok := request.Arguments.(map[string]any); ok {
-							capturedArgs = m
-						}
-						return &mcp.CallToolResult{
-							Content: []mcp.Content{&mcp.TextContent{Text: "ok"}},
-						}, nil
-					},
+			ts := newTestToolset("test", "test", &mockMCPClient{
+				callToolFn: func(_ context.Context, request *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+					if m, ok := request.Arguments.(map[string]any); ok {
+						capturedArgs = m
+					}
+					return &mcp.CallToolResult{
+						Content: []mcp.Content{&mcp.TextContent{Text: "ok"}},
+					}, nil
 				},
-			}
+			})
+			ts.markStartedForTesting()
 
 			result, err := ts.callTool(t.Context(), tools.ToolCall{
 				Function: tools.FunctionCall{
@@ -314,15 +312,9 @@ func TestCallToolRecoversFromErrSessionMissing(t *testing.T) {
 		}, nil
 	}
 
-	ts := &Toolset{
-		started:   true,
-		mcpClient: mock,
-		logID:     "test-server",
-		restarted: make(chan struct{}),
-	}
-
-	// Start the watchConnection goroutine as Start() would.
-	go ts.watchConnection(t.Context())
+	ts := newTestToolset("test-server", "test-server", mock)
+	require.NoError(t, ts.Start(t.Context()))
+	t.Cleanup(func() { _ = ts.Stop(t.Context()) })
 
 	result, err := ts.callTool(t.Context(), tools.ToolCall{
 		Function: tools.FunctionCall{
@@ -334,7 +326,4 @@ func TestCallToolRecoversFromErrSessionMissing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "recovered", result.Output)
 	assert.Equal(t, int32(2), callCount.Load(), "expected exactly 2 CallTool invocations (1 failed + 1 retry)")
-
-	// Clean up: stop the watcher.
-	_ = ts.Stop(t.Context())
 }

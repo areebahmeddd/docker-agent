@@ -10,10 +10,7 @@ import (
 	"io"
 	"iter"
 	"log/slog"
-	"net"
 	"net/url"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -42,33 +39,35 @@ type mcpClient interface {
 	Close(ctx context.Context) error
 }
 
-// Toolset represents a set of MCP tools
+// Toolset represents a set of MCP tools.
+//
+// Connection lifecycle (initial connect, watcher goroutine, restart with
+// backoff, graceful Stop) is delegated to a *lifecycle.Supervisor; the
+// historical watchConnection / tryRestart / forceReconnectAndWait helpers
+// have been replaced by the supervisor's Start / RestartAndWait / Stop.
 type Toolset struct {
 	name         string
 	mcpClient    mcpClient
 	logID        string
 	description  string // user-visible description, set by constructors
 	instructions string
-	mu           sync.Mutex
-	started      bool
-	stopping     bool // true when Stop() has been called
-	watcherAlive bool // true while the watchConnection goroutine is running
 
-	// Cached tools and prompts, invalidated via MCP notifications.
-	// cacheGen is bumped on each invalidation so that a concurrent
-	// Tools()/ListPrompts() call can detect that its result is stale.
+	supervisor *lifecycle.Supervisor
+
+	mu sync.Mutex
+
+	// Cached tools and prompts, invalidated via MCP notifications and
+	// supervisor disconnect callbacks. cacheGen is bumped on each
+	// invalidation so that a concurrent Tools()/ListPrompts() call can
+	// detect that its result is stale and drop it.
 	cachedTools   []tools.Tool
 	cachedPrompts []PromptInfo
 	cacheGen      uint64
 
 	// toolsChangedHandler is called after the tool cache is refreshed
-	// following a ToolListChanged notification from the server.
+	// following a ToolListChanged notification from the server, or after
+	// a successful supervisor reconnect.
 	toolsChangedHandler func()
-
-	// restarted is closed and replaced whenever the connection is
-	// successfully restarted by watchConnection, allowing callers
-	// waiting on a reconnect to be unblocked.
-	restarted chan struct{}
 }
 
 // invalidateCache clears the cached tools and prompts and bumps the
@@ -79,7 +78,7 @@ func (ts *Toolset) invalidateCache() {
 	ts.cacheGen++
 }
 
-// sessionMissingRetryTimeout is the maximum time to wait for watchConnection
+// sessionMissingRetryTimeout is the maximum time to wait for the supervisor
 // to restart the MCP server after an ErrSessionMissing error.
 const sessionMissingRetryTimeout = 35 * time.Second
 
@@ -101,12 +100,14 @@ func NewToolsetCommand(name, command string, args, env []string, cwd string) *To
 	slog.Debug("Creating Stdio MCP toolset", "command", command, "args", args)
 
 	desc := buildStdioDescription(command, args)
-	return &Toolset{
+	ts := &Toolset{
 		name:        name,
 		mcpClient:   newStdioCmdClient(command, args, env, cwd),
 		logID:       command,
 		description: desc,
 	}
+	ts.supervisor = newSupervisor(ts)
+	return ts
 }
 
 // NewRemoteToolset creates a new MCP toolset from a remote MCP Server.
@@ -114,18 +115,50 @@ func NewRemoteToolset(name, urlString, transport string, headers map[string]stri
 	slog.Debug("Creating Remote MCP toolset", "url", urlString, "transport", transport, "headers", headers)
 
 	desc := buildRemoteDescription(urlString, transport)
-	return &Toolset{
+	ts := &Toolset{
 		name:        name,
 		mcpClient:   newRemoteClient(urlString, transport, headers, NewKeyringTokenStore(), oauthConfig),
 		logID:       urlString,
 		description: desc,
 	}
+	ts.supervisor = newSupervisor(ts)
+	return ts
 }
 
-// errServerUnavailable is returned by doStart when the MCP server could not be
-// reached but the error is non-fatal (e.g. EOF, binary not found).
-// Start() propagates this so started remains false, and the agent runtime
-// retries via ensureToolSetsAreStarted on the next conversation turn.
+// newSupervisor constructs a Supervisor wired to the toolset's mcpClient
+// with policy that matches the historical mcp.Toolset behaviour:
+// RestartOnFailure, max 5 attempts, 1s..32s exponential backoff.
+//
+// Disconnect callback invalidates the tool/prompt cache; restart callback
+// re-fetches them and notifies the runtime via toolsChangedHandler.
+func newSupervisor(ts *Toolset) *lifecycle.Supervisor {
+	connector := &clientConnector{ts: ts}
+	policy := lifecycle.Policy{
+		Restart: lifecycle.RestartOnFailure,
+		Logger:  slog.With("component", "mcp.supervisor", "server", ts.logID),
+		OnDisconnect: func(error) {
+			ts.mu.Lock()
+			ts.invalidateCache()
+			ts.mu.Unlock()
+		},
+		OnRestart: func() {
+			// Refresh tool and prompt caches eagerly so subsequent
+			// Tools()/ListPrompts() calls return the up-to-date data
+			// from the new server. The new server may expose a
+			// different set of tools/prompts and notifications won't
+			// fire for tools that disappeared.
+			ctx := context.Background()
+			ts.refreshToolCache(ctx)
+			ts.refreshPromptCache(ctx)
+		},
+	}
+	return lifecycle.New(ts.logID, connector, policy)
+}
+
+// errServerUnavailable is returned by the connector when the MCP server could
+// not be reached but the error is non-fatal (e.g. EOF, binary not found).
+// Start() propagates this so the toolset stays unstarted, and the agent
+// runtime retries via ensureToolSetsAreStarted on the next conversation turn.
 //
 // It aliases lifecycle.ErrServerUnavailable so that supervisor code can use
 // errors.Is(err, lifecycle.ErrServerUnavailable) without importing this
@@ -148,6 +181,24 @@ func (ts *Toolset) Describe() string {
 	return ts.description
 }
 
+// IsStarted reports whether the supervisor currently considers the toolset
+// connected and serving requests. Used by tests and TUI status surfaces.
+func (ts *Toolset) IsStarted() bool {
+	if ts.supervisor == nil {
+		return false
+	}
+	return ts.supervisor.IsReady()
+}
+
+// State returns a snapshot of the toolset's lifecycle state, suitable for
+// status displays.
+func (ts *Toolset) State() lifecycle.StateInfo {
+	if ts.supervisor == nil {
+		return lifecycle.StateInfo{State: lifecycle.StateStopped}
+	}
+	return ts.supervisor.State()
+}
+
 // buildStdioDescription produces a user-visible description for a stdio MCP toolset.
 func buildStdioDescription(command string, args []string) string {
 	if len(args) == 0 {
@@ -166,58 +217,62 @@ func buildRemoteDescription(rawURL, transport string) string {
 	return "mcp(remote host=" + u.Host + " transport=" + transport + ")"
 }
 
+// Start performs the initial connect via the supervisor. If the connect fails
+// (e.g. the server binary is missing), Start returns the underlying error and
+// the toolset stays in StateStopped; the caller is expected to retry.
 func (ts *Toolset) Start(ctx context.Context) error {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
+	if ts.supervisor == nil {
+		return errors.New("toolset has no supervisor: must be created via NewToolsetCommand or NewRemoteToolset")
+	}
+	return ts.supervisor.Start(ctx)
+}
 
-	if ts.started {
+// Stop tears the supervisor down. Idempotent.
+func (ts *Toolset) Stop(ctx context.Context) error {
+	slog.Debug("Stopping MCP toolset", "server", ts.logID)
+	if ts.supervisor == nil {
 		return nil
 	}
-
-	if ts.restarted == nil {
-		ts.restarted = make(chan struct{})
-	}
-
-	if err := ts.doStart(ctx); err != nil {
+	if err := ts.supervisor.Stop(ctx); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		slog.Error("Failed to stop MCP toolset", "server", ts.logID, "error", err)
 		return err
 	}
-
-	ts.started = true
-
-	// Spawn the connection watcher only when no watcher is already running.
-	// A watcher goroutine survives across restarts (it loops inside
-	// watchConnection); reprobe may call Start() while that goroutine is
-	// mid-restart with started==false, and we must not spawn a second one.
-	if !ts.watcherAlive {
-		ts.watcherAlive = true
-		// Use WithoutCancel so the watcher outlives the caller's context;
-		// the only way to stop it is via Stop() setting ts.stopping.
-		go ts.watchConnection(context.WithoutCancel(ctx))
-	}
-
+	slog.Debug("Stopped MCP toolset successfully", "server", ts.logID)
 	return nil
 }
 
-func (ts *Toolset) doStart(ctx context.Context) error {
-	// The MCP toolset connection needs to persist beyond the initial HTTP request that triggered its creation.
-	// When OAuth succeeds, subsequent agent requests should reuse the already-authenticated MCP connection.
-	// But if the connection's underlying context is tied to the first HTTP request, it gets cancelled when that request
-	// completes, killing the connection even though OAuth succeeded.
-	// This is critical for OAuth flows where the toolset connection needs to remain alive after the initial HTTP request completes.
+// clientConnector adapts an mcpClient to the lifecycle.Connector interface.
+// It owns the initialize handshake (including the upstream-bug retry for the
+// "failed to send initialized notification" case) and exposes the shared
+// mcpClient as a Session.
+type clientConnector struct {
+	ts *Toolset
+}
+
+func (c *clientConnector) Connect(ctx context.Context) (lifecycle.Session, error) {
+	ts := c.ts
+
+	// The MCP toolset connection needs to persist beyond the initial HTTP
+	// request that triggered its creation. When OAuth succeeds, subsequent
+	// agent requests should reuse the already-authenticated MCP connection.
+	// But if the connection's underlying context is tied to the first HTTP
+	// request, it gets cancelled when that request completes, killing the
+	// connection even though OAuth succeeded.
 	ctx = context.WithoutCancel(ctx)
 
 	slog.Debug("Starting MCP toolset", "server", ts.logID)
 
-	// Register notification handlers to invalidate caches when the server
-	// notifies us that its tools or prompts have changed.
-	// We invalidate the cache and then eagerly re-fetch the list so that
-	// subsequent Tools()/ListPrompts() calls return the up-to-date data
-	// without racing with the server.
+	// Register notification handlers: they invalidate caches and refresh
+	// eagerly so subsequent Tools()/ListPrompts() calls see fresh data.
+	// They are re-registered on every Connect so that a fresh client
+	// session inherits them.
 	ts.mcpClient.SetToolListChangedHandler(func() {
 		ts.mu.Lock()
 		ts.invalidateCache()
 		ts.mu.Unlock()
-
 		slog.Debug("MCP server notified tool list changed, refreshing", "server", ts.logID)
 		ts.refreshToolCache(ctx)
 	})
@@ -225,7 +280,6 @@ func (ts *Toolset) doStart(ctx context.Context) error {
 		ts.mu.Lock()
 		ts.invalidateCache()
 		ts.mu.Unlock()
-
 		slog.Debug("MCP server notified prompt list changed, refreshing", "server", ts.logID)
 		ts.refreshPromptCache(ctx)
 	})
@@ -258,135 +312,60 @@ func (ts *Toolset) doStart(ctx context.Context) error {
 		//
 		// Only retry when initialization fails due to sending the initialized notification.
 		if !isInitNotificationSendError(err) {
-			if isServerUnavailableError(err) {
+			classified := lifecycle.Classify(err)
+			if errors.Is(classified, lifecycle.ErrServerUnavailable) {
 				slog.Debug(
 					"MCP client unavailable, will retry on next conversation turn",
 					"server", ts.logID,
 					"error", err,
 				)
-				return errServerUnavailable
+				return nil, errServerUnavailable
 			}
-
 			slog.Error("Failed to initialize MCP client", "error", err)
-			return fmt.Errorf("failed to initialize MCP client: %w", err)
+			return nil, fmt.Errorf("failed to initialize MCP client: %w", err)
 		}
 		if attempt >= maxRetries {
 			slog.Error("Failed to initialize MCP client after retries", "error", err)
-			return fmt.Errorf("failed to initialize MCP client after retries: %w", err)
+			return nil, fmt.Errorf("failed to initialize MCP client after retries: %w", err)
 		}
 		backoff := time.Duration(200*(attempt+1)) * time.Millisecond
 		slog.Debug("MCP initialize failed to send initialized notification; retrying", "id", ts.logID, "attempt", attempt+1, "backoff_ms", backoff.Milliseconds())
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
-			return fmt.Errorf("failed to initialize MCP client: %w", ctx.Err())
+			return nil, fmt.Errorf("failed to initialize MCP client: %w", ctx.Err())
 		}
 	}
 
 	slog.Debug("Started MCP toolset successfully", "server", ts.logID)
+	ts.mu.Lock()
 	ts.instructions = result.Instructions
+	ts.mu.Unlock()
 
-	return nil
+	return &clientSession{client: ts.mcpClient}, nil
 }
 
-// watchConnection monitors the MCP server connection and auto-restarts it
-// if the server dies unexpectedly (i.e. we didn't call Stop()).
-// Exactly one watchConnection goroutine exists per Toolset while ts.watcherAlive
-// is true; it is spawned by Start() and cleared on exit.
-func (ts *Toolset) watchConnection(ctx context.Context) {
-	defer func() {
-		ts.mu.Lock()
-		ts.watcherAlive = false
-		ts.mu.Unlock()
-	}()
-
-	for {
-		err := ts.mcpClient.Wait()
-
-		ts.mu.Lock()
-		if ts.stopping {
-			ts.mu.Unlock()
-			return
-		}
-		ts.started = false
-		ts.invalidateCache()
-		ts.mu.Unlock()
-
-		slog.Warn("MCP server connection lost, attempting restart", "server", ts.logID, "error", err)
-
-		if !ts.tryRestart(ctx) {
-			return
-		}
-
-		// After a successful restart, eagerly refresh the tool and prompt
-		// caches and notify the runtime so it picks up the new server's
-		// state. The new server may expose a different set of tools/prompts,
-		// and without this the runtime would keep using its stale copy.
-		ts.refreshToolCache(ctx)
-		ts.refreshPromptCache(ctx)
-	}
+// clientSession adapts an mcpClient's Wait/Close to the lifecycle.Session
+// interface. The underlying client is shared across reconnects: a fresh
+// gomcp.ClientSession is created internally by the client each Initialize.
+type clientSession struct {
+	client mcpClient
 }
 
-// tryRestart attempts to restart the MCP server with exponential backoff.
-// Returns true if the server was restarted, false if all attempts failed or
-// Stop() was called.
-func (ts *Toolset) tryRestart(ctx context.Context) bool {
-	const maxAttempts = 5
-
-	for attempt := range maxAttempts {
-		backoff := time.Duration(1<<uint(attempt)) * time.Second
-		slog.Debug("Restarting MCP server", "server", ts.logID, "attempt", attempt+1, "backoff", backoff)
-
-		timer := time.NewTimer(backoff)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
-			return false
-		}
-
-		ts.mu.Lock()
-		if ts.stopping {
-			ts.mu.Unlock()
-			return false
-		}
-
-		if err := ts.doStart(ctx); err != nil {
-			ts.mu.Unlock()
-			slog.Warn("MCP server restart failed", "server", ts.logID, "attempt", attempt+1, "error", err)
-			continue
-		}
-
-		ts.started = true
-		// Signal anyone waiting for a reconnect.
-		close(ts.restarted)
-		ts.restarted = make(chan struct{})
-		ts.mu.Unlock()
-
-		slog.Info("MCP server restarted successfully", "server", ts.logID)
-		return true
-	}
-
-	slog.Error("MCP server restart failed after all attempts", "server", ts.logID)
-	return false
-}
+func (s *clientSession) Wait() error                     { return s.client.Wait() }
+func (s *clientSession) Close(ctx context.Context) error { return s.client.Close(ctx) }
 
 func (ts *Toolset) Instructions() string {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if !ts.started {
-		// TODO: this should never happen...
-		return ""
-	}
 	return ts.instructions
 }
 
 func (ts *Toolset) Tools(ctx context.Context) ([]tools.Tool, error) {
-	ts.mu.Lock()
-	if !ts.started {
-		ts.mu.Unlock()
-		return nil, errors.New("toolset not started")
+	if !ts.IsStarted() {
+		return nil, lifecycle.ErrNotStarted
 	}
+	ts.mu.Lock()
 	if ts.cachedTools != nil {
 		result := ts.cachedTools
 		ts.mu.Unlock()
@@ -498,7 +477,7 @@ func (ts *Toolset) callTool(ctx context.Context, toolCall tools.ToolCall) (*tool
 	// the call once.
 	if err != nil && isConnectionError(err) && ctx.Err() == nil {
 		slog.Warn("MCP call failed, forcing reconnect and retrying", "tool", toolCall.Function.Name, "server", ts.logID, "error", err)
-		if waitErr := ts.forceReconnectAndWait(ctx); waitErr != nil {
+		if waitErr := ts.supervisor.RestartAndWait(ctx, sessionMissingRetryTimeout); waitErr != nil {
 			return nil, fmt.Errorf("failed to reconnect after call failure: %w", waitErr)
 		}
 		resp, err = ts.mcpClient.CallTool(ctx, request)
@@ -518,53 +497,6 @@ func (ts *Toolset) callTool(ctx context.Context, toolCall tools.ToolCall) (*tool
 	return result, nil
 }
 
-// forceReconnectAndWait closes the current session to trigger watchConnection's
-// restart logic, then waits for the reconnection to complete.
-func (ts *Toolset) forceReconnectAndWait(ctx context.Context) error {
-	ts.mu.Lock()
-	restartCh := ts.restarted
-	alreadyRestarting := !ts.started
-	ts.mu.Unlock()
-
-	if !alreadyRestarting {
-		// Force-close the session so that Wait() returns and watchConnection
-		// kicks in with its restart loop. Skip this if watchConnection has
-		// already detected the disconnect (started==false) to avoid killing
-		// a connection that tryRestart may be establishing concurrently.
-		_ = ts.mcpClient.Close(context.WithoutCancel(ctx))
-	}
-
-	// Wait for watchConnection to complete a successful restart.
-	select {
-	case <-restartCh:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(sessionMissingRetryTimeout):
-		return errors.New("timed out waiting for MCP server reconnection")
-	}
-}
-
-func (ts *Toolset) Stop(ctx context.Context) error {
-	slog.Debug("Stopping MCP toolset", "server", ts.logID)
-
-	ts.mu.Lock()
-	ts.stopping = true
-	ts.started = false
-	ts.mu.Unlock()
-
-	if err := ts.mcpClient.Close(context.WithoutCancel(ctx)); err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		slog.Error("Failed to stop MCP toolset", "server", ts.logID, "error", err)
-		return err
-	}
-
-	slog.Debug("Stopped MCP toolset successfully", "server", ts.logID)
-	return nil
-}
-
 // isInitNotificationSendError returns true if initialization failed while sending the
 // notifications/initialized message to the server.
 func isInitNotificationSendError(err error) bool {
@@ -577,15 +509,6 @@ func isInitNotificationSendError(err error) bool {
 		return true
 	}
 	return false
-}
-
-// isServerUnavailableError returns true if err indicates the MCP server process
-// could not be reached — binary missing/not-found, or process exited immediately
-// before completing the MCP handshake (io.EOF). These are retryable conditions.
-func isServerUnavailableError(err error) bool {
-	return errors.Is(err, io.EOF) ||
-		errors.Is(err, exec.ErrNotFound) ||
-		errors.Is(err, os.ErrNotExist)
 }
 
 func processMCPContent(toolResult *mcp.CallToolResult) *tools.ToolCallResult {
@@ -652,11 +575,10 @@ func (ts *Toolset) SetToolsChangedHandler(handler func()) {
 // Returns a slice of PromptInfo containing metadata about each available prompt
 // including name, description, and argument specifications.
 func (ts *Toolset) ListPrompts(ctx context.Context) ([]PromptInfo, error) {
-	ts.mu.Lock()
-	if !ts.started {
-		ts.mu.Unlock()
-		return nil, errors.New("toolset not started")
+	if !ts.IsStarted() {
+		return nil, lifecycle.ErrNotStarted
 	}
+	ts.mu.Lock()
 	if ts.cachedPrompts != nil {
 		result := ts.cachedPrompts
 		ts.mu.Unlock()
@@ -714,11 +636,8 @@ func (ts *Toolset) ListPrompts(ctx context.Context) ([]PromptInfo, error) {
 // GetPrompt retrieves a specific prompt with provided arguments from the MCP server.
 // This method executes the prompt and returns the result content.
 func (ts *Toolset) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*mcp.GetPromptResult, error) {
-	ts.mu.Lock()
-	started := ts.started
-	ts.mu.Unlock()
-	if !started {
-		return nil, errors.New("toolset not started")
+	if !ts.IsStarted() {
+		return nil, lifecycle.ErrNotStarted
 	}
 
 	slog.Debug("Getting MCP prompt", "prompt", name, "arguments", arguments)
@@ -743,23 +662,19 @@ func (ts *Toolset) GetPrompt(ctx context.Context, name string, arguments map[str
 // isConnectionError reports whether err is a connection or session error
 // that warrants a reconnect-and-retry (as opposed to an application-level
 // error that would fail again even after reconnecting).
+//
+// It defers to lifecycle.Classify, which understands the same set of
+// patterns the MCP SDK emits via ErrSessionMissing, EOF, net.Error, and
+// substring-wrapped transport failures.
 func isConnectionError(err error) bool {
-	if errors.Is(err, mcp.ErrSessionMissing) || errors.Is(err, io.EOF) {
+	if errors.Is(err, mcp.ErrSessionMissing) {
 		return true
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if errors.Is(err, io.EOF) {
 		return true
 	}
-	// The MCP SDK wraps transport failures (e.g. connection reset, EOF from
-	// client.Do) with its internal ErrRejected sentinel using %v, which
-	// drops the original error from the chain.  Detect these by checking
-	// the error message for common transport-failure substrings.
-	if msg := err.Error(); strings.Contains(msg, "connection reset") ||
-		strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "broken pipe") ||
-		strings.Contains(msg, "EOF") {
-		return true
-	}
-	return false
+	classified := lifecycle.Classify(err)
+	return errors.Is(classified, lifecycle.ErrTransport) ||
+		errors.Is(classified, lifecycle.ErrSessionMissing) ||
+		errors.Is(classified, lifecycle.ErrServerUnavailable)
 }

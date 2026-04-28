@@ -142,10 +142,8 @@ func TestRemoteReconnectAfterServerRestart(t *testing.T) {
 	// --- Step 4: Shut down the server ---
 	shutdown1()
 
-	// Capture the current restarted channel before the reconnect
-	ts.mu.Lock()
-	restartedCh := ts.restarted
-	ts.mu.Unlock()
+	// Capture the supervisor's restart channel so we can verify reconnection.
+	restartedCh := ts.supervisor.Restarted()
 
 	// --- Step 5–6: Start a fresh server, call again ---
 	shutdown2 := startServer(t)
@@ -337,20 +335,13 @@ func TestStdioStartReturnsErrorWhenServerUnavailable(t *testing.T) {
 		failsLeft: 1,
 	}
 
-	ts := &Toolset{
-		name:      "test-stdio",
-		mcpClient: mock,
-		logID:     "test-cmd",
-	}
+	ts := newTestToolset("test-stdio", "test-cmd", mock)
 
 	err := ts.Start(t.Context())
 	require.Error(t, err)
 	require.ErrorIs(t, err, errServerUnavailable)
 
-	ts.mu.Lock()
-	started := ts.started
-	ts.mu.Unlock()
-	assert.False(t, started, "stdio toolset must not be marked as started when server is unavailable")
+	assert.False(t, ts.IsStarted(), "stdio toolset must not be marked as started when server is unavailable")
 }
 
 // TestStdioStartReturnsErrorWhenBinaryNotFound verifies that exec.ErrNotFound
@@ -363,20 +354,13 @@ func TestStdioStartReturnsErrorWhenBinaryNotFound(t *testing.T) {
 		failsLeft: 1,
 	}
 
-	ts := &Toolset{
-		name:      "test-stdio",
-		mcpClient: mock,
-		logID:     "missing-binary",
-	}
+	ts := newTestToolset("test-stdio", "missing-binary", mock)
 
 	err := ts.Start(t.Context())
 	require.Error(t, err)
 	require.ErrorIs(t, err, errServerUnavailable)
 
-	ts.mu.Lock()
-	started := ts.started
-	ts.mu.Unlock()
-	assert.False(t, started, "stdio toolset must not be marked as started when binary is not found")
+	assert.False(t, ts.IsStarted(), "stdio toolset must not be marked as started when binary is not found")
 }
 
 // TestStdioLazyRetrySucceedsWhenBinaryAppears verifies the end-to-end retry
@@ -393,11 +377,7 @@ func TestStdioLazyRetrySucceedsWhenBinaryAppears(t *testing.T) {
 		waitCh:      make(chan struct{}),
 	}
 
-	ts := &Toolset{
-		name:      "test-stdio",
-		mcpClient: mock,
-		logID:     "lazy-binary",
-	}
+	ts := newTestToolset("test-stdio", "lazy-binary", mock)
 
 	// Turn 1: Start fails — binary not available yet.
 	err := ts.Start(t.Context())
@@ -408,10 +388,7 @@ func TestStdioLazyRetrySucceedsWhenBinaryAppears(t *testing.T) {
 	err = ts.Start(t.Context())
 	require.NoError(t, err)
 
-	ts.mu.Lock()
-	started := ts.started
-	ts.mu.Unlock()
-	assert.True(t, started, "stdio toolset must be started after successful retry")
+	assert.True(t, ts.IsStarted(), "stdio toolset must be started after successful retry")
 
 	toolList, err := ts.Tools(t.Context())
 	require.NoError(t, err)
@@ -432,20 +409,13 @@ func TestRemoteStartRetriesWhenUnavailable(t *testing.T) {
 		failsLeft: 1,
 	}
 
-	ts := &Toolset{
-		name:      "test-remote",
-		mcpClient: mock,
-		logID:     "remote-server",
-	}
+	ts := newTestToolset("test-remote", "remote-server", mock)
 
 	err := ts.Start(t.Context())
 	require.Error(t, err)
 	require.ErrorIs(t, err, errServerUnavailable)
 
-	ts.mu.Lock()
-	started := ts.started
-	ts.mu.Unlock()
-	assert.False(t, started, "remote toolset must not be marked as started when server is unavailable")
+	assert.False(t, ts.IsStarted(), "remote toolset must not be marked as started when server is unavailable")
 }
 
 // TestStartableToolSetRetryAcrossTurns is a full integration test using
@@ -465,11 +435,7 @@ func TestStartableToolSetRetryAcrossTurns(t *testing.T) {
 		waitCh:      make(chan struct{}),
 	}
 
-	mcpToolset := &Toolset{
-		name:      "retry-test",
-		mcpClient: mock,
-		logID:     "retry-binary",
-	}
+	mcpToolset := newTestToolset("retry-test", "retry-binary", mock)
 
 	startable := tools.NewStartable(mcpToolset)
 
