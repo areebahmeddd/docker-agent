@@ -10,49 +10,42 @@ import (
 )
 
 // PersistenceObserver is the stock [EventObserver] that mirrors the
-// runtime's event stream to a [session.Store]. It encapsulates every
-// persistence-related side effect that used to live in the now-deleted
-// PersistentRuntime decorator:
+// runtime's event stream to a [session.Store]:
 //
-//   - persists the initial session row on [EventObserver.OnRunStart]
-//     for non-sub-session runs;
+//   - persists the initial session row on [OnRunStart] for non-sub-session runs;
 //   - tracks streaming assistant content (AgentChoice and
-//     AgentChoiceReasoning) into a single growing message row, and
-//     finalises it on [MessageAddedEvent];
-//   - persists user messages, sub-session attachments, summaries,
-//     token usage, and session-title updates as they fly past.
+//     AgentChoiceReasoning) into a single growing message row, finalised
+//     on [MessageAddedEvent];
+//   - persists user messages, sub-session attachments, summaries, token
+//     usage, and session-title updates as they fly past.
 //
-// Sub-session filtering and SessionScoped-mismatch filtering live
-// inside [OnEvent] so callers don't have to think about them.
+// Sub-session and SessionScoped-mismatch filtering live inside [OnEvent]
+// so callers don't have to think about them.
 //
-// The runtime auto-registers one of these in NewLocalRuntime against
-// the runtime's configured store. Tests and embedders that want to
-// drive persistence themselves can pass a no-op session.Store (or
-// override via [WithEventObserver] for additional sinks).
+// The runtime auto-registers one of these in [NewLocalRuntime] against
+// the configured store. Custom sinks (telemetry, audit, A2A, ...) layer
+// alongside via [WithEventObserver].
 type PersistenceObserver struct {
-	store session.Store
-
-	// streaming holds the in-flight assistant message under
-	// construction during a streaming response. Reset on every
-	// UserMessageEvent / MessageAddedEvent. Per-RunStream state, not
-	// shared across observers, so no mutex needed: OnEvent runs
-	// synchronously from the runtime's forwarding goroutine.
+	store     session.Store
 	streaming streamingState
 }
 
-// streamingState tracks the accumulated content for a streaming
-// assistant message. Held inside a [PersistenceObserver]; see its
-// fields' use sites for the per-event semantics.
+// streamingState holds the in-flight streaming assistant message
+// across consecutive AgentChoice / AgentChoiceReasoning events. Reset
+// to its zero value on every UserMessageEvent / MessageAddedEvent.
+// Per-RunStream state, not shared across observers, so no mutex is
+// needed: OnEvent runs synchronously from the runtime's forwarding
+// goroutine.
 type streamingState struct {
 	content          strings.Builder
 	reasoningContent strings.Builder
 	agentName        string
-	messageID        int64 // ID of the in-flight streaming row, 0 for none.
+	messageID        int64 // ID of the in-flight row, 0 for none.
 }
 
-// newPersistenceObserver returns an observer that persists to store.
-// Returns nil when store is nil so the constructor can call
-// [WithEventObserver] unconditionally without a guard.
+// newPersistenceObserver returns an observer that persists to store, or
+// nil when store is nil so the constructor can call [WithEventObserver]
+// unconditionally without a guard.
 func newPersistenceObserver(store session.Store) *PersistenceObserver {
 	if store == nil {
 		return nil
@@ -61,8 +54,8 @@ func newPersistenceObserver(store session.Store) *PersistenceObserver {
 }
 
 // OnRunStart persists the session row before the run loop starts.
-// Sub-sessions skip this: the parent session's store will absorb them
-// via the SubSessionCompletedEvent handling in OnEvent.
+// Sub-sessions skip this: the parent session's store absorbs them via
+// the SubSessionCompletedEvent handling in OnEvent.
 func (p *PersistenceObserver) OnRunStart(ctx context.Context, sess *session.Session) {
 	if sess.IsSubSession() {
 		return
@@ -72,22 +65,11 @@ func (p *PersistenceObserver) OnRunStart(ctx context.Context, sess *session.Sess
 	}
 }
 
-// OnRunEnd is currently a no-op — every persistent side effect is
-// already journaled by the time the run drains. Kept for symmetry with
-// OnRunStart and to give future observers a place to flush buffered
-// state.
-func (p *PersistenceObserver) OnRunEnd(_ context.Context, _ *session.Session) {}
-
-// OnEvent applies the per-event-type persistence rules. Filters two
-// classes of event the store should never see:
-//
-//   - sub-session events: persistence runs only on the parent session,
-//     and the sub-session is attached as a unit on
-//     [SubSessionCompletedEvent];
-//   - cross-session events: a sub-agent's streaming events are
-//     forwarded through the parent runtime's channel, but tagged with
-//     the sub-session's ID via [SessionScoped]; persisting them under
-//     the parent would corrupt the parent's transcript.
+// OnEvent applies the per-event-type persistence rules. Sub-session
+// events are skipped (the parent absorbs them on SubSessionCompleted),
+// and any [SessionScoped] event tagged with a different session id
+// (forwarded sub-agent streaming events) is filtered out so it can't
+// pollute the parent's transcript.
 func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session, event Event) {
 	if sess.IsSubSession() {
 		return
@@ -108,7 +90,7 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 		p.persistStreamingContent(ctx, sess.ID)
 
 	case *UserMessageEvent:
-		p.resetStreaming()
+		p.streaming = streamingState{}
 		if _, err := p.store.AddMessage(ctx, e.SessionID, session.UserMessage(e.Message, e.MultiContent...)); err != nil {
 			slog.Warn("Failed to persist user message", "session_id", e.SessionID, "error", err)
 		}
@@ -116,17 +98,17 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 	case *MessageAddedEvent:
 		// Finalise the streaming row (if any) with the canonical
 		// MessageAddedEvent payload, then reset for the next stream.
+		var err error
 		if p.streaming.messageID != 0 {
-			if err := p.store.UpdateMessage(ctx, p.streaming.messageID, e.Message); err != nil {
-				slog.Warn("Failed to finalize streaming message",
-					"session_id", e.SessionID, "message_id", p.streaming.messageID, "error", err)
-			}
+			err = p.store.UpdateMessage(ctx, p.streaming.messageID, e.Message)
 		} else {
-			if _, err := p.store.AddMessage(ctx, e.SessionID, e.Message); err != nil {
-				slog.Warn("Failed to persist message", "session_id", e.SessionID, "error", err)
-			}
+			_, err = p.store.AddMessage(ctx, e.SessionID, e.Message)
 		}
-		p.resetStreaming()
+		if err != nil {
+			slog.Warn("Failed to persist message",
+				"session_id", e.SessionID, "message_id", p.streaming.messageID, "error", err)
+		}
+		p.streaming = streamingState{}
 
 	case *SubSessionCompletedEvent:
 		if subSess, ok := e.SubSession.(*session.Session); ok {
@@ -141,12 +123,7 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 		}
 
 	case *TokenUsageEvent:
-		// Sub-session events flow through but must not overwrite the
-		// parent session's token counts. The SessionScoped check above
-		// already filters those; this guard is belt-and-braces against
-		// future sub-session events that might not implement
-		// SessionScoped.
-		if e.Usage != nil && e.SessionID == sess.ID {
+		if e.Usage != nil {
 			if err := p.store.UpdateSessionTokens(ctx, sess.ID, e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.Cost); err != nil {
 				slog.Warn("Failed to persist token usage", "session_id", sess.ID, "error", err)
 			}
@@ -190,13 +167,4 @@ func (p *PersistenceObserver) persistStreamingContent(ctx context.Context, sessi
 		slog.Warn("Failed to update streaming message",
 			"session_id", sessionID, "message_id", p.streaming.messageID, "error", err)
 	}
-}
-
-// resetStreaming clears the in-flight streaming state so the next
-// streaming response (or non-streamed message) starts fresh.
-func (p *PersistenceObserver) resetStreaming() {
-	p.streaming.content.Reset()
-	p.streaming.reasoningContent.Reset()
-	p.streaming.agentName = ""
-	p.streaming.messageID = 0
 }

@@ -23,9 +23,7 @@ type recordingObserver struct {
 	mu          sync.Mutex
 	events      []Event
 	startCalls  atomic.Int64
-	endCalls    atomic.Int64
 	startSessID string
-	endSessID   string
 }
 
 func (o *recordingObserver) OnRunStart(_ context.Context, sess *session.Session) {
@@ -38,13 +36,6 @@ func (o *recordingObserver) OnRunStart(_ context.Context, sess *session.Session)
 func (o *recordingObserver) OnEvent(_ context.Context, _ *session.Session, e Event) {
 	o.mu.Lock()
 	o.events = append(o.events, e)
-	o.mu.Unlock()
-}
-
-func (o *recordingObserver) OnRunEnd(_ context.Context, sess *session.Session) {
-	o.endCalls.Add(1)
-	o.mu.Lock()
-	o.endSessID = sess.ID
 	o.mu.Unlock()
 }
 
@@ -80,25 +71,21 @@ func runtimeWithObserver(t *testing.T, obs EventObserver) (*LocalRuntime, *sessi
 	return r, sess
 }
 
-// TestObserver_OnRunStartAndEndFireExactlyOnce pins the lifecycle
-// contract: each registered observer sees exactly one OnRunStart call
-// and one OnRunEnd call per RunStream invocation, regardless of how
-// many events flow in between.
-func TestObserver_OnRunStartAndEndFireExactlyOnce(t *testing.T) {
+// TestObserver_OnRunStartFiresExactlyOnce pins the lifecycle contract:
+// each registered observer sees exactly one OnRunStart call per
+// RunStream invocation, regardless of how many events flow afterwards.
+func TestObserver_OnRunStartFiresExactlyOnce(t *testing.T) {
 	t.Parallel()
 
 	obs := &recordingObserver{}
 	r, sess := runtimeWithObserver(t, obs)
 
-	events := r.RunStream(t.Context(), sess)
-	for range events {
+	for range r.RunStream(t.Context(), sess) {
 		// drain
 	}
 
 	assert.Equal(t, int64(1), obs.startCalls.Load(), "OnRunStart must fire exactly once")
-	assert.Equal(t, int64(1), obs.endCalls.Load(), "OnRunEnd must fire exactly once")
 	assert.Equal(t, sess.ID, obs.startSessID)
-	assert.Equal(t, sess.ID, obs.endSessID)
 }
 
 // TestObserver_SeesEveryEventBeforeCaller verifies that OnEvent
@@ -118,7 +105,7 @@ func TestObserver_SeesEveryEventBeforeCaller(t *testing.T) {
 	}
 
 	got := obs.snapshot()
-	require.Equal(t, len(consumed), len(got), "observer count must match consumer count")
+	require.Len(t, got, len(consumed), "observer count must match consumer count")
 	for i := range consumed {
 		assert.Same(t, consumed[i], got[i],
 			"observer event %d must be the same pointer the consumer saw", i)
@@ -134,8 +121,10 @@ func TestObserver_SeesEveryEventBeforeCaller(t *testing.T) {
 func TestObserver_MultipleObserversFireInRegistrationOrder(t *testing.T) {
 	t.Parallel()
 
-	var order []string
-	mu := sync.Mutex{}
+	var (
+		mu    sync.Mutex
+		order []string
+	)
 	tag := func(name string) EventObserver {
 		return &fnObserver{
 			onEvent: func(_ context.Context, _ *session.Session, _ Event) {
@@ -198,11 +187,10 @@ func TestObserver_NilOptIsIgnored(t *testing.T) {
 }
 
 // fnObserver adapts function values to the [EventObserver] interface
-// for tests that only need to observe one of the three lifecycle hooks.
+// for tests that only need to observe a subset of the lifecycle hooks.
 type fnObserver struct {
 	onStart func(context.Context, *session.Session)
 	onEvent func(context.Context, *session.Session, Event)
-	onEnd   func(context.Context, *session.Session)
 }
 
 func (f *fnObserver) OnRunStart(ctx context.Context, sess *session.Session) {
@@ -214,11 +202,5 @@ func (f *fnObserver) OnRunStart(ctx context.Context, sess *session.Session) {
 func (f *fnObserver) OnEvent(ctx context.Context, sess *session.Session, e Event) {
 	if f.onEvent != nil {
 		f.onEvent(ctx, sess, e)
-	}
-}
-
-func (f *fnObserver) OnRunEnd(ctx context.Context, sess *session.Session) {
-	if f.onEnd != nil {
-		f.onEnd(ctx, sess)
 	}
 }

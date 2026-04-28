@@ -157,14 +157,6 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 	slog.Debug("Starting runtime stream", "agent", r.CurrentAgentName(), "session_id", sess.ID)
 	events := make(chan Event, defaultEventChannelCapacity)
 
-	// Observers see OnRunStart before any event is dispatched. Sub-
-	// session runs share the parent runtime's observer chain, but the
-	// observers themselves filter sub-session noise (see
-	// [PersistenceObserver]) so calling them unconditionally is safe.
-	for _, obs := range r.observers {
-		obs.OnRunStart(ctx, sess)
-	}
-
 	go r.runStreamLoop(ctx, sess, events)
 	return r.observe(ctx, sess, events)
 }

@@ -7,9 +7,9 @@ import (
 )
 
 // EventObserver receives the runtime's event stream as it's produced.
-// Implementations subscribe to lifecycle moments (RunStream start, every
-// event, RunStream end) and act on them — persisting to a store,
-// forwarding to a metrics pipeline, writing an audit transcript, etc.
+// Implementations subscribe to lifecycle moments and act on them —
+// persisting to a store, forwarding to a metrics pipeline, writing an
+// audit transcript, etc.
 //
 // Concurrency: the runtime invokes observers synchronously from the
 // goroutine that forwards events to the consumer's channel, in
@@ -38,10 +38,6 @@ type EventObserver interface {
 	// to drop an event from persistence, simply ignore it inside
 	// OnEvent.
 	OnEvent(ctx context.Context, sess *session.Session, event Event)
-	// OnRunEnd fires once when [LocalRuntime.RunStream]'s inner channel
-	// closes (the run has fully drained). Use it to flush buffered
-	// state or close per-session resources.
-	OnRunEnd(ctx context.Context, sess *session.Session)
 }
 
 // WithEventObserver appends o to the runtime's observer chain.
@@ -61,18 +57,15 @@ func WithEventObserver(o EventObserver) Opt {
 	}
 }
 
-// observe wraps inner with the runtime's observer chain: every event
-// drained from inner is dispatched to each observer in registration
-// order, then forwarded to the returned channel. When inner closes,
-// observers see [EventObserver.OnRunEnd] before the returned channel
-// is closed in turn.
-//
-// Fast-path: when the runtime has no observers, inner is returned
-// directly so a no-observer runtime pays exactly the same overhead it
-// did before the observer machinery existed.
+// observe wraps inner with the runtime's observer chain: each
+// observer sees [EventObserver.OnRunStart] before the first event,
+// then every event drained from inner is dispatched to each observer
+// in registration order before being forwarded to the returned
+// channel. Observers run synchronously, so a slow observer
+// back-pressures the consumer.
 func (r *LocalRuntime) observe(ctx context.Context, sess *session.Session, inner <-chan Event) <-chan Event {
-	if len(r.observers) == 0 {
-		return inner
+	for _, obs := range r.observers {
+		obs.OnRunStart(ctx, sess)
 	}
 	out := make(chan Event, cap(inner))
 	go func() {
@@ -82,9 +75,6 @@ func (r *LocalRuntime) observe(ctx context.Context, sess *session.Session, inner
 				obs.OnEvent(ctx, sess, event)
 			}
 			out <- event
-		}
-		for _, obs := range r.observers {
-			obs.OnRunEnd(ctx, sess)
 		}
 	}()
 	return out

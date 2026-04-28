@@ -303,6 +303,11 @@ func NewTokenUsageEvent(sessionID, agentName string, usage *Usage) Event {
 	}
 }
 
+// GetSessionID makes TokenUsageEvent satisfy [SessionScoped] so the
+// observer fan-out can drop sub-session events without each observer
+// re-implementing the check.
+func (e *TokenUsageEvent) GetSessionID() string { return e.SessionID }
+
 // SessionUsage builds a Usage from the session's current token counts, the
 // model's context limit, and the session's own cost.
 func SessionUsage(sess *session.Session, contextLimit int64) *Usage {
