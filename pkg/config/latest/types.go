@@ -368,8 +368,12 @@ type AgentConfig struct {
 	SubAgents      []string        `json:"sub_agents,omitempty"`
 	Handoffs       []string        `json:"handoffs,omitempty"`
 
-	AddDate                 bool              `json:"add_date,omitempty"`
-	AddEnvironmentInfo      bool              `json:"add_environment_info,omitempty"`
+	AddDate            bool `json:"add_date,omitempty"`
+	AddEnvironmentInfo bool `json:"add_environment_info,omitempty"`
+	// RedactSecrets enables both halves of the redact_secrets feature:
+	// the pre_tool_use builtin (scrubs tool arguments) AND the
+	// before_llm_call message transform (scrubs outgoing chat content).
+	RedactSecrets           bool              `json:"redact_secrets,omitempty"`
 	CodeModeTools           bool              `json:"code_mode_tools,omitempty"`
 	AddDescriptionParameter bool              `json:"add_description_parameter,omitempty"`
 	MaxIterations           int               `json:"max_iterations,omitempty"`
@@ -1826,8 +1830,10 @@ type HookDefinition struct {
 	//   - "builtin":  invoke a named, in-process Go function (the name
 	//                 lives in Command). The set of registered builtins
 	//                 is owned by the runtime; the docker-agent runtime
-	//                 ships add_date, add_environment_info, and
-	//                 add_prompt_files.
+	//                 ships add_date, add_environment_info,
+	//                 add_prompt_files, redact_secrets (see also the
+	//                 redact_secrets agent flag), and several others
+	//                 documented in pkg/hooks/builtins.
 	//   - "model":    ask an LLM and translate its reply into the hook's
 	//                 native output. See Model / Prompt / Schema. Used to
 	//                 implement "LLM as a judge" pre_tool_use hooks,

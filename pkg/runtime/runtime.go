@@ -399,16 +399,24 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
 	}
 
-	// strip_unsupported_modalities is the runtime-shipped
-	// before_llm_call message transform that drops image content from
-	// messages when the agent's model is text-only. Like
-	// cache_response it captures the runtime closure (to resolve the
-	// agent and its model from Input.AgentName) and is therefore
-	// registered here rather than in pkg/hooks/builtins.
-	r.transforms = append(r.transforms, registeredTransform{
-		name: BuiltinStripUnsupportedModalities,
-		fn:   r.stripUnsupportedModalitiesTransform,
-	})
+	// Both message transforms below capture the runtime closure to
+	// resolve the agent from Input.AgentName, so they live here rather
+	// than as stateless builtins in pkg/hooks/builtins.
+	//
+	// strip_unsupported_modalities drops image content for text-only
+	// models. redact_secrets is the LLM-side peer of the redact_secrets
+	// pre_tool_use builtin (gated on the agent's RedactSecrets flag,
+	// see pkg/hooks/builtins/redact_secrets.go).
+	r.transforms = append(r.transforms,
+		registeredTransform{
+			name: BuiltinStripUnsupportedModalities,
+			fn:   r.stripUnsupportedModalitiesTransform,
+		},
+		registeredTransform{
+			name: BuiltinRedactSecrets,
+			fn:   r.redactSecretsTransform,
+		},
+	)
 
 	for _, opt := range opts {
 		opt(r)

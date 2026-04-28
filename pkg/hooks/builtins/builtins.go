@@ -12,11 +12,15 @@
 //   - add_user_info         (session_start)   — current OS user and host
 //   - add_recent_commits    (session_start)   — `git log --oneline -n N`
 //   - max_iterations        (before_llm_call) — hard stop after N model calls
+//   - redact_secrets        (pre_tool_use)    — scrub secrets from tool args
 //
 // Reference any of them from a hook YAML entry as
 // `{type: builtin, command: "<name>"}`. The runtime additionally
-// auto-injects add_date / add_environment_info / add_prompt_files
-// from the matching agent flags.
+// auto-injects add_date / add_environment_info / add_prompt_files /
+// redact_secrets from the matching agent flags. The redact_secrets
+// flag also enables the runtime-shipped before_llm_call message
+// transform that scrubs the same patterns from outgoing chat
+// content; see pkg/runtime/redact_secrets.go for the LLM side.
 //
 // turn_start builtins recompute every turn (date, git state).
 // session_start builtins run once per session for context that's
@@ -67,6 +71,7 @@ func Register(r *hooks.Registry) (*State, error) {
 		r.RegisterBuiltin(AddUserInfo, addUserInfo),
 		r.RegisterBuiltin(AddRecentCommits, addRecentCommits),
 		r.RegisterBuiltin(MaxIterations, state.maxIterations.hook),
+		r.RegisterBuiltin(RedactSecrets, redactSecrets),
 	); err != nil {
 		return nil, err
 	}
@@ -79,6 +84,11 @@ type AgentDefaults struct {
 	AddDate            bool
 	AddEnvironmentInfo bool
 	AddPromptFiles     []string
+	// RedactSecrets auto-injects the redact_secrets pre_tool_use
+	// builtin. It also enables the runtime's matching before_llm_call
+	// message transform, so this single flag covers both leak vectors
+	// (tool args and outgoing chat content).
+	RedactSecrets bool
 }
 
 // ApplyAgentDefaults appends the stock builtin hook entries implied by
@@ -96,6 +106,12 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 	}
 	if d.AddEnvironmentInfo {
 		cfg.SessionStart = append(cfg.SessionStart, builtinHook(AddEnvironmentInfo))
+	}
+	if d.RedactSecrets {
+		cfg.PreToolUse = append(cfg.PreToolUse, hooks.MatcherConfig{
+			Matcher: "*",
+			Hooks:   []hooks.Hook{builtinHook(RedactSecrets)},
+		})
 	}
 	if cfg.IsEmpty() {
 		return nil

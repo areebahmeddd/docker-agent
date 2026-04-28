@@ -34,6 +34,7 @@ type Agent struct {
 	addDate                 bool
 	addEnvironmentInfo      bool
 	addDescriptionParameter bool
+	redactSecrets           bool
 	maxIterations           int
 	maxConsecutiveToolCalls int
 	maxOldToolCallTokens    int
@@ -82,6 +83,15 @@ func (a *Agent) AddDate() bool {
 
 func (a *Agent) AddEnvironmentInfo() bool {
 	return a.addEnvironmentInfo
+}
+
+// RedactSecrets reports whether the agent has opted into the
+// redact_secrets feature. When true, the runtime auto-injects the
+// redact_secrets pre_tool_use builtin (scrubs tool arguments) AND
+// enables the runtime's before_llm_call message transform (scrubs
+// outgoing chat content).
+func (a *Agent) RedactSecrets() bool {
+	return a.redactSecrets
 }
 
 func (a *Agent) MaxIterations() int {

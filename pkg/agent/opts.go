@@ -110,6 +110,15 @@ func WithAddEnvironmentInfo(addEnvironmentInfo bool) Opt {
 	}
 }
 
+// WithRedactSecrets enables both halves of the redact_secrets
+// feature: the pre_tool_use builtin (via ApplyAgentDefaults) and the
+// runtime's before_llm_call message transform.
+func WithRedactSecrets(redactSecrets bool) Opt {
+	return func(a *Agent) {
+		a.redactSecrets = redactSecrets
+	}
+}
+
 func WithAddDescriptionParameter(addDescriptionParameter bool) Opt {
 	return func(a *Agent) {
 		a.addDescriptionParameter = addDescriptionParameter

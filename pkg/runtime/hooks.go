@@ -36,6 +36,7 @@ func (r *LocalRuntime) buildHooksExecutors() {
 			AddDate:            a.AddDate(),
 			AddEnvironmentInfo: a.AddEnvironmentInfo(),
 			AddPromptFiles:     a.AddPromptFiles(),
+			RedactSecrets:      a.RedactSecrets(),
 		})
 		cfg = applyCacheDefault(cfg, a)
 		if cfg == nil {
