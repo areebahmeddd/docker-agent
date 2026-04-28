@@ -54,13 +54,24 @@ func (r *ToolsetRegistry) Get(toolsetType string) (ToolsetCreator, bool) {
 	return creator, ok
 }
 
-// CreateTool creates a toolset using the registered creator for the given type
+// CreateTool creates a toolset using the registered creator for the given type.
+//
+// Every successful toolset is decorated with tools.WithName so status
+// surfaces (the /tools dialog, error messages, …) always have a stable
+// user-facing label. The decoration is a no-op for toolsets that
+// already advertise a non-empty Name(): it only fills the gap left by
+// built-in toolsets that don't take a `name:` field in YAML, replacing
+// the previous fallback to fmt.Sprintf("%T", ts).
 func (r *ToolsetRegistry) CreateTool(ctx context.Context, toolset latest.Toolset, parentDir string, runConfig *config.RuntimeConfig, agentName string) (tools.ToolSet, error) {
 	creator, ok := r.Get(toolset.Type)
 	if !ok {
 		return nil, fmt.Errorf("unknown toolset type: %s", toolset.Type)
 	}
-	return creator(ctx, toolset, parentDir, runConfig, agentName)
+	ts, err := creator(ctx, toolset, parentDir, runConfig, agentName)
+	if err != nil {
+		return nil, err
+	}
+	return tools.WithName(ts, cmp.Or(toolset.Name, toolset.Type)), nil
 }
 
 func NewDefaultToolsetRegistry() *ToolsetRegistry {

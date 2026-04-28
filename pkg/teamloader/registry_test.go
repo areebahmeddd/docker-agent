@@ -182,7 +182,7 @@ func TestCreateMCPTool_WorkingDir_ReachesSubprocess(t *testing.T) {
 	require.NotNil(t, rawTool)
 
 	// Assert the CWD reached the inner stdio command.
-	ts, ok := rawTool.(*mcptool.Toolset)
+	ts, ok := tools.As[*mcptool.Toolset](rawTool)
 	require.True(t, ok, "expected *mcp.Toolset")
 	assert.Equal(t, customDir, ts.WorkingDir())
 }
@@ -213,7 +213,7 @@ func TestCreateMCPTool_RelativeWorkingDir_ResolvedAgainstAgentDir(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, rawTool)
 
-	ts, ok := rawTool.(*mcptool.Toolset)
+	ts, ok := tools.As[*mcptool.Toolset](rawTool)
 	require.True(t, ok, "expected *mcp.Toolset")
 	assert.Equal(t, subDir, ts.WorkingDir())
 }

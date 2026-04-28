@@ -201,6 +201,14 @@ func (ts *Toolset) Describe() string {
 	return ts.description
 }
 
+// Name returns the user-facing identifier for this MCP toolset, set
+// from the YAML `name:` field. Empty when the YAML left it unset; in
+// that case the registry wraps the toolset with tools.WithName so the
+// /tools dialog still shows a stable label.
+func (ts *Toolset) Name() string {
+	return ts.name
+}
+
 // Kind returns a short, user-friendly classification of this toolset:
 // "Remote MCP" for HTTP/SSE/streamable-HTTP transports and "MCP" for
 // stdio-spawned servers. Used by status surfaces (e.g. the /tools

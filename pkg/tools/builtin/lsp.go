@@ -416,6 +416,14 @@ func (t *LSPTool) Restart(ctx context.Context) error {
 // toolset without leaking Go type names.
 func (t *LSPTool) Kind() string { return "LSP" }
 
+// Name returns the basename of the configured command ("gopls",
+// "rust-analyzer", …). It's the most useful identifier in the absence
+// of a YAML name: field on LSP toolsets, and lets the /tools dialog
+// distinguish multiple language servers in the same agent.
+func (t *LSPTool) Name() string {
+	return filepath.Base(t.handler.command)
+}
+
 func (t *LSPTool) Instructions() string {
 	return `# LSP Code Intelligence Tools
 

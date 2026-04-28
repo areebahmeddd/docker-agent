@@ -73,6 +73,20 @@ func (m *LSPMultiplexer) Stop(ctx context.Context) error {
 // Kind returns the user-facing classification of this toolset.
 func (m *LSPMultiplexer) Kind() string { return "LSP" }
 
+// Name returns a comma-separated list of backend command basenames
+// (e.g. "gopls,rust-analyzer"). The multiplexer wraps multiple LSP
+// toolsets behind a single ToolSet entry, so the /tools dialog needs
+// one label that covers them all instead of one row per backend.
+func (m *LSPMultiplexer) Name() string {
+	names := make([]string, 0, len(m.backends))
+	for _, b := range m.backends {
+		if n := b.LSP.Name(); n != "" {
+			names = append(names, n)
+		}
+	}
+	return strings.Join(names, ",")
+}
+
 func (m *LSPMultiplexer) Instructions() string {
 	// Combine instructions from all backends, deduplicating identical ones.
 	// Typically they share the same base LSP instructions, but individual

@@ -599,14 +599,15 @@ func lifecycleStateForUnsupervised(ts tools.ToolSet) lifecycle.State {
 	return lifecycle.StateReady
 }
 
-// nameFor picks a stable, user-visible name for a toolset. When the
-// toolset implements a Name() method (some MCP toolsets do via their
-// underlying type) we use that; otherwise the description is reused.
+// nameFor picks a stable, user-visible name for a toolset. We look for
+// any inner toolset that implements tools.Named (walked via tools.As so
+// wrappers like StartableToolSet are transparent). The registry adds a
+// WithName wrapper for every built-in toolset so this is reachable for
+// almost every toolset; fallback uses the description ("mcp(stdio cmd=...)"),
+// which is still better than the Go type name.
 func nameFor(ts tools.ToolSet, fallback string) string {
-	if n, ok := ts.(interface{ Name() string }); ok {
-		if s := n.Name(); s != "" {
-			return s
-		}
+	if name := tools.GetName(ts); name != "" {
+		return name
 	}
 	return fallback
 }
