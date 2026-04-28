@@ -16,11 +16,9 @@ import (
 )
 
 const (
-	quote     = `["']?`
-	connect   = `\s*(:|=>|=)?\s*`
-	endSecret = `[.,]?(\s+|$)`
-	startWord = "([^0-9a-zA-Z]|^)"
-	aws       = `aws_?`
+	quote   = `["']?`
+	connect = `\s*(:|=>|=)?\s*`
+	aws     = `aws_?`
 )
 
 // rule pairs a regular expression with a keyword shortlist. A rule
@@ -32,14 +30,25 @@ type rule struct {
 	keywords   []string
 }
 
-// withoutWordPrefix wraps str in a leading word-boundary so the rule
-// only fires at the start of a token (or after a non-alphanumeric
-// character). Accepting "?P<secret>..." as input — turning it into a
-// named group only after wrapping — keeps the per-rule expressions
-// short and is preserved verbatim from the upstream ruleset for diff
-// hygiene.
-func withoutWordPrefix(str string) string {
-	return fmt.Sprintf("%s(%s)", startWord, str)
+// asSecretGroup wraps a `?P<secret>…` fragment in a plain group so
+// the named subgroup is syntactically valid. Earlier revisions also
+// prepended a `[^0-9a-zA-Z]|^` anchor and appended a
+// whitespace/punctuation/end-of-input anchor (collectively a
+// "word boundary" requirement) so a rule only fired when the secret
+// stood alone in the input. Those anchors caused detection to miss
+// secrets embedded directly inside larger tokens — e.g.
+// `BEFOREghp_…AFTER`, `KEY=AKIA…`, `…EXAMPLEAFTER` — even though the
+// recognisable prefix and exact-length payload were both present.
+//
+// Detection now ignores the surrounding characters entirely. Each
+// rule's payload is tightly constrained (fixed-length character
+// classes, explicit token shapes) so removing the boundary check
+// does not broaden the regex enough to cause super-linear matching:
+// Go's RE2-based engine still scans the input in O(len(text)) per
+// rule, and the keyword pre-filter in [Redact] keeps the regex hot
+// path off most inputs.
+func asSecretGroup(str string) string {
+	return fmt.Sprintf("(%s)", str)
 }
 
 // rules is the source-form catalogue, kept verbatim from upstream so
@@ -51,32 +60,32 @@ var rules = sync.OnceValue(func() []rule {
 	return []rule{
 		{
 			// aws-access-key-id
-			expression: withoutWordPrefix(fmt.Sprintf(`(?P<secret>(A3T[A-Z0-9]|AKIA|AGPA|AidA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16})%s%s`, quote, endSecret)),
+			expression: asSecretGroup(`(?P<secret>(A3T[A-Z0-9]|AKIA|AGPA|AidA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16})` + quote),
 			keywords:   []string{"AKIA", "AGPA", "AidA", "AROA", "AIPA", "ANPA", "ANVA", "ASIA"},
 		},
 		{
 			// aws-secret-access-key
-			expression: fmt.Sprintf(`(?i)%s%s(sec(ret)?)?_?(access)?_?key%s%s%s(?P<secret>[A-Za-z0-9\/\+=]{40})%s%s`, quote, aws, quote, connect, quote, quote, endSecret),
+			expression: fmt.Sprintf(`(?i)%s%s(sec(ret)?)?_?(access)?_?key%s%s%s(?P<secret>[A-Za-z0-9\/\+=]{40})%s`, quote, aws, quote, connect, quote, quote),
 			keywords:   []string{"key"},
 		},
 		{
 			// github-pat
-			expression: withoutWordPrefix(`?P<secret>ghp_[0-9a-zA-Z]{36}`),
+			expression: asSecretGroup(`?P<secret>ghp_[0-9a-zA-Z]{36}`),
 			keywords:   []string{"ghp_"},
 		},
 		{
 			// github-oauth
-			expression: withoutWordPrefix(`?P<secret>gho_[0-9a-zA-Z]{36}`),
+			expression: asSecretGroup(`?P<secret>gho_[0-9a-zA-Z]{36}`),
 			keywords:   []string{"gho_"},
 		},
 		{
 			// github-app-token
-			expression: withoutWordPrefix(`?P<secret>(ghu|ghs)_[0-9a-zA-Z]{36}`),
+			expression: asSecretGroup(`?P<secret>(ghu|ghs)_[0-9a-zA-Z]{36}`),
 			keywords:   []string{"ghu_", "ghs_"},
 		},
 		{
 			// github-refresh-token
-			expression: withoutWordPrefix(`?P<secret>ghr_[0-9a-zA-Z]{76}`),
+			expression: asSecretGroup(`?P<secret>ghr_[0-9a-zA-Z]{76}`),
 			keywords:   []string{"ghr_"},
 		},
 		{
@@ -86,12 +95,12 @@ var rules = sync.OnceValue(func() []rule {
 		},
 		{
 			// gitlab-pat
-			expression: withoutWordPrefix(`?P<secret>glpat-[0-9a-zA-Z\-\_]{20}`),
+			expression: asSecretGroup(`?P<secret>glpat-[0-9a-zA-Z\-\_]{20}`),
 			keywords:   []string{"glpat-"},
 		},
 		{
 			// hugging-face-access-token
-			expression: withoutWordPrefix(`?P<secret>hf_[A-Za-z0-9]{34,40}`),
+			expression: asSecretGroup(`?P<secret>hf_[A-Za-z0-9]{34,40}`),
 			keywords:   []string{"hf_"},
 		},
 		{
@@ -106,17 +115,17 @@ var rules = sync.OnceValue(func() []rule {
 		},
 		{
 			// slack-access-token
-			expression: withoutWordPrefix(`?P<secret>xox[baprs]-([0-9a-zA-Z]{10,48})`),
+			expression: asSecretGroup(`?P<secret>xox[baprs]-([0-9a-zA-Z]{10,48})`),
 			keywords:   []string{"xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"},
 		},
 		{
 			// stripe-publishable-token
-			expression: withoutWordPrefix(`?P<secret>(?i)pk_(test|live)_[0-9a-z]{10,32}`),
+			expression: asSecretGroup(`?P<secret>(?i)pk_(test|live)_[0-9a-z]{10,32}`),
 			keywords:   []string{"pk_test_", "pk_live_"},
 		},
 		{
 			// stripe-secret-token
-			expression: withoutWordPrefix(`?P<secret>(?i)sk_(test|live)_[0-9a-z]{10,32}`),
+			expression: asSecretGroup(`?P<secret>(?i)sk_(test|live)_[0-9a-z]{10,32}`),
 			keywords:   []string{"sk_test_", "sk_live_"},
 		},
 		{
@@ -171,7 +180,7 @@ var rules = sync.OnceValue(func() []rule {
 		},
 		{
 			// alibaba-access-key-id
-			expression: `([^0-9A-Za-z]|^)(?P<secret>(LTAI)(?i)[a-z0-9]{20})([^0-9A-Za-z]|$)`,
+			expression: `(?P<secret>(LTAI)(?i)[a-z0-9]{20})`,
 			keywords:   []string{"LTAI"},
 		},
 		{
@@ -291,12 +300,12 @@ var rules = sync.OnceValue(func() []rule {
 		},
 		{
 			// flutterwave-public-key
-			expression: withoutWordPrefix(`?P<secret>FLW(PUB|SEC)K_TEST-(?i)[a-h0-9]{32}-X`),
+			expression: asSecretGroup(`?P<secret>FLW(PUB|SEC)K_TEST-(?i)[a-h0-9]{32}-X`),
 			keywords:   []string{"FLWSECK_TEST-", "FLWPUBK_TEST-"},
 		},
 		{
 			// flutterwave-enc-key
-			expression: withoutWordPrefix(`?P<secret>FLWSECK_TEST[a-h0-9]{12}`),
+			expression: asSecretGroup(`?P<secret>FLWSECK_TEST[a-h0-9]{12}`),
 			keywords:   []string{"FLWSECK_TEST"},
 		},
 		{
