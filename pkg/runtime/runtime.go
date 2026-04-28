@@ -161,26 +161,12 @@ type LocalRuntime struct {
 	// construction, so no locking is needed.
 	hooksExecByAgent map[string]*hooks.Executor
 
-	// transforms holds the runtime-private [MessageTransform] table,
-	// keyed by builtin name. Populated by [registerMessageTransform]
-	// from [NewLocalRuntime] (for the runtime-shipped strippers) and
-	// from [WithMessageTransform] (for embedder-supplied transforms).
+	// transforms is the runtime's [MessageTransform] chain, applied to
+	// every LLM call in registration order. Populated by
+	// [NewLocalRuntime] (for the runtime-shipped strippers) and by
+	// [WithMessageTransform] (for embedder-supplied transforms).
 	// Read-only after construction.
-	transforms map[string]MessageTransform
-
-	// transformNames is the registration-order list of names in
-	// [transforms], used by [applyMessageTransformDefaults] to inject
-	// hook entries deterministically (a Go map iteration would scramble
-	// the order across runs and break the chain semantics tests rely
-	// on). Read-only after construction.
-	transformNames []string
-
-	// transformsByAgent is the per-agent resolution of the message
-	// transforms registered in [transforms], pre-walked from the
-	// agent's before_llm_call hook config. Built alongside
-	// [hooksExecByAgent] in [buildHooksExecutors] so per-LLM-call
-	// dispatch is a flat slice walk.
-	transformsByAgent map[string][]resolvedTransform
+	transforms []registeredTransform
 
 	fallback *fallbackExecutor
 
@@ -419,9 +405,10 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	// cache_response it captures the runtime closure (to resolve the
 	// agent and its model from Input.AgentName) and is therefore
 	// registered here rather than in pkg/hooks/builtins.
-	if err := r.registerMessageTransform(BuiltinStripUnsupportedModalities, r.stripUnsupportedModalitiesTransform); err != nil {
-		return nil, fmt.Errorf("register %q transform: %w", BuiltinStripUnsupportedModalities, err)
-	}
+	r.transforms = append(r.transforms, registeredTransform{
+		name: BuiltinStripUnsupportedModalities,
+		fn:   r.stripUnsupportedModalitiesTransform,
+	})
 
 	for _, opt := range opts {
 		opt(r)

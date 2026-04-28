@@ -9,61 +9,51 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 )
 
-// BuiltinStripUnsupportedModalities is the name of the builtin
+// BuiltinStripUnsupportedModalities is the name of the runtime-shipped
 // before_llm_call message transform that drops image content from the
 // outgoing messages when the agent's current model doesn't list image
-// in its input modalities. It is auto-injected by
-// [LocalRuntime.applyMessageTransformDefaults] for every agent,
-// mirroring [BuiltinCacheResponse]'s auto-injection from
-// [applyCacheDefault].
+// in its input modalities. It's the runtime-shipped peer of
+// [BuiltinCacheResponse] (a stop hook) — the constant exists mostly
+// for log filtering and diagnostics.
 //
 // Sending images to a text-only model produces hard provider errors
-// (HTTP 400 from OpenAI, "image input is not supported" from Anthropic
-// text variants, etc.); the runtime previously side-stepped this with
-// an inline strip in runStreamLoop. Promoting it to a registered
-// transform makes the behavior visible to user-authored hook
-// configurations, lets it be deduplicated/ordered alongside other
-// transforms, and opens the door to a family of message-mutating
-// builtins (redactors, scrubbers, ...).
+// (HTTP 400 from OpenAI, "image input is not supported" from
+// Anthropic text variants, etc.); promoting the strip into a
+// registered transform replaces an inline branch in runStreamLoop and
+// opens the door to a family of message-mutating transforms
+// (redactors, scrubbers, ...).
 const BuiltinStripUnsupportedModalities = "strip_unsupported_modalities"
 
 // modalityImage is the canonical models.dev modality name for image
-// input. Constants instead of literals so a typo trips a compile
+// input. A constant instead of a literal so a typo trips a compile
 // error and the contract with [modelsdev.Modalities.Input] is
 // discoverable from the runtime side.
 const modalityImage = "image"
 
 // stripUnsupportedModalitiesTransform is the [MessageTransform]
-// registered as [BuiltinStripUnsupportedModalities]. It resolves the
-// agent (and therefore its current model) through the runtime closure
-// and the [hooks.Input.AgentName] field, looks up the model
-// definition, and applies [stripImageContent] when the model's input
-// modalities are known and don't include image.
+// registered under [BuiltinStripUnsupportedModalities]. It resolves
+// the agent (and therefore its current model) from
+// [hooks.Input.AgentName], looks up the model's input modalities, and
+// applies [stripImageContent] when image is missing from the list.
 //
-// The transform is a no-op (returns msgs unchanged, nil error) for
-// every "we don't know enough to act" case: missing agent, missing
-// model definition (unknown model ID, models.dev fetch failed),
-// missing modalities list, or image already supported. Erring on the
-// side of "send the messages as-is" matches the previous inline
-// behavior in runStreamLoop, where an unknown model also fell through.
+// The transform is a no-op for every "we don't know enough to act"
+// case (missing agent, missing model, models.dev miss, empty
+// modalities, image already supported): erring on the side of "send
+// the messages as-is" matches the previous inline behavior in
+// runStreamLoop, where an unknown model also fell through.
 func (r *LocalRuntime) stripUnsupportedModalitiesTransform(
 	ctx context.Context,
 	in *hooks.Input,
-	_ []string,
 	msgs []chat.Message,
 ) ([]chat.Message, error) {
 	if in == nil || in.AgentName == "" {
 		return msgs, nil
 	}
 	a, err := r.team.Agent(in.AgentName)
-	if err != nil || a == nil {
+	if err != nil || a == nil || a.Model() == nil {
 		return msgs, nil
 	}
-	model := a.Model()
-	if model == nil {
-		return msgs, nil
-	}
-	m, err := r.modelsStore.GetModel(ctx, model.ID())
+	m, err := r.modelsStore.GetModel(ctx, a.Model().ID())
 	if err != nil || m == nil {
 		// Unknown model: keep the previous (inline) behavior of
 		// passing messages through untouched. The model call will
