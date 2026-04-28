@@ -12,7 +12,6 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
-	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -40,7 +39,7 @@ type streamResult struct {
 // It is intentionally a free function rather than a method on *LocalRuntime
 // so the dependency direction is explicit (the loop calls into the chunker,
 // never the reverse).
-func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, m *modelsdev.Model, events chan<- Event) (streamResult, error) {
+func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, m *modelsdev.Model, tel Telemetry, events chan<- Event) (streamResult, error) {
 	defer stream.Close()
 
 	var fullContent strings.Builder
@@ -74,7 +73,7 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 		if m != nil {
 			modelName = m.Name
 		}
-		telemetry.RecordTokenUsage(ctx, modelName, sess.InputTokens, sess.OutputTokens, sess.TotalCost())
+		tel.RecordTokenUsage(ctx, modelName, sess.InputTokens, sess.OutputTokens, sess.TotalCost())
 	}
 
 	for {

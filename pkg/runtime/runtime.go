@@ -8,7 +8,6 @@ import (
 	"maps"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -29,64 +28,8 @@ import (
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
-type ResumeType string
-
-// ElicitationResult represents the result of an elicitation request
-type ElicitationResult struct {
-	Action  tools.ElicitationAction
-	Content map[string]any // The submitted form data (only present when action is "accept")
-}
-
-// ElicitationError represents an error from a declined/cancelled elicitation
-type ElicitationError struct {
-	Action  string
-	Message string
-}
-
-func (e *ElicitationError) Error() string {
-	return fmt.Sprintf("elicitation %s: %s", e.Action, e.Message)
-}
-
-const (
-	ResumeTypeApprove        ResumeType = "approve"
-	ResumeTypeApproveSession ResumeType = "approve-session"
-	ResumeTypeApproveTool    ResumeType = "approve-tool"
-	ResumeTypeReject         ResumeType = "reject"
-)
-
-// ResumeRequest carries the user's confirmation decision along with an optional
-// reason (used when rejecting a tool call to help the model understand why).
-type ResumeRequest struct {
-	Type     ResumeType
-	Reason   string // Optional; primarily used with ResumeTypeReject
-	ToolName string // Optional; used with ResumeTypeApproveTool to specify which tool to always allow
-}
-
-// ResumeApprove creates a ResumeRequest to approve a single tool call.
-func ResumeApprove() ResumeRequest {
-	return ResumeRequest{Type: ResumeTypeApprove}
-}
-
-// ResumeApproveSession creates a ResumeRequest to approve all tool calls for the session.
-func ResumeApproveSession() ResumeRequest {
-	return ResumeRequest{Type: ResumeTypeApproveSession}
-}
-
-// ResumeApproveTool creates a ResumeRequest to always approve a specific tool for the session.
-func ResumeApproveTool(toolName string) ResumeRequest {
-	return ResumeRequest{Type: ResumeTypeApproveTool, ToolName: toolName}
-}
-
-// ResumeReject creates a ResumeRequest to reject a tool call with an optional reason.
-func ResumeReject(reason string) ResumeRequest {
-	return ResumeRequest{Type: ResumeTypeReject, Reason: reason}
-}
-
 // ToolHandlerFunc is a function type for handling tool calls
 type ToolHandlerFunc func(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, events chan Event) (*tools.ToolCallResult, error)
-
-// ElicitationRequestHandler is a function type for handling elicitation requests
-type ElicitationRequestHandler func(ctx context.Context, message string, schema map[string]any) (map[string]any, error)
 
 // Runtime defines the contract for runtime execution
 type Runtime interface {
@@ -182,22 +125,21 @@ type ToolsChangeSubscriber interface {
 
 // LocalRuntime manages the execution of agents
 type LocalRuntime struct {
-	toolMap                     map[string]ToolHandlerFunc
-	team                        *team.Team
-	currentAgent                string
-	resumeChan                  chan ResumeRequest
-	tracer                      trace.Tracer
-	modelsStore                 ModelStore
-	sessionCompaction           bool
-	managedOAuth                bool
-	startupInfoEmitted          bool                   // Track if startup info has been emitted to avoid unnecessary duplication
-	elicitationRequestCh        chan ElicitationResult // Channel for receiving elicitation responses
-	elicitationEventsChannel    chan Event             // Current events channel for sending elicitation requests
-	elicitationEventsChannelMux sync.RWMutex           // Protects elicitationEventsChannel
-	sessionStore                session.Store
-	workingDir                  string   // Working directory for hooks execution
-	env                         []string // Environment variables for hooks execution
-	modelSwitcherCfg            *ModelSwitcherConfig
+	toolMap              map[string]ToolHandlerFunc
+	team                 *team.Team
+	agents               *agentRouter
+	resumeChan           chan ResumeRequest
+	tracer               trace.Tracer
+	modelsStore          ModelStore
+	sessionCompaction    bool
+	managedOAuth         bool
+	startupInfoEmitted   bool                   // Track if startup info has been emitted to avoid unnecessary duplication
+	elicitationRequestCh chan ElicitationResult // Channel for receiving elicitation responses
+	elicitation          elicitationBridge      // Owns the per-stream events channel for outbound elicitation requests
+	sessionStore         session.Store
+	workingDir           string   // Working directory for hooks execution
+	env                  []string // Environment variables for hooks execution
+	modelSwitcherCfg     *ModelSwitcherConfig
 
 	// hooksRegistry is the runtime-private hooks.Registry used to build
 	// every Executor. It carries the runtime-owned builtin hooks
@@ -225,11 +167,10 @@ type LocalRuntime struct {
 	// Library consumers can enable this via WithRetryOnRateLimit().
 	retryOnRateLimit bool
 
-	// fallbackCooldowns tracks per-agent cooldown state for sticky fallback behavior
-	fallbackCooldowns    map[string]*fallbackCooldownState
-	fallbackCooldownsMux sync.RWMutex
-
-	currentAgentMu sync.RWMutex
+	// cooldowns owns the per-agent fallback-cooldown state. See
+	// cooldown_manager.go for the eviction contract; the manager reads
+	// the runtime's clock so WithClock makes cooldown windows testable.
+	cooldowns *cooldownManager
 
 	// steerQueue stores urgent mid-turn messages. The agent loop drains
 	// ALL pending messages after tool execution, before the stop check.
@@ -243,13 +184,34 @@ type LocalRuntime struct {
 	onToolsChanged func(Event)
 
 	bgAgents *agenttool.Handler
+
+	// now is the runtime's clock. Defaults to time.Now and can be replaced
+	// in tests via WithClock to make timestamps and cooldown windows
+	// deterministic. Every time-dependent call inside the runtime (message
+	// CreatedAt, fallback cooldown windows, tool-call latency) goes through
+	// this hook so a single fake clock controls them all.
+	now func() time.Time
+
+	// telemetry receives the runtime's observability events (session
+	// start/end, tool calls, token usage, errors). Defaults to
+	// defaultTelemetry which forwards to pkg/telemetry. Tests can inject
+	// a recorder via WithTelemetry to assert the lifecycle without
+	// standing up an OTel pipeline.
+	telemetry Telemetry
+
+	// maxOverflowCompactions caps the number of consecutive context-
+	// overflow auto-compactions the run loop attempts before surfacing the
+	// error. Defaults to defaultMaxOverflowCompactions; tests use
+	// WithMaxOverflowCompactions to exercise both the "compaction
+	// succeeded" and "compaction exhausted" branches.
+	maxOverflowCompactions int
 }
 
 type Opt func(*LocalRuntime)
 
 func WithCurrentAgent(agentName string) Opt {
 	return func(r *LocalRuntime) {
-		r.currentAgent = agentName
+		r.agents.Set(agentName)
 	}
 }
 
@@ -314,6 +276,47 @@ func WithEnv(env []string) Opt {
 	}
 }
 
+// WithClock replaces the runtime's clock. Defaults to time.Now. Tests that
+// need deterministic timestamps (assistant message CreatedAt, fallback
+// cooldown windows, tool-call latency) can pass a fake clock so assertions
+// don't depend on wall-clock advancement.
+func WithClock(now func() time.Time) Opt {
+	return func(r *LocalRuntime) {
+		if now != nil {
+			r.now = now
+		}
+	}
+}
+
+// WithTelemetry replaces the runtime's Telemetry sink. Defaults to a
+// pass-through to the package-level pkg/telemetry helpers. Tests pass a
+// recorder to assert that the runtime emitted the expected lifecycle
+// events without setting up an OTel client.
+func WithTelemetry(t Telemetry) Opt {
+	return func(r *LocalRuntime) {
+		if t != nil {
+			r.telemetry = t
+		}
+	}
+}
+
+// WithMaxOverflowCompactions overrides how many consecutive context-overflow
+// auto-compactions the run loop is allowed to attempt before surfacing the
+// error. Defaults to defaultMaxOverflowCompactions (1).
+//
+// Tests use this to exercise both branches of the overflow-recovery code
+// path: pass 0 to verify the failure surface immediately; pass a higher
+// number to verify the loop bounds compaction attempts. Negative values
+// are clamped to 0.
+func WithMaxOverflowCompactions(n int) Opt {
+	return func(r *LocalRuntime) {
+		if n < 0 {
+			n = 0
+		}
+		r.maxOverflowCompactions = n
+	}
+}
+
 // WithRetryOnRateLimit enables automatic retry with backoff for HTTP 429 (rate limit)
 // errors when no fallback models are available. When enabled, the runtime will honor
 // the Retry-After header from the provider's response to determine wait time before
@@ -346,25 +349,32 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	}
 
 	r := &LocalRuntime{
-		toolMap:              make(map[string]ToolHandlerFunc),
-		team:                 agents,
-		currentAgent:         defaultAgent.Name(),
-		resumeChan:           make(chan ResumeRequest),
-		elicitationRequestCh: make(chan ElicitationResult),
-		steerQueue:           NewInMemoryMessageQueue(defaultSteerQueueCapacity),
-		followUpQueue:        NewInMemoryMessageQueue(defaultFollowUpQueueCapacity),
-		sessionCompaction:    true,
-		managedOAuth:         true,
-		sessionStore:         session.NewInMemorySessionStore(),
-		fallbackCooldowns:    make(map[string]*fallbackCooldownState),
-		hooksRegistry:        hooksRegistry,
-		builtinsState:        builtinsState,
+		toolMap:                make(map[string]ToolHandlerFunc),
+		team:                   agents,
+		agents:                 newAgentRouter(agents, defaultAgent.Name()),
+		resumeChan:             make(chan ResumeRequest),
+		elicitationRequestCh:   make(chan ElicitationResult),
+		steerQueue:             NewInMemoryMessageQueue(defaultSteerQueueCapacity),
+		followUpQueue:          NewInMemoryMessageQueue(defaultFollowUpQueueCapacity),
+		sessionCompaction:      true,
+		managedOAuth:           true,
+		sessionStore:           session.NewInMemorySessionStore(),
+		hooksRegistry:          hooksRegistry,
+		builtinsState:          builtinsState,
+		now:                    time.Now,
+		telemetry:              defaultTelemetry{},
+		maxOverflowCompactions: defaultMaxOverflowCompactions,
 	}
 	r.bgAgents = agenttool.NewHandler(r)
 
 	for _, opt := range opts {
 		opt(r)
 	}
+
+	// Build the cooldown manager after opts so it picks up the final clock
+	// (WithClock may have replaced r.now). Doing this once after opts also
+	// avoids the previous "build, then rebuild" dance.
+	r.cooldowns = newCooldownManager(r.now)
 
 	// Default the runtime's working directory to the process CWD when no
 	// caller supplied one. This matches the session's default and ensures
@@ -377,16 +387,12 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	}
 
 	if r.modelsStore == nil {
-		modelsStore, err := modelsdev.NewStore()
-		if err != nil {
-			return nil, err
-		}
-		r.modelsStore = modelsStore
+		r.modelsStore = &lazyModelStore{}
 	}
 
 	// Validate that the current agent exists and has a model
-	// (currentAgent might have been changed by options)
-	defaultAgent, err = r.team.Agent(r.currentAgent)
+	// (the router's current name might have been changed by WithCurrentAgent)
+	defaultAgent, err = r.team.Agent(r.agents.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -404,21 +410,17 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	// the team are finalized. Read-only afterwards.
 	r.buildHooksExecutors()
 
-	slog.Debug("Creating new runtime", "agent", r.currentAgent, "available_agents", agents.Size())
+	slog.Debug("Creating new runtime", "agent", r.agents.Name(), "available_agents", agents.Size())
 
 	return r, nil
 }
 
 func (r *LocalRuntime) CurrentAgentName() string {
-	r.currentAgentMu.RLock()
-	defer r.currentAgentMu.RUnlock()
-	return r.currentAgent
+	return r.agents.Name()
 }
 
 func (r *LocalRuntime) setCurrentAgent(name string) {
-	r.currentAgentMu.Lock()
-	defer r.currentAgentMu.Unlock()
-	r.currentAgent = name
+	r.agents.Set(name)
 }
 
 func (r *LocalRuntime) CurrentAgentInfo(context.Context) CurrentAgentInfo {
@@ -432,13 +434,7 @@ func (r *LocalRuntime) CurrentAgentInfo(context.Context) CurrentAgentInfo {
 }
 
 func (r *LocalRuntime) SetCurrentAgent(agentName string) error {
-	// Validate that the agent exists in the team
-	if _, err := r.team.Agent(agentName); err != nil {
-		return err
-	}
-	r.setCurrentAgent(agentName)
-	slog.Debug("Switched current agent", "agent", agentName)
-	return nil
+	return r.agents.SetValidated(agentName)
 }
 
 func (r *LocalRuntime) CurrentAgentCommands(context.Context) types.Commands {
@@ -519,22 +515,14 @@ func (r *LocalRuntime) discoverMCPPrompts(ctx context.Context, toolset *mcptools
 
 // CurrentAgent returns the current agent
 func (r *LocalRuntime) CurrentAgent() *agent.Agent {
-	// We validated already that the agent exists
-	current, _ := r.team.Agent(r.CurrentAgentName())
-	return current
+	return r.agents.Current()
 }
 
-// resolveSessionAgent returns the agent for the given session. When the session
-// is pinned to a specific agent (e.g. background agent tasks), it returns that
-// agent directly instead of reading the shared currentAgent field, which may
-// point to a different agent.
+// resolveSessionAgent returns the agent for the given session. Delegates to
+// agentRouter.ResolveSession; kept on LocalRuntime for the existing callsites
+// in loop.go and elsewhere.
 func (r *LocalRuntime) resolveSessionAgent(sess *session.Session) *agent.Agent {
-	if sess.AgentName != "" {
-		if a, err := r.team.Agent(sess.AgentName); err == nil {
-			return a
-		}
-	}
-	return r.CurrentAgent()
+	return r.agents.ResolveSession(sess)
 }
 
 // CurrentAgentSkillsToolset returns the skills toolset for the current agent, or nil if not enabled.
@@ -620,7 +608,7 @@ func getAgentModelID(a *agent.Agent) string {
 // for any active fallback cooldown. During a cooldown period, this returns the fallback
 // model ID instead of the configured primary model, so the UI reflects the actual model in use.
 func (r *LocalRuntime) getEffectiveModelID(a *agent.Agent) string {
-	cooldownState := r.getCooldownState(a.Name())
+	cooldownState := r.cooldowns.Get(a.Name())
 	if cooldownState != nil {
 		fallbacks := a.FallbackModels()
 		if cooldownState.fallbackIndex >= 0 && cooldownState.fallbackIndex < len(fallbacks) {
@@ -641,7 +629,7 @@ func (r *LocalRuntime) agentDetailsFromTeam() []AgentDetails {
 		modelName := info.Model
 
 		// Check if this agent has an active fallback cooldown
-		cooldownState := r.getCooldownState(info.Name)
+		cooldownState := r.cooldowns.Get(info.Name)
 		if cooldownState != nil {
 			// Get the agent to access fallback models
 			if a, err := r.team.Agent(info.Name); err == nil && a != nil {
@@ -740,7 +728,7 @@ func (r *LocalRuntime) emitToolsChanged() {
 	if r.onToolsChanged == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), toolsChangedTimeout)
 	defer cancel()
 	a := r.CurrentAgent()
 	agentTools, err := a.StartedTools(ctx)
@@ -927,28 +915,6 @@ func (r *LocalRuntime) Resume(_ context.Context, req ResumeRequest) {
 	}
 }
 
-// ResumeElicitation sends an elicitation response back to a waiting elicitation request
-func (r *LocalRuntime) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any) error {
-	slog.Debug("Resuming runtime with elicitation response", "agent", r.CurrentAgentName(), "action", action)
-
-	result := ElicitationResult{
-		Action:  action,
-		Content: content,
-	}
-
-	select {
-	case <-ctx.Done():
-		slog.Debug("Context cancelled while sending elicitation response")
-		return ctx.Err()
-	case r.elicitationRequestCh <- result:
-		slog.Debug("Elicitation response sent successfully", "action", action)
-		return nil
-	default:
-		slog.Debug("Elicitation channel not ready")
-		return errors.New("no elicitation request in progress")
-	}
-}
-
 // Steer enqueues a user message for urgent mid-turn injection into the
 // running agent loop. The message will be picked up after the current batch
 // of tool calls finishes but before the loop checks whether to stop.
@@ -994,52 +960,4 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 		contextLimit = int64(m.Limit.Context)
 	}
 	events <- NewTokenUsageEvent(sess.ID, a.Name(), SessionUsage(sess, contextLimit))
-}
-
-// swapElicitationEventsChannel atomically replaces the current elicitation
-// events channel and returns the previous one. Each RunStream call swaps in
-// its own channel on entry and swaps the previous one back on exit, so nested
-// streams (sub-sessions, background agents) don't lose the parent's channel.
-func (r *LocalRuntime) swapElicitationEventsChannel(ch chan Event) chan Event {
-	r.elicitationEventsChannelMux.Lock()
-	defer r.elicitationEventsChannelMux.Unlock()
-	prev := r.elicitationEventsChannel
-	r.elicitationEventsChannel = ch
-	return prev
-}
-
-// elicitationHandler creates an elicitation handler that can be used by MCP clients
-// This handler propagates elicitation requests to the runtime's client via events
-func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitParams) (tools.ElicitationResult, error) {
-	slog.Debug("Elicitation request received from MCP server", "message", req.Message)
-
-	// Hold the read lock while sending to the channel to prevent a race
-	// with swapElicitationEventsChannel / close(events).
-	r.elicitationEventsChannelMux.RLock()
-	eventsChannel := r.elicitationEventsChannel
-	if eventsChannel == nil {
-		r.elicitationEventsChannelMux.RUnlock()
-		return tools.ElicitationResult{}, errors.New("no events channel available for elicitation")
-	}
-
-	r.executeOnUserInputHooks(ctx, "", "elicitation")
-
-	slog.Debug("Sending elicitation request event to client", "message", req.Message, "mode", req.Mode, "requested_schema", req.RequestedSchema, "url", req.URL)
-	slog.Debug("Elicitation request meta", "meta", req.Meta)
-
-	// Send elicitation request event to the runtime's client
-	eventsChannel <- ElicitationRequest(req.Message, req.Mode, req.RequestedSchema, req.URL, req.ElicitationID, req.Meta, r.CurrentAgentName())
-	r.elicitationEventsChannelMux.RUnlock()
-
-	// Wait for response from the client
-	select {
-	case result := <-r.elicitationRequestCh:
-		return tools.ElicitationResult{
-			Action:  result.Action,
-			Content: result.Content,
-		}, nil
-	case <-ctx.Done():
-		slog.Debug("Context cancelled while waiting for elicitation response")
-		return tools.ElicitationResult{}, ctx.Err()
-	}
 }

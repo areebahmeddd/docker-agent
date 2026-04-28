@@ -17,15 +17,6 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-// fallbackCooldownState tracks when we should stick with a fallback model
-// instead of retrying the primary after a non-retryable error (e.g., 429).
-type fallbackCooldownState struct {
-	// fallbackIndex is the index in the fallback chain to start from (0 = first fallback, -1 = primary)
-	fallbackIndex int
-	// until is when the cooldown expires and we should retry the primary
-	until time.Time
-}
-
 // modelWithFallback holds a provider and its identification for logging
 type modelWithFallback struct {
 	provider   provider.Provider
@@ -76,55 +67,6 @@ func logRetryBackoff(agentName, modelID string, attempt int, backoffDelay time.D
 		"model", modelID,
 		"attempt", attempt+1,
 		"backoff", backoffDelay)
-}
-
-// getCooldownState returns the current cooldown state for an agent (thread-safe).
-// Returns nil if no cooldown is active or if cooldown has expired.
-// Expired entries are evicted to prevent stale state accumulation.
-func (r *LocalRuntime) getCooldownState(agentName string) *fallbackCooldownState {
-	r.fallbackCooldownsMux.Lock()
-	defer r.fallbackCooldownsMux.Unlock()
-
-	state := r.fallbackCooldowns[agentName]
-	if state == nil {
-		return nil
-	}
-
-	// Check if cooldown has expired; evict if so
-	if time.Now().After(state.until) {
-		delete(r.fallbackCooldowns, agentName)
-		return nil
-	}
-
-	return state
-}
-
-// setCooldownState sets the cooldown state for an agent (thread-safe).
-func (r *LocalRuntime) setCooldownState(agentName string, fallbackIndex int, cooldownDuration time.Duration) {
-	r.fallbackCooldownsMux.Lock()
-	defer r.fallbackCooldownsMux.Unlock()
-
-	r.fallbackCooldowns[agentName] = &fallbackCooldownState{
-		fallbackIndex: fallbackIndex,
-		until:         time.Now().Add(cooldownDuration),
-	}
-
-	slog.Info("Fallback cooldown activated",
-		"agent", agentName,
-		"fallback_index", fallbackIndex,
-		"cooldown", cooldownDuration,
-		"until", r.fallbackCooldowns[agentName].until.Format(time.RFC3339))
-}
-
-// clearCooldownState clears the cooldown state for an agent (thread-safe).
-func (r *LocalRuntime) clearCooldownState(agentName string) {
-	r.fallbackCooldownsMux.Lock()
-	defer r.fallbackCooldownsMux.Unlock()
-
-	if _, exists := r.fallbackCooldowns[agentName]; exists {
-		delete(r.fallbackCooldowns, agentName)
-		slog.Debug("Fallback cooldown cleared", "agent", agentName)
-	}
 }
 
 // getEffectiveCooldown returns the cooldown duration to use for an agent.
@@ -192,7 +134,7 @@ func (r *LocalRuntime) tryModelWithFallback(
 	// Check if we're in a cooldown period and should skip the primary
 	startIndex := 0
 	inCooldown := false
-	cooldownState := r.getCooldownState(a.Name())
+	cooldownState := r.cooldowns.Get(a.Name())
 	if cooldownState != nil && len(fallbackModels) > cooldownState.fallbackIndex {
 		// We're in cooldown - start from the pinned fallback (skip primary)
 		startIndex = cooldownState.fallbackIndex + 1 // +1 because index 0 is primary
@@ -285,7 +227,7 @@ func (r *LocalRuntime) tryModelWithFallback(
 				}
 			}
 
-			res, err := handleStream(ctx, stream, a, agentTools, sess, m, events)
+			res, err := handleStream(ctx, stream, a, agentTools, sess, m, r.telemetry, events)
 			if err != nil {
 				lastErr = err
 
@@ -309,11 +251,11 @@ func (r *LocalRuntime) tryModelWithFallback(
 			case modelEntry.isFallback && primaryFailedWithNonRetryable:
 				// Primary failed with non-retryable error, fallback succeeded.
 				// Set cooldown to stick with this fallback.
-				r.setCooldownState(a.Name(), modelEntry.index, getEffectiveCooldown(a))
+				r.cooldowns.Set(a.Name(), modelEntry.index, getEffectiveCooldown(a))
 			case !modelEntry.isFallback:
 				// Primary succeeded - clear any existing cooldown.
 				// This handles both normal success and recovery after cooldown expires.
-				r.clearCooldownState(a.Name())
+				r.cooldowns.Clear(a.Name())
 			}
 
 			return res, modelEntry.provider, nil

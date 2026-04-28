@@ -1515,7 +1515,7 @@ func TestTransferTaskRejectsNonSubAgent(t *testing.T) {
 	assert.True(t, result.IsError, "transfer to non-sub-agent should return an error result")
 	assert.Contains(t, result.Output, "cannot transfer task to planner")
 	assert.Contains(t, result.Output, "librarian")
-	assert.Equal(t, "root", rt.currentAgent, "current agent should remain root")
+	assert.Equal(t, "root", rt.CurrentAgentName(), "current agent should remain root")
 }
 
 func TestTransferTaskAllowsSubAgent(t *testing.T) {
