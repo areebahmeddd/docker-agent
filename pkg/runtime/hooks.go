@@ -16,17 +16,23 @@ import (
 
 // buildHooksExecutors builds a [hooks.Executor] for every agent in the
 // team that has user-configured hooks, an agent-flag that maps to a
-// builtin (AddDate / AddEnvironmentInfo / AddPromptFiles), or a
+// builtin (AddDate / AddEnvironmentInfo / AddPromptFiles), a
 // configured response cache (which auto-injects a cache_response stop
-// hook). Agents with no hooks have no entry; lookups fall through to
-// nil so callers can short-circuit cheaply.
+// hook), or any registered [MessageTransform] (which auto-injects a
+// before_llm_call builtin). Agents with no hooks have no entry;
+// lookups fall through to nil so callers can short-circuit cheaply.
+//
+// The matching [resolvedTransform] chain for each agent is also
+// pre-resolved here into r.transformsByAgent so per-LLM-call
+// dispatch is a flat slice walk.
 //
 // Called once from [NewLocalRuntime] after r.workingDir, r.env and
-// r.hooksRegistry are finalized; the resulting map is read-only for
+// r.hooksRegistry are finalized; the resulting maps are read-only for
 // the lifetime of the runtime, so per-dispatch lookups don't need to
 // lock.
 func (r *LocalRuntime) buildHooksExecutors() {
 	r.hooksExecByAgent = make(map[string]*hooks.Executor)
+	r.transformsByAgent = make(map[string][]resolvedTransform)
 	for _, name := range r.team.AgentNames() {
 		a, err := r.team.Agent(name)
 		if err != nil {
@@ -38,10 +44,14 @@ func (r *LocalRuntime) buildHooksExecutors() {
 			AddPromptFiles:     a.AddPromptFiles(),
 		})
 		cfg = applyCacheDefault(cfg, a)
+		cfg = r.applyMessageTransformDefaults(cfg)
 		if cfg == nil {
 			continue
 		}
 		r.hooksExecByAgent[name] = hooks.NewExecutorWithRegistry(cfg, r.workingDir, r.env, r.hooksRegistry)
+		if transforms := r.resolveTransforms(cfg); len(transforms) > 0 {
+			r.transformsByAgent[name] = transforms
+		}
 	}
 }
 

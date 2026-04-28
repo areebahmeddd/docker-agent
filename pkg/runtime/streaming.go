@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/agent"
@@ -235,40 +234,4 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 		FinishReason:      finishReason,
 		Usage:             messageUsage,
 	}, nil
-}
-
-// stripImageContent returns a copy of messages with all image-related content
-// removed. This is used when the target model doesn't support image input to
-// prevent API errors. Text content is preserved; image parts in MultiContent
-// are filtered out, and file attachments with image MIME types are dropped.
-func stripImageContent(messages []chat.Message) []chat.Message {
-	result := make([]chat.Message, len(messages))
-	for i, msg := range messages {
-		result[i] = msg
-
-		if len(msg.MultiContent) == 0 {
-			continue
-		}
-
-		var filtered []chat.MessagePart
-		for _, part := range msg.MultiContent {
-			switch part.Type {
-			case chat.MessagePartTypeImageURL:
-				// Drop image URL parts entirely.
-				continue
-			case chat.MessagePartTypeFile:
-				// Drop file parts that are images.
-				if part.File != nil && chat.IsImageMimeType(part.File.MimeType) {
-					continue
-				}
-			}
-			filtered = append(filtered, part)
-		}
-
-		if len(filtered) != len(msg.MultiContent) {
-			result[i].MultiContent = filtered
-			slog.Debug("Stripped image content from message", "role", msg.Role, "original_parts", len(msg.MultiContent), "remaining_parts", len(filtered))
-		}
-	}
-	return result
 }

@@ -21,6 +21,12 @@ import (
 //   - AddPromptFiles    -> turn_start (file may be edited mid-session)
 //   - AddEnvironmentInfo -> session_start (wd/OS/arch don't change)
 //
+// Every agent additionally receives an auto-injected
+// [BuiltinStripUnsupportedModalities] entry on before_llm_call (the
+// runtime-shipped message transform that drops images for text-only
+// models), so the executor is always non-nil — even for an agent
+// without any explicit flags.
+//
 // The behavior of each builtin (what it puts in AdditionalContext) is
 // covered by pkg/hooks/builtins; this test only asserts the wiring,
 // using a smoke Dispatch to confirm that the registered builtin name
@@ -33,16 +39,14 @@ func TestHooksExecWiresAgentFlagsToBuiltins(t *testing.T) {
 	prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
 
 	cases := []struct {
-		name           string
-		opts           []agent.Opt
-		wantNoExecutor bool
-		wantTurnStart  bool
-		wantSessStart  bool
+		name          string
+		opts          []agent.Opt
+		wantTurnStart bool
+		wantSessStart bool
 	}{
 		{
-			name:           "no flags: no implicit hooks, no executor",
-			opts:           []agent.Opt{agent.WithModel(prov)},
-			wantNoExecutor: true,
+			name: "no flags: only the auto-injected strip transform on before_llm_call",
+			opts: []agent.Opt{agent.WithModel(prov)},
 		},
 		{
 			name:          "AddDate wires turn_start",
@@ -82,15 +86,16 @@ func TestHooksExecWiresAgentFlagsToBuiltins(t *testing.T) {
 			require.NoError(t, err)
 
 			exec := r.hooksExec(a)
-			if tc.wantNoExecutor {
-				assert.Nil(t, exec, "no flags must not produce an executor")
-				return
-			}
-			require.NotNil(t, exec)
+			require.NotNil(t, exec, "every agent receives the auto-injected strip transform")
 
 			// hooksExec is read-only after [LocalRuntime.buildHooksExecutors],
 			// so calling it twice returns the same pointer.
 			assert.Same(t, exec, r.hooksExec(a), "hooksExec must be stable across calls")
+
+			// before_llm_call always carries the strip_unsupported_modalities
+			// builtin, regardless of agent flags.
+			assert.True(t, exec.Has(hooks.EventBeforeLLMCall),
+				"before_llm_call must always carry the auto-injected strip transform")
 
 			assert.Equal(t, tc.wantTurnStart, exec.Has(hooks.EventTurnStart),
 				"turn_start activation must match flags")
