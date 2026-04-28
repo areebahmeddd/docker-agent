@@ -2,7 +2,9 @@ package skills
 
 import (
 	"cmp"
+	"context"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -57,6 +59,7 @@ func (s *Skill) IsFork() bool {
 func Load(sources []string) []Skill {
 	skillMap := make(map[string]Skill)
 
+	var remoteCache *diskCache
 	for _, source := range sources {
 		switch {
 		case source == "local":
@@ -64,17 +67,16 @@ func Load(sources []string) []Skill {
 				skillMap[skill.Name] = skill
 			}
 		case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
-			for _, skill := range loadRemoteSkills(source) {
+			if remoteCache == nil {
+				remoteCache = newDiskCache(filepath.Join(paths.GetCacheDir(), "skills"))
+			}
+			for _, skill := range loadRemoteSkills(context.Background(), source, remoteCache) {
 				skillMap[source+"/"+skill.Name] = skill
 			}
 		}
 	}
 
-	result := make([]Skill, 0, len(skillMap))
-	for _, skill := range skillMap {
-		result = append(result, skill)
-	}
-	return result
+	return slices.Collect(maps.Values(skillMap))
 }
 
 // loadLocalSkills loads skills from standard filesystem locations.
@@ -113,11 +115,7 @@ func loadLocalSkills() []Skill {
 		}
 	}
 
-	result := make([]Skill, 0, len(skillMap))
-	for _, skill := range skillMap {
-		result = append(result, skill)
-	}
-	return result
+	return slices.Collect(maps.Values(skillMap))
 }
 
 // projectSearchDirs returns directories from git root to cwd (inclusive).
@@ -185,11 +183,6 @@ func findGitRoot(dir string) string {
 // If recursive is true, it walks all subdirectories looking for SKILL.md files.
 // If recursive is false, it only looks for SKILL.md in immediate subdirectories.
 func loadSkillsFromDir(dir string, recursive bool) []Skill {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-
 	if recursive {
 		return loadSkillsRecursive(dir)
 	}
@@ -220,9 +213,8 @@ func loadSkillsFlat(dir string) []Skill {
 	return skills
 }
 
-// loadSkillsRecursive loads skills from all subdirectories (Codex format).
-// It tracks visited real directory paths to avoid infinite loops caused by
-// symlinks that form cycles.
+// loadSkillsRecursive walks dir for SKILL.md files (Codex format), tracking
+// real directory paths so symlink cycles can't loop forever.
 func loadSkillsRecursive(dir string) []Skill {
 	visited := make(map[string]bool)
 
@@ -231,14 +223,7 @@ func loadSkillsRecursive(dir string) []Skill {
 		visited[realDir] = true
 	}
 
-	return walkSkillsRecursive(dir, visited)
-}
-
-// walkSkillsRecursive walks dir for SKILL.md files, using visited to skip
-// directories whose real path has already been traversed.
-func walkSkillsRecursive(dir string, visited map[string]bool) []Skill {
 	var skills []Skill
-
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -267,9 +252,7 @@ func walkSkillsRecursive(dir string, visited map[string]bool) []Skill {
 		}
 
 		skillDir := filepath.Dir(path)
-		dirName := filepath.Base(skillDir)
-
-		if skill, ok := loadSkillFile(path, dirName); ok {
+		if skill, ok := loadSkillFile(path, filepath.Base(skillDir)); ok {
 			skills = append(skills, skill)
 		}
 		return nil
