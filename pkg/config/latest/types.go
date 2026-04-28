@@ -381,6 +381,27 @@ type AgentConfig struct {
 	StructuredOutput        *StructuredOutput `json:"structured_output,omitempty"`
 	Skills                  SkillsConfig      `json:"skills,omitzero"`
 	Hooks                   *HooksConfig      `json:"hooks,omitempty"`
+	Cache                   *CacheConfig      `json:"cache,omitempty"`
+}
+
+// CacheConfig configures the agent's response cache. When set and Enabled
+// is true, the agent stores the assistant response produced for a given
+// user question and replays it when the same question is asked again,
+// skipping the model entirely.
+//
+// Two normalization options control what "same question" means:
+//   - CaseSensitive: when false (the default), question matching is
+//     case-insensitive ("Hello" == "hello").
+//   - TrimSpaces: when true, leading and trailing whitespace is stripped
+//     before comparison ("  hello  " == "hello").
+//
+// Storage is in-memory by default. Set Path to persist entries to a JSON
+// file that is reloaded on startup.
+type CacheConfig struct {
+	Enabled       bool   `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	CaseSensitive bool   `json:"case_sensitive,omitempty" yaml:"case_sensitive,omitempty"`
+	TrimSpaces    bool   `json:"trim_spaces,omitempty" yaml:"trim_spaces,omitempty"`
+	Path          string `json:"path,omitempty" yaml:"path,omitempty"`
 }
 
 const SkillSourceLocal = "local"

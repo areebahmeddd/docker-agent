@@ -212,6 +212,14 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 	defer r.finalizeEventChannel(ctx, sess, prevElicitationCh, events)
 
+	// Response cache lookup. On a hit, replay the stored answer and
+	// skip the model entirely. The matching storage half is
+	// implemented as the cache_response stop-hook builtin (see
+	// runtime/cache.go and getHooksExecutor).
+	if r.tryReplayCachedResponse(ctx, sess, a, events) {
+		return
+	}
+
 	iteration := 0
 	// Use a runtime copy of maxIterations so we don't modify the session's persistent config
 	runtimeMaxIterations := sess.MaxIterations
