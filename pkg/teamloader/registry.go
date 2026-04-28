@@ -54,13 +54,24 @@ func (r *ToolsetRegistry) Get(toolsetType string) (ToolsetCreator, bool) {
 	return creator, ok
 }
 
-// CreateTool creates a toolset using the registered creator for the given type
+// CreateTool creates a toolset using the registered creator for the given type.
+//
+// Every successful toolset is decorated with tools.WithName so status
+// surfaces (the /tools dialog, error messages, …) always have a stable
+// user-facing label. The decoration is a no-op for toolsets that
+// already advertise a non-empty Name(): it only fills the gap left by
+// built-in toolsets that don't take a `name:` field in YAML, replacing
+// the previous fallback to fmt.Sprintf("%T", ts).
 func (r *ToolsetRegistry) CreateTool(ctx context.Context, toolset latest.Toolset, parentDir string, runConfig *config.RuntimeConfig, agentName string) (tools.ToolSet, error) {
 	creator, ok := r.Get(toolset.Type)
 	if !ok {
 		return nil, fmt.Errorf("unknown toolset type: %s", toolset.Type)
 	}
-	return creator(ctx, toolset, parentDir, runConfig, agentName)
+	ts, err := creator(ctx, toolset, parentDir, runConfig, agentName)
+	if err != nil {
+		return nil, err
+	}
+	return tools.WithName(ts, cmp.Or(toolset.Name, toolset.Type)), nil
 }
 
 func NewDefaultToolsetRegistry() *ToolsetRegistry {
@@ -339,7 +350,7 @@ func createMCPTool(ctx context.Context, toolset latest.Toolset, _ string, runCon
 				return nil, fmt.Errorf("working_dir is not supported for MCP toolset %q: ref %q resolves to a remote server (no local subprocess)",
 					toolset.Name, toolset.Ref)
 			}
-			return mcp.NewRemoteToolset(toolset.Name, serverSpec.Remote.URL, serverSpec.Remote.TransportType, nil, nil), nil
+			return mcp.NewRemoteToolset(toolset.Name, serverSpec.Remote.URL, serverSpec.Remote.TransportType, nil, nil, lifecyclePolicyFromConfig(toolset.Name, toolset.Lifecycle)), nil
 		}
 
 		// The ref resolves to a local subprocess — validate the working directory now.
@@ -384,7 +395,7 @@ func createMCPTool(ctx context.Context, toolset latest.Toolset, _ string, runCon
 		// Prepend tools bin dir to PATH so child processes can find installed tools
 		env = toolinstall.PrependBinDirToEnv(env)
 
-		return mcp.NewToolsetCommand(toolset.Name, resolvedCommand, toolset.Args, env, cwd), nil
+		return mcp.NewToolsetCommand(toolset.Name, resolvedCommand, toolset.Args, env, cwd, lifecyclePolicyFromConfig(toolset.Name, toolset.Lifecycle)), nil
 
 	// Remote MCP Server — working_dir is rejected at validation time for this
 	// branch (explicit remote.url in config). Ref-based MCPs that resolve to
@@ -395,7 +406,7 @@ func createMCPTool(ctx context.Context, toolset latest.Toolset, _ string, runCon
 		headers := expander.ExpandMap(ctx, toolset.Remote.Headers)
 		url := expander.Expand(ctx, toolset.Remote.URL, nil)
 
-		return mcp.NewRemoteToolset(toolset.Name, url, toolset.Remote.TransportType, headers, toolset.Remote.OAuth), nil
+		return mcp.NewRemoteToolset(toolset.Name, url, toolset.Remote.TransportType, headers, toolset.Remote.OAuth, lifecyclePolicyFromConfig(toolset.Name, toolset.Lifecycle)), nil
 
 	default:
 		return nil, errors.New("mcp toolset requires either ref, command, or remote configuration")
@@ -436,7 +447,7 @@ func createLSPTool(ctx context.Context, toolset latest.Toolset, _ string, runCon
 		}
 	}
 
-	tool := builtin.NewLSPTool(resolvedCommand, toolset.Args, env, cwd)
+	tool := builtin.NewLSPTool(resolvedCommand, toolset.Args, env, cwd, lifecyclePolicyFromConfig(toolset.Name, toolset.Lifecycle))
 	if len(toolset.FileTypes) > 0 {
 		tool.SetFileTypes(toolset.FileTypes)
 	}

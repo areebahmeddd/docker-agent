@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/tools"
+	"github.com/docker/docker-agent/pkg/tools/lifecycle"
 )
 
 const (
@@ -63,6 +64,17 @@ type lspHandler struct {
 	stdout      *bufio.Reader
 	initialized atomic.Bool
 	requestID   atomic.Int64
+
+	// supervisor manages process lifecycle (start, watcher goroutine,
+	// auto-restart on crash, graceful Stop). Per-request methods consult
+	// it via ensureInitialized to lazy-start on first use.
+	supervisor *lifecycle.Supervisor
+
+	// toolsChangedHandler is called after the supervisor's Connect has
+	// populated h.capabilities, so the runtime can re-fetch the (now
+	// capability-filtered) tool list. nil until SetToolsChangedHandler is
+	// called.
+	toolsChangedHandler func()
 
 	// Configuration
 	command    string
@@ -328,17 +340,34 @@ type lspInlayHint struct {
 }
 
 // NewLSPTool creates a new LSP tool that connects to an LSP server.
-func NewLSPTool(command string, args, env []string, workingDir string) *LSPTool {
-	return &LSPTool{
-		handler: &lspHandler{
-			command:     command,
-			args:        args,
-			env:         env,
-			workingDir:  workingDir,
-			diagnostics: make(map[string][]lspDiagnostic),
-			openFiles:   make(map[string]int),
-		},
+//
+// The optional policy lets callers tune restart/backoff behaviour. When
+// the zero value is passed the supervisor uses its built-in defaults
+// (RestartOnFailure, 5 attempts, 1s..32s backoff). Internal callbacks
+// (OnDisconnect, Logger) are always set by the constructor.
+func NewLSPTool(command string, args, env []string, workingDir string, policy ...lifecycle.Policy) *LSPTool {
+	h := &lspHandler{
+		command:     command,
+		args:        args,
+		env:         env,
+		workingDir:  workingDir,
+		diagnostics: make(map[string][]lspDiagnostic),
+		openFiles:   make(map[string]int),
 	}
+	base := lifecycle.Policy{}
+	if len(policy) > 0 {
+		base = policy[0]
+	}
+	base.Logger = slog.With("component", "lsp.supervisor", "command", command)
+	base.OnDisconnect = func(error) {
+		// Reset diagnostics on disconnect: the next server may not
+		// re-emit them and stale data is worse than nothing.
+		h.diagnosticsMu.Lock()
+		h.diagnostics = make(map[string][]lspDiagnostic)
+		h.diagnosticsMu.Unlock()
+	}
+	h.supervisor = lifecycle.New("lsp/"+command, &lspConnector{h: h}, base)
+	return &LSPTool{handler: h}
 }
 
 // SetFileTypes sets the file types (extensions) that this LSP server handles.
@@ -357,16 +386,42 @@ func (t *LSPTool) HandlesFile(path string) bool {
 	return t.handler.handlesFile(path)
 }
 
-func (t *LSPTool) Start(context.Context) error {
-	t.handler.mu.Lock()
-	defer t.handler.mu.Unlock()
-	return t.handler.startLocked()
+func (t *LSPTool) Start(ctx context.Context) error {
+	return t.handler.supervisor.Start(ctx)
 }
 
-func (t *LSPTool) Stop(context.Context) error {
-	t.handler.mu.Lock()
-	defer t.handler.mu.Unlock()
-	return t.handler.stopLocked()
+func (t *LSPTool) Stop(ctx context.Context) error {
+	return t.handler.supervisor.Stop(ctx)
+}
+
+// State returns a snapshot of the underlying supervisor's lifecycle state,
+// suitable for the /tools dialog and lifecycle log messages.
+func (t *LSPTool) State() lifecycle.StateInfo {
+	return t.handler.supervisor.State()
+}
+
+// Restart brings the LSP server back up regardless of state. Failed or
+// Stopped supervisors are recovered via Start; otherwise the current
+// session is dropped and we wait for the supervisor to reconnect.
+// Blocks up to 35s (matching the MCP toolset).
+func (t *LSPTool) Restart(ctx context.Context) error {
+	if t.handler.supervisor.State().State.IsTerminal() {
+		return t.handler.supervisor.Start(ctx)
+	}
+	return t.handler.supervisor.RestartAndWait(ctx, 35*time.Second)
+}
+
+// Kind returns the user-facing classification of this toolset. Used by
+// status surfaces such as the /tools dialog so they can label the
+// toolset without leaking Go type names.
+func (t *LSPTool) Kind() string { return "LSP" }
+
+// Name returns the basename of the configured command ("gopls",
+// "rust-analyzer", …). It's the most useful identifier in the absence
+// of a YAML name: field on LSP toolsets, and lets the /tools dialog
+// distinguish multiple language servers in the same agent.
+func (t *LSPTool) Name() string {
+	return filepath.Base(t.handler.command)
 }
 
 func (t *LSPTool) Instructions() string {
@@ -420,6 +475,40 @@ func lspTool(name, title, description string, readOnly bool, params any, handler
 
 func (t *LSPTool) Tools(context.Context) ([]tools.Tool, error) {
 	h := t.handler
+	all := allLSPTools(h)
+
+	caps := h.snapshotCapabilities()
+	if caps == nil {
+		// The server has not been initialised yet. Advertise the full
+		// catalogue: the runtime will refresh after the first Connect
+		// completes (via toolsChangedHandler), at which point we filter.
+		return all, nil
+	}
+	return filterByCapabilities(all, caps), nil
+}
+
+// snapshotCapabilities returns the LSP server capabilities under h.mu,
+// or nil if the server has not yet completed initialize.
+func (h *lspHandler) snapshotCapabilities() *lspServerCapabilities {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.capabilities
+}
+
+// SetToolsChangedHandler registers a callback that is invoked after the
+// supervisor reaches Ready and the server's capability matrix becomes
+// available. The runtime uses this to re-query Tools() and pick up the
+// capability-filtered list.
+func (t *LSPTool) SetToolsChangedHandler(handler func()) {
+	t.handler.mu.Lock()
+	t.handler.toolsChangedHandler = handler
+	t.handler.mu.Unlock()
+}
+
+// allLSPTools returns the full catalogue of LSP tools backed by h. It is
+// extracted from Tools() so that capability-aware filtering can decide
+// which entries to emit without rebuilding the slice each call.
+func allLSPTools(h *lspHandler) []tools.Tool {
 	return []tools.Tool{
 		lspTool(ToolNameLSPWorkspace, "Get Workspace Info",
 			`Get workspace info and LSP server capabilities. Use at session start to discover available features. Takes no arguments.`,
@@ -466,129 +555,124 @@ func (t *LSPTool) Tools(context.Context) ([]tools.Tool, error) {
 		lspTool(ToolNameLSPInlayHints, "Inlay Hints",
 			`Get inlay hints (type annotations, parameter names) for a file or line range. Omit start_line/end_line to get hints for the entire file.`,
 			true, tools.MustSchemaFor[InlayHintsArgs](), tools.NewHandler(h.inlayHints)),
-	}, nil
+	}
+}
+
+// filterByCapabilities returns only the entries from all whose required
+// LSP server capability is advertised by caps.
+//
+// Tools without a 1:1 capability mapping (lsp_workspace, lsp_diagnostics)
+// are always retained: lsp_workspace surfaces the capability matrix
+// itself, and diagnostics arrive as server-pushed notifications and so
+// are usable even when no document* provider is advertised.
+func filterByCapabilities(all []tools.Tool, caps *lspServerCapabilities) []tools.Tool {
+	out := make([]tools.Tool, 0, len(all))
+	for _, t := range all {
+		if !capabilitySupports(t.Name, caps) {
+			slog.Debug("LSP tool hidden: server does not advertise capability", "tool", t.Name)
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// capabilitySupports reports whether the LSP server with the given
+// capabilities advertises support for the tool name.
+//
+// LSP capability values are loosely typed: each provider field is either
+// missing, false, true, or an options object. We treat missing/false as
+// "unsupported" and any non-false value as "supported".
+func capabilitySupports(toolName string, caps *lspServerCapabilities) bool {
+	if caps == nil {
+		return true
+	}
+	switch toolName {
+	case ToolNameLSPWorkspace, ToolNameLSPDiagnostics:
+		return true
+	case ToolNameLSPHover:
+		return isProviderEnabled(caps.HoverProvider)
+	case ToolNameLSPDefinition:
+		return isProviderEnabled(caps.DefinitionProvider)
+	case ToolNameLSPReferences:
+		return isProviderEnabled(caps.ReferencesProvider)
+	case ToolNameLSPDocumentSymbols:
+		return isProviderEnabled(caps.DocumentSymbolProvider)
+	case ToolNameLSPWorkspaceSymbols:
+		return isProviderEnabled(caps.WorkspaceSymbolProvider)
+	case ToolNameLSPCodeActions:
+		return isProviderEnabled(caps.CodeActionProvider)
+	case ToolNameLSPFormat:
+		return isProviderEnabled(caps.DocumentFormattingProvider)
+	case ToolNameLSPRename:
+		return isProviderEnabled(caps.RenameProvider)
+	case ToolNameLSPCallHierarchy:
+		return isProviderEnabled(caps.CallHierarchyProvider)
+	case ToolNameLSPTypeHierarchy:
+		return isProviderEnabled(caps.TypeHierarchyProvider)
+	case ToolNameLSPImplementations:
+		return isProviderEnabled(caps.ImplementationProvider)
+	case ToolNameLSPSignatureHelp:
+		return isProviderEnabled(caps.SignatureHelpProvider)
+	case ToolNameLSPInlayHints:
+		return isProviderEnabled(caps.InlayHintProvider)
+	default:
+		// Unknown tool name: be permissive rather than silently hiding
+		// future tools that haven't been added to this switch yet.
+		return true
+	}
+}
+
+// isProviderEnabled returns true when an LSP capability value advertises
+// support: any non-nil, non-false value (including options objects) is
+// considered "yes".
+func isProviderEnabled(v any) bool {
+	if v == nil {
+		return false
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return true
 }
 
 // lspHandler implementation
-
-// startLocked starts the LSP server process. The caller must hold h.mu.
-// The process is managed by a background context so that it outlives any
-// single request.
-func (h *lspHandler) startLocked() error {
-	if h.cmd != nil {
-		return errors.New("LSP server already running")
-	}
-
-	slog.Debug("Starting LSP server", "command", h.command, "args", h.args)
-
-	// Use a background context for the process lifetime so that the LSP
-	// server is not killed when a caller's request context ends.
-	processCtx, processCancel := context.WithCancel(context.Background())
-
-	cmd := exec.CommandContext(processCtx, h.command, h.args...)
-	cmd.Env = append(os.Environ(), h.env...)
-	cmd.Dir = h.workingDir
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		processCancel()
-		return fmt.Errorf("failed to create stdin pipe: %w", err)
-	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		stdin.Close()
-		processCancel()
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-
-	stderrBuf := &concurrent.Buffer{}
-	cmd.Stderr = stderrBuf
-
-	if err := cmd.Start(); err != nil {
-		stdin.Close()
-		processCancel()
-		return fmt.Errorf("failed to start LSP server: %w", err)
-	}
-
-	h.cmd = cmd
-	h.cancel = processCancel
-	h.stdin = stdin
-	h.stdout = bufio.NewReader(stdout)
-
-	go h.readNotifications(processCtx, stderrBuf)
-
-	slog.Debug("LSP server started successfully")
-	return nil
-}
-
-// stopLocked shuts down the LSP server process. The caller must hold h.mu.
-func (h *lspHandler) stopLocked() error {
-	if h.cmd == nil {
-		return nil
-	}
-
-	slog.Debug("Stopping LSP server")
-
-	if h.initialized.Load() {
-		_, _ = h.sendRequestLocked("shutdown", nil)
-		_ = h.sendNotificationLocked("exit", nil)
-	}
-
-	h.stdin.Close()
-
-	// Cancel the process-lifetime context to stop the readNotifications
-	// goroutine and (if the process didn't exit cleanly) kill the process.
-	if h.cancel != nil {
-		h.cancel()
-		h.cancel = nil
-	}
-
-	err := h.cmd.Wait()
-	h.cmd = nil
-	h.stdin = nil
-	h.stdout = nil
-	h.initialized.Store(false)
-
-	h.openFilesMu.Lock()
-	h.openFiles = make(map[string]int)
-	h.openFilesMu.Unlock()
-
-	if err != nil {
-		if _, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil
-		}
-		return fmt.Errorf("LSP server exited with error: %w", err)
-	}
-
-	slog.Debug("LSP server stopped")
-	return nil
-}
+//
+// Process lifecycle (spawn, watch, auto-restart, graceful close) lives in
+// lspConnector / lspSession (see lsp_lifecycle.go). The handler is
+// responsible for the per-request JSON-RPC protocol and the persistent
+// state (open files, diagnostics) that survives reconnects.
 
 func (h *lspHandler) ensureInitialized() error {
-	if h.initialized.Load() && h.cmd != nil {
+	// Fast path: rely on the atomic initialized flag. lspConnector.Connect
+	// only sets initialized=true after publishing h.cmd / h.stdin /
+	// h.stdout under h.mu, and lspSession.Close clears initialized BEFORE
+	// nilling those fields, so observing initialized=true here implies
+	// the per-request methods can safely take h.mu and find a live
+	// session. We deliberately do NOT read h.cmd here: that field is
+	// guarded by h.mu, and reading it without the lock would race with
+	// Connect/Close.
+	if h.initialized.Load() {
 		return nil
 	}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Re-check under lock.
-	if h.initialized.Load() && h.cmd != nil {
-		return nil
-	}
-
-	if h.cmd == nil {
-		if err := h.startLocked(); err != nil {
+	// Lazy-start through the supervisor. Concurrent ensureInitialized
+	// callers serialize inside Supervisor.Start.
+	if !h.supervisor.IsReady() {
+		if err := h.supervisor.Start(context.Background()); err != nil {
 			return fmt.Errorf("failed to start LSP server: %w", err)
 		}
 	}
 
-	if h.initialized.Load() {
-		return nil
+	// After Start returns, Connect has populated h.cmd and run the
+	// initialize+initialized handshake under h.mu. Verify under the
+	// lock to avoid races with concurrent disconnect.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.initialized.Load() || h.cmd == nil {
+		return lifecycle.ErrNotStarted
 	}
-
-	return h.initializeLocked()
+	return nil
 }
 
 // initializeLocked performs the LSP initialize/initialized handshake.
@@ -1373,6 +1457,14 @@ func (h *lspHandler) sendNotificationLocked(method string, params any) error {
 }
 
 func (h *lspHandler) writeMessageLocked(msg any) error {
+	// Defend against a Close that ran between ensureInitialized's atomic
+	// fast path and our acquisition of h.mu: clearSessionLocked nils
+	// h.stdin under the same lock, so under h.mu a nil stdin means "the
+	// session has been torn down".
+	if h.stdin == nil {
+		return lifecycle.ErrNotStarted
+	}
+
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
@@ -1410,6 +1502,9 @@ func (h *lspHandler) readResponseLocked(expectedID int64) (json.RawMessage, erro
 }
 
 func (h *lspHandler) readMessageLocked() ([]byte, error) {
+	if h.stdout == nil {
+		return nil, lifecycle.ErrNotStarted
+	}
 	var contentLength int
 	for {
 		line, err := h.stdout.ReadString('\n')

@@ -188,6 +188,83 @@ Installed binaries are placed in `~/.cagent/tools/bin/` and cached so they are o
   <p>Auto-install supports both Go packages (via <code>go install</code>) and GitHub release binaries (via archive download). The aqua registry metadata determines which method is used.</p>
 </div>
 
+## Toolset Lifecycle
+
+Long-running toolsets — local MCP servers (stdio), remote MCP servers (SSE / streamable HTTP), and LSP servers — are managed by a single supervisor that can auto-reconnect them when they crash, time out, or drop their session. The `lifecycle` block on the toolset lets you tune that supervisor per toolset. It applies to every `type: mcp` and `type: lsp` toolset.
+
+The simplest knob is `profile`, which picks a preset:
+
+| Profile | Auto-restart | Use case |
+| --- | --- | --- |
+| `resilient` | Yes | Default. Exponential backoff on disconnect; the agent keeps running if the toolset is unavailable. Matches the historical docker-agent behaviour. |
+| `strict` | No | Fail-fast. Marks the toolset as required. Intended for CI / headless runs where a missing dependency should be a hard error. |
+| `best-effort` | No | Single attempt, no retries. Good for experimental MCPs whose flakiness should not amplify into a restart loop. |
+
+```yaml
+toolsets:
+  - type: mcp
+    ref: docker:duckduckgo
+    lifecycle:
+      profile: resilient   # default; shown here for clarity
+
+  - type: lsp
+    command: gopls
+    file_types: [".go"]
+    lifecycle:
+      profile: strict
+
+  - type: mcp
+    ref: docker:openbnb-airbnb
+    lifecycle:
+      profile: best-effort
+```
+
+### Tuning the defaults
+
+Any field set on `lifecycle` overrides the profile preset, so you can mix-and-match: pick a profile and only override the knobs you care about.
+
+```yaml
+toolsets:
+  - type: mcp
+    command: ["docker", "mcp", "gateway"]
+    lifecycle:
+      profile: resilient
+      max_restarts: 10        # keep trying longer than the default of 5
+      backoff:
+        initial: 500ms
+        max: 1m
+        multiplier: 2
+        jitter: 0.2           # 20% random offset to avoid thundering-herd retries
+```
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `profile` | string | One of `resilient` (default), `strict`, `best-effort`. Picks defaults for every other field. |
+| `restart` | string | When the supervisor should reconnect after a disconnect: `never`, `on_failure` (default), or `always`. |
+| `max_restarts` | int | Maximum consecutive restart attempts before the toolset is marked `Failed`. `0` uses the profile default (5); `-1` means unlimited. |
+| `backoff.initial` | duration | First wait between attempts (Go duration: `500ms`, `1s`, …). Default: `1s`. |
+| `backoff.max` | duration | Cap on the wait between attempts. Default: `32s`. |
+| `backoff.multiplier` | number | Multiplier applied each attempt. Default: `2`. |
+| `backoff.jitter` | number | Fraction (0..1) of the computed delay applied as a uniform random offset. `0` disables jitter (default). |
+| `required` | boolean | Marks the toolset as critical. Today this is informational; a future eager-startup phase will refuse to start the agent when a required toolset cannot reach Ready. Defaults to `true` under `strict`, `false` otherwise. |
+| `startup_timeout` | duration | Cap on the initial connect+initialize duration. Today this is informational; the eager-startup phase that enforces it ships in a follow-up. |
+| `call_timeout` | duration | Documented per-call timeout. Informational; the runtime currently uses the caller's context for cancellation. |
+
+<div class="callout callout-info" markdown="1">
+<div class="callout-title">ℹ️ <code>required</code> and <code>startup_timeout</code> are not yet enforced
+</div>
+  <p>The schema validates these fields and the supervisor stores them, but no code path acts on them yet. They are documented now so config files written today keep working when the planned eager-startup phase lands. Picking the <code>strict</code> profile is forward-compatible — it will start enforcing <code>required=true</code> automatically.</p>
+</div>
+
+### Inspecting and restarting toolsets at runtime
+
+The TUI exposes the supervisor through two slash commands:
+
+- `/tools` — the unified tools dialog. Its top section lists every toolset on the current agent with its lifecycle state (`Stopped`, `Starting`, `Ready`, `Degraded`, `Restarting`, `Failed`), restart count, and last error; its bottom section lists every tool the agent can call, grouped by category. Use this to answer both "what can the agent do?" and "is anything degraded?" with one command.
+- `/toolset-restart <name>` — force the supervisor to reconnect the named toolset. Useful after completing OAuth, when a remote MCP server has been redeployed, or when an LSP like `gopls` is stuck.
+
+See the [TUI reference]({{ '/features/tui/' | relative_url }}) for the full list of slash commands.
+
 ## Tool Filtering
 
 Toolsets may expose many tools. Use the `tools` property to whitelist only the ones your agent needs. This works for any toolset type — not just MCP:

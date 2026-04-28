@@ -23,7 +23,9 @@ type mockRuntime struct {
 func (m *mockRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error) {
 	return m.tools, nil
 }
-func (m *mockRuntime) CurrentAgentName() string { return "test" }
+func (m *mockRuntime) CurrentAgentName() string                           { return "test" }
+func (m *mockRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus { return nil }
+func (m *mockRuntime) RestartToolset(context.Context, string) error       { return nil }
 func (m *mockRuntime) CurrentAgentInfo(context.Context) CurrentAgentInfo {
 	return CurrentAgentInfo{
 		Name:        "test",

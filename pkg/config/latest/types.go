@@ -842,6 +842,11 @@ type Toolset struct {
 	// When set, the toolset process is started from this directory.
 	// Relative paths are resolved relative to the agent's working directory.
 	WorkingDir string `json:"working_dir,omitempty"`
+
+	// For `mcp` and `lsp` tools — lifecycle policy controlling startup,
+	// restart, and backoff behaviour. nil means "use the resilient defaults"
+	// (auto-restart on failure, 5 attempts, 1s..32s exponential backoff).
+	Lifecycle *LifecycleConfig `json:"lifecycle,omitempty"`
 }
 
 func (t *Toolset) UnmarshalYAML(unmarshal func(any) error) error {

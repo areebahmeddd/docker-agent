@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin"
 	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
+	"github.com/docker/docker-agent/pkg/tools/lifecycle"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
@@ -41,6 +42,17 @@ type Runtime interface {
 	SetCurrentAgent(agentName string) error
 	// CurrentAgentTools returns the tools for the active agent
 	CurrentAgentTools(ctx context.Context) ([]tools.Tool, error)
+	// CurrentAgentToolsetStatuses returns lifecycle status for each toolset of
+	// the active agent (name, kind, state, last error, restart count).
+	// Used by the /tools dialog. Best-effort: toolsets that don't expose
+	// state appear with State == StateStopped/Ready as appropriate.
+	CurrentAgentToolsetStatuses() []tools.ToolsetStatus
+
+	// RestartToolset finds the named toolset on the active agent and asks
+	// its supervisor to drop the current session and reconnect. Returns
+	// an error if no toolset matches name or the toolset does not
+	// implement tools.Restartable.
+	RestartToolset(ctx context.Context, name string) error
 	// EmitStartupInfo emits initial agent, team, and toolset information for immediate display.
 	// When sess is non-nil and contains token data, a TokenUsageEvent is also emitted
 	// so the UI can display context usage percentage on session restore.
@@ -506,6 +518,98 @@ func (r *LocalRuntime) CurrentAgentCommands(context.Context) types.Commands {
 func (r *LocalRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, error) {
 	a := r.CurrentAgent()
 	return a.Tools(ctx)
+}
+
+// CurrentAgentToolsetStatuses returns one ToolsetStatus per toolset of the
+// active agent. The list is in declaration order. Toolsets that wrap
+// another (StartableToolSet, LSPMultiplexer) are unwrapped so the inner
+// supervisor's state is visible.
+func (r *LocalRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
+	a := r.CurrentAgent()
+	if a == nil {
+		return nil
+	}
+	toolSets := a.ToolSets()
+	statuses := make([]tools.ToolsetStatus, 0, len(toolSets))
+	for _, ts := range toolSets {
+		statuses = append(statuses, toolsetStatusFor(ts))
+	}
+	return statuses
+}
+
+// RestartToolset locates the named toolset on the active agent and
+// asks it to restart in place. The supervisor closes the current
+// session and reconnects; this method blocks until the new session
+// is Ready, ctx is cancelled, or the underlying supervisor's
+// timeout elapses.
+//
+// Returns an error when:
+//   - no toolset matches name (matching uses the same logic as the
+//     /tools dialog: the toolset's Name() if any, otherwise its
+//     description),
+//   - the toolset is not supervisor-backed (no Restartable capability),
+//   - the supervisor itself returned an error (timeout, classified
+//     transport failure, etc.).
+func (r *LocalRuntime) RestartToolset(ctx context.Context, name string) error {
+	a := r.CurrentAgent()
+	if a == nil {
+		return errors.New("no active agent")
+	}
+	for _, ts := range a.ToolSets() {
+		if nameFor(ts, tools.DescribeToolSet(ts)) != name {
+			continue
+		}
+		restartable, ok := tools.As[tools.Restartable](ts)
+		if !ok {
+			return fmt.Errorf("toolset %q does not support restart", name)
+		}
+		return restartable.Restart(ctx)
+	}
+	return fmt.Errorf("toolset %q not found", name)
+}
+
+// toolsetStatusFor builds a ToolsetStatus for ts. tools.As walks the
+// wrapper chain so Statable/Describer can live anywhere in the stack.
+func toolsetStatusFor(ts tools.ToolSet) tools.ToolsetStatus {
+	status := tools.ToolsetStatus{
+		Description: tools.DescribeToolSet(ts),
+	}
+	if kinder, ok := tools.As[tools.Kinder](ts); ok {
+		status.Kind = kinder.Kind()
+	}
+	if statable, ok := tools.As[tools.Statable](ts); ok {
+		info := statable.State()
+		status.State = info.State
+		status.LastError = info.LastError
+		status.RestartCount = info.RestartCount
+	} else {
+		// Toolsets without a supervisor are considered ready by default;
+		// the StartableToolSet wrapper would have surfaced an error
+		// earlier if Start failed.
+		status.State = lifecycleStateForUnsupervised(ts)
+	}
+	status.Name = nameFor(ts, status.Description)
+	return status
+}
+
+func lifecycleStateForUnsupervised(ts tools.ToolSet) lifecycle.State {
+	if s, ok := ts.(*tools.StartableToolSet); ok && !s.IsStarted() {
+		return lifecycle.StateStopped
+	}
+	return lifecycle.StateReady
+}
+
+// nameFor picks a stable, user-visible name for a toolset. We look for
+// any inner toolset that implements tools.Named (walked via tools.As so
+// wrappers like StartableToolSet are transparent). The registry adds a
+// WithName wrapper for every built-in toolset so this is reachable for
+// almost every toolset; fallback uses the description ("mcp(stdio cmd=...)"),
+// which is still better than the Go type name.
+func nameFor(ts tools.ToolSet, fallback string) string {
+	if name := tools.GetName(ts); name != "" {
+		return name
+	}
+	return fallback
 }
 
 // CurrentMCPPrompts returns the available MCP prompts from all active MCP toolsets

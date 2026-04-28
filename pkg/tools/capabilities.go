@@ -1,12 +1,39 @@
 package tools
 
-import "context"
+import (
+	"context"
+
+	"github.com/docker/docker-agent/pkg/tools/lifecycle"
+)
 
 // Startable is implemented by toolsets that require initialization before use.
 // Toolsets that don't implement this interface are assumed to be ready immediately.
 type Startable interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
+}
+
+// Statable is implemented by toolsets that expose a lifecycle state
+// snapshot (Stopped/Starting/Ready/Degraded/Restarting/Failed) plus the
+// most recent error and restart count. The TUI uses this to render
+// the /tools dialog without polling each transport individually.
+//
+// Toolsets that do not implement Statable are reported as "unknown" by
+// status surfaces.
+type Statable interface {
+	State() lifecycle.StateInfo
+}
+
+// Restartable is implemented by toolsets that can be restarted in place
+// (typically the supervisor-backed MCP and LSP toolsets). Restart closes
+// the active session and waits for the supervisor to bring up a fresh one,
+// or returns an error on timeout.
+//
+// The expected use case is post-OAuth recovery ("I just authenticated,
+// reconnect this MCP") and operator-driven debugging through the
+// /toolset-restart slash command.
+type Restartable interface {
+	Restart(ctx context.Context) error
 }
 
 // Instructable is implemented by toolsets that provide custom instructions.

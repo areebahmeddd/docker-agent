@@ -140,6 +140,12 @@ func (t *Toolset) validate() error {
 	if t.WorkingDir != "" && t.Type == "mcp" && t.Remote.URL != "" {
 		return errors.New("working_dir is not valid for remote MCP toolsets (no local subprocess)")
 	}
+	if t.Lifecycle != nil && t.Type != "mcp" && t.Type != "lsp" {
+		return errors.New("lifecycle can only be used with type 'mcp' or 'lsp'")
+	}
+	if err := t.Lifecycle.validate(); err != nil {
+		return err
+	}
 
 	switch t.Type {
 	case "shell":

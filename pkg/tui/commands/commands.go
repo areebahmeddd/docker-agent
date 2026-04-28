@@ -244,11 +244,23 @@ func builtInSessionCommands() []Item {
 			ID:           "session.tools",
 			Label:        "Tools",
 			SlashCommand: "/tools",
-			Description:  "Show all tools available to the current agent",
+			Description:  "Show every toolset (with lifecycle state) and the tools they expose",
 			Category:     "Session",
 			Immediate:    true,
 			Execute: func(string) tea.Cmd {
 				return core.CmdHandler(messages.ShowToolsDialogMsg{})
+			},
+		},
+		{
+			ID:           "session.toolset.restart",
+			Label:        "Restart Toolset",
+			SlashCommand: "/toolset-restart",
+			Description:  "Force a supervisor-driven restart of one toolset (usage: /toolset-restart <name>)",
+			Category:     "Session",
+			Immediate:    true,
+			Execute: func(arg string) tea.Cmd {
+				name := strings.TrimSpace(arg)
+				return core.CmdHandler(messages.RestartToolsetMsg{Name: name})
 			},
 		},
 		{

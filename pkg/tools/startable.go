@@ -14,16 +14,19 @@ type Describer interface {
 }
 
 // DescribeToolSet returns a short description for ts suitable for user-visible
-// messages. It unwraps a StartableToolSet, then delegates to Describer if
-// implemented. Falls back to the Go type name when not.
+// messages. It walks the wrapper chain (e.g. through WithName /
+// StartableToolSet) so any inner Describer is reachable; falls back to
+// the Go type name when no inner toolset implements Describer.
 func DescribeToolSet(ts ToolSet) string {
-	if s, ok := ts.(*StartableToolSet); ok {
-		ts = s.ToolSet
-	}
-	if d, ok := ts.(Describer); ok {
+	if d, ok := As[Describer](ts); ok {
 		if desc := d.Describe(); desc != "" {
 			return desc
 		}
+	}
+	// Unwrap once for the type-name fallback so wrappers don't show up
+	// as e.g. "*tools.namedToolSet".
+	if u, ok := ts.(Unwrapper); ok {
+		ts = u.Unwrap()
 	}
 	return fmt.Sprintf("%T", ts)
 }

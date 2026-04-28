@@ -77,6 +77,66 @@
   },
   "additionalProperties": false,
   "definitions": {
+    "Lifecycle": {
+      "type": "object",
+      "description": "Controls how the agent supervises a long-running toolset process (MCP server, remote MCP, LSP server). All fields are optional; pick a profile that matches your taste and override individual knobs as needed.",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "type": "string",
+          "description": "Shorthand that picks defaults for all the other fields. 'resilient' (default): auto-restart on failure with exponential backoff. 'strict': fail fast — the agent refuses to start when the toolset is unavailable. 'best-effort': single attempt, no auto-restart.",
+          "enum": ["resilient", "strict", "best-effort"]
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Marks the toolset as critical to the agent. NOTE: not yet enforced — a planned eager-startup phase will refuse to start the agent when a required toolset cannot reach Ready within startup_timeout. Defaults to true under the 'strict' profile, false otherwise."
+        },
+        "startup_timeout": {
+          "type": "string",
+          "description": "Cap on the initial Connect+initialize duration. NOTE: not yet enforced; documented for forward compatibility. Go duration format (e.g. '30s', '2m'). 0 means no timeout."
+        },
+        "call_timeout": {
+          "type": "string",
+          "description": "Default per-call timeout. Informational today; the runtime currently uses the caller's context for cancellation."
+        },
+        "restart": {
+          "type": "string",
+          "description": "How the supervisor reacts to an unexpected disconnect.",
+          "enum": ["never", "on_failure", "always"]
+        },
+        "max_restarts": {
+          "type": "integer",
+          "description": "Maximum number of consecutive restart attempts after a disconnect. 0 = use profile default (5). -1 = unlimited.",
+          "minimum": -1
+        },
+        "backoff": {
+          "type": "object",
+          "description": "Exponential backoff between restart attempts.",
+          "additionalProperties": false,
+          "properties": {
+            "initial": {
+              "type": "string",
+              "description": "First wait between attempts (Go duration format, e.g. '1s'). Defaults to 1s."
+            },
+            "max": {
+              "type": "string",
+              "description": "Cap on the wait (Go duration format). Defaults to 32s."
+            },
+            "multiplier": {
+              "type": "number",
+              "description": "Multiplier applied each attempt. Defaults to 2.",
+              "minimum": 0
+            },
+            "jitter": {
+              "type": "number",
+              "description": "Fraction of the computed delay applied as a uniform random offset. 0 disables (default).",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
     "ProviderConfig": {
       "type": "object",
       "description": "Configuration for a model provider. Defines reusable defaults that models can inherit by referencing the provider name. Supports any provider type (openai, anthropic, google, amazon-bedrock, etc.).",
@@ -1116,6 +1176,9 @@
         "working_dir": {
           "type": "string",
           "description": "Optional working directory for the MCP server process. Relative paths are resolved relative to the agent's working directory. Only valid for subprocess-based MCP types (command or ref); not supported for remote MCP toolsets."
+        },
+        "lifecycle": {
+          "$ref": "#/definitions/Lifecycle"
         }
       },
       "anyOf": [
@@ -1382,6 +1445,9 @@
         "working_dir": {
           "type": "string",
           "description": "Optional working directory for MCP/LSP toolset processes. Relative paths are resolved relative to the agent's working directory. Only valid for type 'mcp' or 'lsp', and not supported for remote MCP toolsets (no local subprocess)."
+        },
+        "lifecycle": {
+          "$ref": "#/definitions/Lifecycle"
         }
       },
       "additionalProperties": false,

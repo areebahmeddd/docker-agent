@@ -175,6 +175,17 @@ func (a *App) CurrentAgentTools(ctx context.Context) ([]tools.Tool, error) {
 	return a.runtime.CurrentAgentTools(ctx)
 }
 
+// CurrentAgentToolsetStatuses returns lifecycle status for each toolset of
+// the active agent.
+func (a *App) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
+	return a.runtime.CurrentAgentToolsetStatuses()
+}
+
+// RestartToolset triggers a supervisor-driven restart of the named toolset.
+func (a *App) RestartToolset(ctx context.Context, name string) error {
+	return a.runtime.RestartToolset(ctx, name)
+}
+
 // CurrentAgentCommands returns the commands for the active agent
 func (a *App) CurrentAgentCommands(ctx context.Context) types.Commands {
 	return a.runtime.CurrentAgentInfo(ctx).Commands
