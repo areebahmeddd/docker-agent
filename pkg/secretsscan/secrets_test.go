@@ -10,12 +10,9 @@ import (
 	"github.com/docker/docker-agent/pkg/secretsscan"
 )
 
-// TestContainsSecretsRecognisesKnownTokens locks in the parity
-// guarantee with the upstream
-// github.com/docker/mcp-gateway/pkg/secretsscan tests: the well-known
-// GitHub PAT and Docker Hub PAT shapes that the upstream package
-// detects must keep being detected here. Failing this test means we
-// either dropped a rule or broke the keyword pre-filter.
+// TestContainsSecretsRecognisesKnownTokens: parity guarantee with the
+// upstream docker/mcp-gateway/pkg/secretsscan tests. Failing this test
+// means we either dropped a rule or broke the keyword pre-filter.
 func TestContainsSecretsRecognisesKnownTokens(t *testing.T) {
 	t.Parallel()
 
@@ -34,11 +31,8 @@ func TestContainsSecretsRecognisesKnownTokens(t *testing.T) {
 	}
 }
 
-// TestContainsSecretsIgnoresHarmlessText documents the false-positive
-// floor: pure digit strings, plain English, and the empty string must
-// never trip detection. Two-step keyword + regex filtering makes this
-// cheap; the assertion exists so a future "be more aggressive" change
-// can't quietly start flagging invoice numbers.
+// TestContainsSecretsIgnoresHarmlessText: pure digit strings, plain
+// English, and the empty string must never trip detection.
 func TestContainsSecretsIgnoresHarmlessText(t *testing.T) {
 	t.Parallel()
 
@@ -47,9 +41,9 @@ func TestContainsSecretsIgnoresHarmlessText(t *testing.T) {
 		"1234567890",
 		"hello world",
 		"please summarise the README",
-		// "key" is a keyword for aws-secret-access-key but the regex
+		// "key" is a keyword for aws-secret-access-key, but the regex
 		// requires a 40-char base64-ish span next to "aws_*key=" so a
-		// bare mention must not trip.
+		// bare mention must not trip detection.
 		"the api key is documented in README",
 	}
 	for _, in := range cases {
@@ -57,12 +51,11 @@ func TestContainsSecretsIgnoresHarmlessText(t *testing.T) {
 	}
 }
 
-// TestRedactReplacesSecretSpan pins the headline behavior of the
-// redactor: the secret material is replaced by [secretsscan.RedactionMarker]
-// while the surrounding text (including the keyword that triggered
-// the match) is preserved. We don't assert the exact match boundary
-// because the rule's leading-context group ([^0-9a-zA-Z]|^) may
-// consume the preceding space — only the secret value must
+// TestRedactReplacesSecretSpan: the secret material is replaced by
+// [secretsscan.RedactionMarker] while the surrounding text (including
+// the keyword that triggered the match) is preserved. We don't assert
+// the exact match boundary because the rule's leading-context group
+// may consume the preceding space — only the secret value must
 // disappear.
 func TestRedactReplacesSecretSpan(t *testing.T) {
 	t.Parallel()
@@ -78,12 +71,10 @@ func TestRedactReplacesSecretSpan(t *testing.T) {
 	assert.Contains(t, out, "and you're set", "non-secret suffix preserved")
 }
 
-// TestRedactIsIdempotent locks in the safety property the runtime
-// transforms rely on: passing already-redacted text through Redact
-// again leaves it untouched. Without this we'd risk amplification
-// (e.g. the marker overlapping a future, broader rule) when both the
-// pre_tool_use builtin and the before_llm_call transform fire on the
-// same content.
+// TestRedactIsIdempotent: passing already-redacted text through
+// Redact again leaves it untouched. Without this we'd risk
+// amplification when both the pre_tool_use builtin and the
+// before_llm_call transform fire on the same content.
 func TestRedactIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -95,11 +86,9 @@ func TestRedactIsIdempotent(t *testing.T) {
 		"redacted output must no longer trip ContainsSecrets")
 }
 
-// TestRedactPreservesNonMatchingText is the negative-symmetry of
-// [TestContainsSecretsIgnoresHarmlessText]: text without secrets must
-// pass through untouched. Equality (not "Contains marker") catches a
-// regression where a too-broad rule inserts a marker into innocent
-// content.
+// TestRedactPreservesNonMatchingText: text without secrets must pass
+// through untouched (catches a regression where a too-broad rule
+// inserts a marker into innocent content).
 func TestRedactPreservesNonMatchingText(t *testing.T) {
 	t.Parallel()
 
@@ -113,11 +102,9 @@ func TestRedactPreservesNonMatchingText(t *testing.T) {
 	}
 }
 
-// TestRedactHandlesMultipleSecretsInOneInput verifies the
-// FindAllStringSubmatchIndex loop: two distinct secrets in the same
-// string must both be replaced, and nothing in between should leak
-// out. This is the regression test for the rebuild-by-cursor logic
-// in redactWithRule.
+// TestRedactHandlesMultipleSecretsInOneInput: two distinct secrets in
+// the same string must both be replaced, and nothing in between
+// should leak out (regression test for the cursor-rebuild loop).
 func TestRedactHandlesMultipleSecretsInOneInput(t *testing.T) {
 	t.Parallel()
 

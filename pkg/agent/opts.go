@@ -111,13 +111,8 @@ func WithAddEnvironmentInfo(addEnvironmentInfo bool) Opt {
 }
 
 // WithRedactSecrets enables both halves of the redact_secrets
-// feature. When true, the agent's hooks config is augmented (in
-// pkg/hooks/builtins.ApplyAgentDefaults) with the redact_secrets
-// pre_tool_use builtin and the runtime's before_llm_call message
-// transform applies [secretsscan.Redact] to outgoing chat content.
-//
-// Wire it from agent loaders (e.g. teamloader) that read
-// AgentConfig.RedactSecrets out of the YAML.
+// feature: the pre_tool_use builtin (via ApplyAgentDefaults) and the
+// runtime's before_llm_call message transform.
 func WithRedactSecrets(redactSecrets bool) Opt {
 	return func(a *Agent) {
 		a.redactSecrets = redactSecrets

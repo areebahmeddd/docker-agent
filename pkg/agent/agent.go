@@ -86,17 +86,10 @@ func (a *Agent) AddEnvironmentInfo() bool {
 }
 
 // RedactSecrets reports whether the agent has opted into the
-// redact_secrets feature: when true, the runtime auto-injects the
-// redact_secrets pre_tool_use builtin hook (scrubs tool arguments)
-// AND enables the runtime-shipped before_llm_call message transform
-// (scrubs outgoing chat content). Together they bracket every place
-// where a secret could leak to an external party.
-//
-// The flag is read in two places: ApplyAgentDefaults in
-// pkg/hooks/builtins (for the pre_tool_use auto-injection) and
-// LocalRuntime.redactSecretsTransform in pkg/runtime (for the
-// LLM-side gate). Wire it via [WithRedactSecrets] from agent
-// loaders that surface AgentConfig.RedactSecrets.
+// redact_secrets feature. When true, the runtime auto-injects the
+// redact_secrets pre_tool_use builtin (scrubs tool arguments) AND
+// enables the runtime's before_llm_call message transform (scrubs
+// outgoing chat content).
 func (a *Agent) RedactSecrets() bool {
 	return a.redactSecrets
 }

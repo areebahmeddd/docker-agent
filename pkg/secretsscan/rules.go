@@ -23,13 +23,10 @@ const (
 	aws       = `aws_?`
 )
 
-// rule is the source-form of a detection rule: the regular expression
-// to evaluate and the keyword shortlist used as a cheap pre-filter.
-//
-// A rule matches when the input (lower-cased) contains any of
-// keywords AND the (case-sensitive) expression matches. Keywords are
-// compared case-insensitively; the regex itself decides whether case
-// matters for the actual secret span.
+// rule pairs a regular expression with a keyword shortlist. A rule
+// matches when the (lower-cased) input contains any of the keywords
+// AND the (case-sensitive) expression matches; the keyword filter is
+// what keeps detection fast for typical inputs.
 type rule struct {
 	expression string
 	keywords   []string
@@ -37,19 +34,19 @@ type rule struct {
 
 // withoutWordPrefix wraps str in a leading word-boundary so the rule
 // only fires at the start of a token (or after a non-alphanumeric
-// character). The trick of accepting "?P<secret>..." as input —
-// turning it into a named group only after wrapping — keeps the
-// per-rule expressions short and is preserved verbatim from the
-// upstream ruleset for diff hygiene.
+// character). Accepting "?P<secret>..." as input — turning it into a
+// named group only after wrapping — keeps the per-rule expressions
+// short and is preserved verbatim from the upstream ruleset for diff
+// hygiene.
 func withoutWordPrefix(str string) string {
 	return fmt.Sprintf("%s(%s)", startWord, str)
 }
 
-// rules returns the complete catalogue of detection rules. Wrapped in
-// [sync.OnceValue] because the slice is read-only after construction
-// and rebuilding it on every scan would be wasteful.
+// rules is the source-form catalogue, kept verbatim from upstream so
+// future updates apply cleanly. [compiledRules] resolves it into the
+// regex-compiled form actually used at scan time.
 //
-//nolint:funlen // deliberate single-source-of-truth for the ruleset
+//nolint:funlen // single-source-of-truth for the ruleset
 var rules = sync.OnceValue(func() []rule {
 	return []rule{
 		{
@@ -495,53 +492,31 @@ var rules = sync.OnceValue(func() []rule {
 	}
 })
 
-// compiledRule is the resolved form of [rule]: the source regex
-// pre-compiled into a [regexp.Regexp] and the index (or -1) of the
-// "secret" named subgroup. Pre-compiling is critical for the
-// per-message hot path — a fresh [regexp.MustCompile] on every scan
-// dominates the work of [Redact] for long inputs and turns the rule
-// catalogue into an O(rules×len) regex compile every call.
+// compiledRule is [rule] with its regex pre-compiled and the index
+// of the "secret" named subgroup resolved. Pre-compilation is what
+// makes [Redact] cheap on the hot path — without it every scan would
+// rebuild the entire ruleset's worth of regular expressions.
 type compiledRule struct {
 	re        *regexp.Regexp
-	keywords  []string // already lower-cased
+	keywords  []string // lower-cased
 	secretIdx int      // -1 when the rule has no (?P<secret>…) subgroup
 }
 
-// compiledRules returns the resolved ruleset, computed exactly once
-// at first use. Co-located with [rules] so the two-step "source
-// rules → compiled rules" relationship is obvious; the source slice
-// is preserved verbatim for diff parity with the upstream catalogue.
+// compiledRules resolves the source ruleset exactly once.
 var compiledRules = sync.OnceValue(func() []compiledRule {
 	src := rules()
-	out := make([]compiledRule, 0, len(src))
-	for _, r := range src {
+	out := make([]compiledRule, len(src))
+	for i, r := range src {
 		re := regexp.MustCompile(r.expression)
-		idx := -1
-		for i, name := range re.SubexpNames() {
-			if name == "secret" {
-				idx = i
-				break
-			}
-		}
 		kws := make([]string, len(r.keywords))
-		for i, k := range r.keywords {
-			kws[i] = strings.ToLower(k)
+		for j, k := range r.keywords {
+			kws[j] = strings.ToLower(k)
 		}
-		out = append(out, compiledRule{re: re, keywords: kws, secretIdx: idx})
+		out[i] = compiledRule{
+			re:        re,
+			keywords:  kws,
+			secretIdx: re.SubexpIndex("secret"),
+		}
 	}
 	return out
 })
-
-// hasKeyword reports whether lower (already lower-cased by the
-// caller) contains any of the rule's keywords. Cheaper than running
-// the regex first; every detection rule encodes a discriminating
-// keyword, so this filter typically eliminates >99% of inputs from
-// the regex hot path.
-func (c *compiledRule) hasKeyword(lower string) bool {
-	for _, kw := range c.keywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
-}

@@ -16,15 +16,11 @@ import (
 
 // secretGitHubPAT is a syntactically-valid (but obviously fake) GitHub
 // personal access token shape that the secretsscan ruleset detects.
-// Centralising it makes the assertions below easier to read and keeps
-// the secret value out of every individual test body.
 const secretGitHubPAT = "ghp_cxLeRrvbJfmYdUtr70xnNE3Q7Gvli43s19PD"
 
 // newRedactRuntime returns a [LocalRuntime] hosting a single agent
-// with redactSecrets toggled per the flag. It exists so the per-case
-// setup in [TestRedactSecretsTransform_GatedOnAgentFlag] stays a
-// one-liner; tests need a real runtime because the transform looks
-// the agent up via r.team.Agent.
+// with redactSecrets toggled per the flag. Tests need a real runtime
+// because the transform looks the agent up via r.team.Agent.
 func newRedactRuntime(t *testing.T, redact bool) *LocalRuntime {
 	t.Helper()
 	prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
@@ -38,11 +34,9 @@ func newRedactRuntime(t *testing.T, redact bool) *LocalRuntime {
 	return r
 }
 
-// TestRedactSecretsTransform_GatedOnAgentFlag pins the central design
-// invariant: the LLM-side scrubbing only fires for agents that opted
-// in via [agent.WithRedactSecrets] (a.k.a. AgentConfig.RedactSecrets:
-// true). When the flag is off the message slice must reach the
-// provider unchanged — no allocations beyond the slice header copy.
+// TestRedactSecretsTransform_GatedOnAgentFlag: scrubbing only fires
+// for agents that opted in via the redact_secrets flag; flag-off,
+// missing, and nil-input cases must passthrough untouched.
 func TestRedactSecretsTransform_GatedOnAgentFlag(t *testing.T) {
 	t.Parallel()
 
@@ -58,8 +52,7 @@ func TestRedactSecretsTransform_GatedOnAgentFlag(t *testing.T) {
 			&hooks.Input{AgentName: "root"}, dirty)
 		require.NoError(t, err)
 		require.Len(t, got, 1)
-		assert.NotContains(t, got[0].Content, secretGitHubPAT,
-			"flag-on agent must scrub Content")
+		assert.NotContains(t, got[0].Content, secretGitHubPAT)
 		assert.Contains(t, got[0].Content, secretsscan.RedactionMarker)
 	})
 
@@ -69,7 +62,7 @@ func TestRedactSecretsTransform_GatedOnAgentFlag(t *testing.T) {
 		got, err := r.redactSecretsTransform(t.Context(),
 			&hooks.Input{AgentName: "root"}, dirty)
 		require.NoError(t, err)
-		assert.Equal(t, dirty, got, "flag-off agent must passthrough untouched")
+		assert.Equal(t, dirty, got)
 	})
 
 	t.Run("missing agent → passthrough", func(t *testing.T) {
@@ -78,8 +71,7 @@ func TestRedactSecretsTransform_GatedOnAgentFlag(t *testing.T) {
 		got, err := r.redactSecretsTransform(t.Context(),
 			&hooks.Input{AgentName: "no-such-agent"}, dirty)
 		require.NoError(t, err)
-		assert.Equal(t, dirty, got,
-			"unknown agent must not panic or modify the slice")
+		assert.Equal(t, dirty, got)
 	})
 
 	t.Run("nil input → passthrough", func(t *testing.T) {
@@ -91,13 +83,11 @@ func TestRedactSecretsTransform_GatedOnAgentFlag(t *testing.T) {
 	})
 }
 
-// TestRedactSecretsTransform_ScrubsAllSurfaces locks in the field
-// coverage: the transform must scrub Content, MultiContent text
-// parts, AND the JSON-encoded ToolCall arguments — that's the full
-// set of text-bearing fields a future model call can read. A miss
-// on any of these surfaces is a real leak (a previous turn's tool
-// call with a secret in its arguments would otherwise round-trip
-// to the LLM unchanged).
+// TestRedactSecretsTransform_ScrubsAllSurfaces: every text-bearing
+// field a model can read on the wire (Content, MultiContent text,
+// ToolCall.Arguments) must be scrubbed. A miss on any of these is a
+// real leak — e.g. a previous turn's tool call with a secret in its
+// arguments would otherwise round-trip to the next LLM call.
 func TestRedactSecretsTransform_ScrubsAllSurfaces(t *testing.T) {
 	t.Parallel()
 
@@ -125,26 +115,18 @@ func TestRedactSecretsTransform_ScrubsAllSurfaces(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
-	assert.NotContains(t, out[0].Content, secretGitHubPAT, "Content must be scrubbed")
+	assert.NotContains(t, out[0].Content, secretGitHubPAT)
 	require.Len(t, out[0].MultiContent, 2)
-	assert.NotContains(t, out[0].MultiContent[0].Text, secretGitHubPAT,
-		"MultiContent text must be scrubbed")
-	assert.Equal(t, "clean part", out[0].MultiContent[1].Text,
-		"clean parts must remain identity-equal so downstream caches don't churn")
+	assert.NotContains(t, out[0].MultiContent[0].Text, secretGitHubPAT)
+	assert.Equal(t, "clean part", out[0].MultiContent[1].Text, "clean parts pass through")
 	require.Len(t, out[0].ToolCalls, 1)
-	assert.NotContains(t, out[0].ToolCalls[0].Function.Arguments, secretGitHubPAT,
-		"ToolCall.Arguments must be scrubbed")
+	assert.NotContains(t, out[0].ToolCalls[0].Function.Arguments, secretGitHubPAT)
 }
 
-// TestRedactSecretsTransform_PreservesIdentityWhenClean is the
-// negative-symmetry test for the copy-on-write contract: a fully
-// clean conversation must reach the provider as the SAME slice
-// values (the loop allocates a fresh slice header but per-message
-// values are passed by value via the loop, so equality is the
-// observable check). A regression here — e.g. a future "always copy
-// MultiContent" change — would silently double allocations on every
-// LLM call for the 99% case.
-func TestRedactSecretsTransform_PreservesIdentityWhenClean(t *testing.T) {
+// TestRedactSecretsTransform_PreservesCleanContent: a fully clean
+// conversation must reach the provider with values equal to the
+// originals.
+func TestRedactSecretsTransform_PreservesCleanContent(t *testing.T) {
 	t.Parallel()
 
 	r := newRedactRuntime(t, true)
@@ -161,6 +143,36 @@ func TestRedactSecretsTransform_PreservesIdentityWhenClean(t *testing.T) {
 		&hooks.Input{AgentName: "root"}, clean)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
-	assert.Equal(t, clean[0], out[0],
-		"clean messages must reach the provider value-equal")
+	assert.Equal(t, clean[0], out[0])
+}
+
+// TestRedactSecretsTransform_DoesNotMutateInput: scrubbing produces a
+// fresh slice/MultiContent/ToolCalls — the caller's history is left
+// unchanged. Critical because callers (history compactors, cache
+// stores) keep references to the pre-transform values.
+func TestRedactSecretsTransform_DoesNotMutateInput(t *testing.T) {
+	t.Parallel()
+
+	r := newRedactRuntime(t, true)
+
+	in := []chat.Message{{
+		Role:    chat.MessageRoleAssistant,
+		Content: "with " + secretGitHubPAT,
+		MultiContent: []chat.MessagePart{
+			{Type: chat.MessagePartTypeText, Text: "part with " + secretGitHubPAT},
+		},
+		ToolCalls: []tools.ToolCall{{
+			Function: tools.FunctionCall{Arguments: secretGitHubPAT},
+		}},
+	}}
+
+	_, err := r.redactSecretsTransform(t.Context(),
+		&hooks.Input{AgentName: "root"}, in)
+	require.NoError(t, err)
+
+	assert.Contains(t, in[0].Content, secretGitHubPAT, "input.Content must be untouched")
+	assert.Contains(t, in[0].MultiContent[0].Text, secretGitHubPAT,
+		"input.MultiContent must be untouched")
+	assert.Contains(t, in[0].ToolCalls[0].Function.Arguments, secretGitHubPAT,
+		"input.ToolCalls must be untouched")
 }

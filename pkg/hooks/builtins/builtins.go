@@ -84,11 +84,10 @@ type AgentDefaults struct {
 	AddDate            bool
 	AddEnvironmentInfo bool
 	AddPromptFiles     []string
-	// RedactSecrets, when true, auto-injects the redact_secrets
-	// builtin as a pre_tool_use hook. The runtime separately enables
-	// the matching before_llm_call message transform when this flag
-	// is set; the agent flag is therefore the single switch that
-	// covers both leak vectors (tool-args and LLM-input).
+	// RedactSecrets auto-injects the redact_secrets pre_tool_use
+	// builtin. It also enables the runtime's matching before_llm_call
+	// message transform, so this single flag covers both leak vectors
+	// (tool args and outgoing chat content).
 	RedactSecrets bool
 }
 

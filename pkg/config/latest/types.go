@@ -370,12 +370,9 @@ type AgentConfig struct {
 
 	AddDate            bool `json:"add_date,omitempty"`
 	AddEnvironmentInfo bool `json:"add_environment_info,omitempty"`
-	// RedactSecrets, when true, enables both halves of the
-	// redact_secrets feature: the runtime auto-injects the
-	// redact_secrets pre_tool_use builtin (scrubs secrets from tool
-	// arguments) AND attaches its before_llm_call message transform
-	// (scrubs secrets from outgoing chat content). One agent-level
-	// switch covers both leak vectors.
+	// RedactSecrets enables both halves of the redact_secrets feature:
+	// the pre_tool_use builtin (scrubs tool arguments) AND the
+	// before_llm_call message transform (scrubs outgoing chat content).
 	RedactSecrets           bool              `json:"redact_secrets,omitempty"`
 	CodeModeTools           bool              `json:"code_mode_tools,omitempty"`
 	AddDescriptionParameter bool              `json:"add_description_parameter,omitempty"`
