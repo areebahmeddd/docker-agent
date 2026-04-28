@@ -92,7 +92,9 @@ type Store interface {
 	AddMessage(ctx context.Context, sessionID string, msg *Message) (int64, error)
 
 	// UpdateMessage updates an existing message by its ID.
-	// This is used to finalize streaming messages with complete content.
+	// This is called on each streaming delta to keep the persisted message
+	// in sync with the in-progress content, and once more with the final
+	// payload when the message completes.
 	UpdateMessage(ctx context.Context, messageID int64, msg *Message) error
 
 	// AddSubSession creates a sub-session and links it to the parent.
