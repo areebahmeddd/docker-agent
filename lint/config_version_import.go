@@ -42,6 +42,12 @@ func (c *ConfigVersionImport) Check(fset *token.FileSet, file *ast.File) []cop.O
 		return nil
 	}
 
+	// Black-box test files (package <dir>_test) live alongside the package
+	// but are external to it; they're allowed to import what they please.
+	if strings.HasSuffix(file.Name.Name, "_test") {
+		return nil
+	}
+
 	var offenses []cop.Offense
 
 	for _, imp := range file.Imports {
@@ -104,7 +110,7 @@ func (c *ConfigVersionImport) checkLatestImport(fset *token.FileSet, imp *ast.Im
 func extractDirVersion(filename string) (int, bool) {
 	normalized := filepath.ToSlash(filename)
 
-	re := regexp.MustCompile(`/pkg/config/v(\d+)/`)
+	re := regexp.MustCompile(`(?:^|/)pkg/config/v(\d+)/`)
 	m := re.FindStringSubmatch(normalized)
 	if m == nil {
 		return 0, false
@@ -119,5 +125,5 @@ func extractDirVersion(filename string) (int, bool) {
 
 func isLatestDir(filename string) bool {
 	normalized := filepath.ToSlash(filename)
-	return strings.Contains(normalized, "/pkg/config/latest/")
+	return strings.Contains(normalized, "pkg/config/latest/")
 }

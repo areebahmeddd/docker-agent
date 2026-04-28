@@ -14,6 +14,9 @@ import (
 
 func main() {
 	cop.Register(&ConfigVersionImport{})
+	cop.Register(&ConfigPackageName{})
+	cop.Register(&ConfigVersionConstant{})
+	cop.Register(&LatestImportsPredecessor{})
 	cops := cop.All()
 	fmt.Printf("Inspecting Go files with %d cop(s)\n", len(cops))
 
