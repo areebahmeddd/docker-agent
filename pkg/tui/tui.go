@@ -827,6 +827,9 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.ShowToolsDialogMsg:
 		return m.handleShowToolsDialog()
 
+	case messages.ShowToolsetsDialogMsg:
+		return m.handleShowToolsetsDialog()
+
 	case messages.AgentCommandMsg:
 		return m.handleAgentCommand(msg.Command)
 

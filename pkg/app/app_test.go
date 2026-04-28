@@ -28,6 +28,8 @@ func (m *mockRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, erro
 	return nil, nil
 }
 
+func (m *mockRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus { return nil }
+
 func (m *mockRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events chan runtime.Event) {
 }
 func (m *mockRuntime) ResetStartupInfo() {}

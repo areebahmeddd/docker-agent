@@ -373,6 +373,16 @@ func (m *appModel) handleShowToolsDialog() (tea.Model, tea.Cmd) {
 	})
 }
 
+// handleShowToolsetsDialog opens the toolset lifecycle dialog with a
+// snapshot of each toolset's State, last error, and restart count taken
+// at the moment the dialog is opened.
+func (m *appModel) handleShowToolsetsDialog() (tea.Model, tea.Cmd) {
+	statuses := m.application.CurrentAgentToolsetStatuses()
+	return m, core.CmdHandler(dialog.OpenDialogMsg{
+		Model: dialog.NewToolsetsDialog(statuses),
+	})
+}
+
 // --- MCP prompts ---
 
 func (m *appModel) handleShowMCPPromptInput(promptName string, promptInfo any) (tea.Model, tea.Cmd) {

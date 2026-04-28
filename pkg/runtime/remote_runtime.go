@@ -124,6 +124,13 @@ func (r *RemoteRuntime) CurrentAgentTools(_ context.Context) ([]tools.Tool, erro
 	return nil, nil
 }
 
+// CurrentAgentToolsetStatuses is not implemented for remote runtimes; the
+// remote server owns the toolset lifecycle. Returns an empty slice so
+// callers (TUI) can show an explanatory empty state without erroring.
+func (r *RemoteRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
+	return nil
+}
+
 // EmitStartupInfo emits initial agent, team, and toolset information
 func (r *RemoteRuntime) EmitStartupInfo(ctx context.Context, _ *session.Session, events chan Event) {
 	agentName, cfg := r.resolvedAgent(ctx)

@@ -175,6 +175,12 @@ func (a *App) CurrentAgentTools(ctx context.Context) ([]tools.Tool, error) {
 	return a.runtime.CurrentAgentTools(ctx)
 }
 
+// CurrentAgentToolsetStatuses returns lifecycle status for each toolset of
+// the active agent.
+func (a *App) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
+	return a.runtime.CurrentAgentToolsetStatuses()
+}
+
 // CurrentAgentCommands returns the commands for the active agent
 func (a *App) CurrentAgentCommands(ctx context.Context) types.Commands {
 	return a.runtime.CurrentAgentInfo(ctx).Commands

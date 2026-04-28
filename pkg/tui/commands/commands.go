@@ -252,6 +252,17 @@ func builtInSessionCommands() []Item {
 			},
 		},
 		{
+			ID:           "session.toolsets",
+			Label:        "Toolsets",
+			SlashCommand: "/toolsets",
+			Description:  "Show toolset lifecycle status (state, restarts, last error)",
+			Category:     "Session",
+			Immediate:    true,
+			Execute: func(string) tea.Cmd {
+				return core.CmdHandler(messages.ShowToolsetsDialogMsg{})
+			},
+		},
+		{
 			ID:           "session.title",
 			Label:        "Title",
 			SlashCommand: "/title",

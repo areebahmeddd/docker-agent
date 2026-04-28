@@ -388,6 +388,12 @@ func (t *LSPTool) Stop(ctx context.Context) error {
 	return t.handler.supervisor.Stop(ctx)
 }
 
+// State returns a snapshot of the underlying supervisor's lifecycle state,
+// suitable for the /toolsets dialog and lifecycle log messages.
+func (t *LSPTool) State() lifecycle.StateInfo {
+	return t.handler.supervisor.State()
+}
+
 func (t *LSPTool) Instructions() string {
 	return `# LSP Code Intelligence Tools
 

@@ -33,6 +33,7 @@ func (m *mockRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo
 }
 func (m *mockRuntime) SetCurrentAgent(string) error                                          { return nil }
 func (m *mockRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error)               { return nil, nil }
+func (m *mockRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus                    { return nil }
 func (m *mockRuntime) EmitStartupInfo(context.Context, *session.Session, chan runtime.Event) {}
 func (m *mockRuntime) ResetStartupInfo()                                                     {}
 func (m *mockRuntime) Run(context.Context, *session.Session) ([]session.Message, error) {

@@ -24,4 +24,8 @@ type (
 
 	// ShowToolsDialogMsg shows the tools dialog.
 	ShowToolsDialogMsg struct{}
+
+	// ShowToolsetsDialogMsg shows the toolset lifecycle dialog (the
+	// supervisor-aware view: state, restarts, last error per toolset).
+	ShowToolsetsDialogMsg struct{}
 )

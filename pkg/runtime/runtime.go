@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin"
 	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
+	"github.com/docker/docker-agent/pkg/tools/lifecycle"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
@@ -41,6 +42,11 @@ type Runtime interface {
 	SetCurrentAgent(agentName string) error
 	// CurrentAgentTools returns the tools for the active agent
 	CurrentAgentTools(ctx context.Context) ([]tools.Tool, error)
+	// CurrentAgentToolsetStatuses returns lifecycle status for each toolset of
+	// the active agent (name, description, state, last error, restart count).
+	// Used by the /toolsets dialog. Best-effort: toolsets that don't expose
+	// state appear with State == StateStopped/Ready as appropriate.
+	CurrentAgentToolsetStatuses() []tools.ToolsetStatus
 	// EmitStartupInfo emits initial agent, team, and toolset information for immediate display.
 	// When sess is non-nil and contains token data, a TokenUsageEvent is also emitted
 	// so the UI can display context usage percentage on session restore.
@@ -506,6 +512,67 @@ func (r *LocalRuntime) CurrentAgentCommands(context.Context) types.Commands {
 func (r *LocalRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, error) {
 	a := r.CurrentAgent()
 	return a.Tools(ctx)
+}
+
+// CurrentAgentToolsetStatuses returns one ToolsetStatus per toolset of the
+// active agent. The list is in declaration order. Toolsets that wrap
+// another (StartableToolSet, LSPMultiplexer) are unwrapped so the inner
+// supervisor's state is visible.
+func (r *LocalRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
+	a := r.CurrentAgent()
+	if a == nil {
+		return nil
+	}
+	toolSets := a.ToolSets()
+	statuses := make([]tools.ToolsetStatus, 0, len(toolSets))
+	for _, ts := range toolSets {
+		statuses = append(statuses, toolsetStatusFor(ts))
+	}
+	return statuses
+}
+
+// toolsetStatusFor builds a ToolsetStatus for ts, unwrapping StartableToolSet
+// so the inner Statable/Describer is visible.
+func toolsetStatusFor(ts tools.ToolSet) tools.ToolsetStatus {
+	inner := ts
+	if s, ok := ts.(*tools.StartableToolSet); ok {
+		inner = s.ToolSet
+	}
+	status := tools.ToolsetStatus{
+		Description: tools.DescribeToolSet(ts),
+	}
+	if statable, ok := tools.As[tools.Statable](inner); ok {
+		info := statable.State()
+		status.State = info.State
+		status.LastError = info.LastError
+		status.RestartCount = info.RestartCount
+	} else {
+		// Toolsets without a supervisor are considered ready by default;
+		// the StartableToolSet wrapper would have surfaced an error
+		// earlier if Start failed.
+		status.State = lifecycleStateForUnsupervised(ts)
+	}
+	status.Name = nameFor(ts, status.Description)
+	return status
+}
+
+func lifecycleStateForUnsupervised(ts tools.ToolSet) lifecycle.State {
+	if s, ok := ts.(*tools.StartableToolSet); ok && !s.IsStarted() {
+		return lifecycle.StateStopped
+	}
+	return lifecycle.StateReady
+}
+
+// nameFor picks a stable, user-visible name for a toolset. When the
+// toolset implements a Name() method (some MCP toolsets do via their
+// underlying type) we use that; otherwise the description is reused.
+func nameFor(ts tools.ToolSet, fallback string) string {
+	if n, ok := ts.(interface{ Name() string }); ok {
+		if s := n.Name(); s != "" {
+			return s
+		}
+	}
+	return fallback
 }
 
 // CurrentMCPPrompts returns the available MCP prompts from all active MCP toolsets
