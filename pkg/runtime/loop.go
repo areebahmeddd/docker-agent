@@ -156,8 +156,9 @@ func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.S
 func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan Event {
 	slog.Debug("Starting runtime stream", "agent", r.CurrentAgentName(), "session_id", sess.ID)
 	events := make(chan Event, defaultEventChannelCapacity)
+
 	go r.runStreamLoop(ctx, sess, events)
-	return events
+	return r.observe(ctx, sess, events)
 }
 
 // runStreamLoop is the body of RunStream. Pulled out of the anonymous
