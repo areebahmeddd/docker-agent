@@ -66,12 +66,16 @@ func TestToolsetName_PrefersConfiguredName(t *testing.T) {
 // of unnamed MCPs all rendering as the YAML type "mcp" in the /tools
 // dialog: when no YAML name is set, Name() returns the description so
 // every toolset still has a self-identifying label.
+//
+// Only the stdio path is exercised here. The fallback ("if name set,
+// return it; otherwise return description") is the same single branch
+// for every transport, and constructing a remote toolset would build a
+// real OAuth-aware HTTP client backed by KeyringTokenStore — enough to
+// pop the macOS keychain permission dialog on developer machines that
+// have a real docker-agent-oauth keychain item from a prior login.
 func TestToolsetName_FallsBackToDescription(t *testing.T) {
 	t.Parallel()
 
 	stdio := NewToolsetCommand("", "python", nil, nil, "")
 	assert.Check(t, is.Equal(stdio.Name(), "mcp(stdio cmd=python)"))
-
-	remote := NewRemoteToolset("", "https://api.github.com/mcp", "streamable", nil, nil)
-	assert.Check(t, is.Equal(remote.Name(), "mcp(remote host=api.github.com transport=streamable)"))
 }
