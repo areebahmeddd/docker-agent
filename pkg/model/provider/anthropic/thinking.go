@@ -140,6 +140,12 @@ func (c *Client) coerceAdaptiveThinking() *latest.ThinkingBudget {
 	if _, ok := anthropicThinkingEffort(budget); ok {
 		return budget // already adaptive or effort-based.
 	}
+	// Only coerce a real, positive token budget. Disabled/zero/negative
+	// budgets are passed through so downstream code keeps treating them as
+	// "thinking off" instead of silently enabling adaptive thinking.
+	if budget.IsDisabled() || budget.Tokens <= 0 {
+		return budget
+	}
 	if !requiresAdaptiveThinking(c.ModelConfig.Model) {
 		return budget
 	}

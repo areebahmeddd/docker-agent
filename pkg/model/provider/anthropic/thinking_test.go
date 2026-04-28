@@ -480,6 +480,22 @@ func TestCoerceAdaptiveThinking(t *testing.T) {
 		c := clientWithModel("claude-opus-4-7", in, nil)
 		assert.Same(t, in, c.coerceAdaptiveThinking())
 	})
+
+	// Disabled or non-positive token budgets must NOT be silently coerced to
+	// adaptive thinking on Opus 4.6/4.7 — the user has either explicitly
+	// disabled thinking or supplied an invalid value.
+	disabledCases := map[string]*latest.ThinkingBudget{
+		"thinking_budget: 0":            {Tokens: 0},
+		"thinking_budget: none":         {Effort: "none"},
+		"effort=none with stray tokens": {Effort: "none", Tokens: 99},
+		"negative tokens":               {Tokens: -5},
+	}
+	for name, in := range disabledCases {
+		t.Run("opus-4-7 "+name+" passes through", func(t *testing.T) {
+			c := clientWithModel("claude-opus-4-7", in, nil)
+			assert.Same(t, in, c.coerceAdaptiveThinking())
+		})
+	}
 }
 
 func TestInterleavedThinkingEnabled(t *testing.T) {
