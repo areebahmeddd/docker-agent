@@ -400,20 +400,15 @@ func (t *LSPTool) State() lifecycle.StateInfo {
 	return t.handler.supervisor.State()
 }
 
-// Restart forces the supervisor to terminate the current LSP session and
-// reconnect.
-//
-// It is safe to call regardless of state: a Failed or Stopped (terminal)
-// supervisor is brought back via Start; a Ready/Restarting supervisor is
-// nudged via RestartAndWait. Blocks until the new session reaches Ready,
-// ctx is cancelled, or 35s elapses (matching the MCP toolset).
+// Restart brings the LSP server back up regardless of state. Failed or
+// Stopped supervisors are recovered via Start; otherwise the current
+// session is dropped and we wait for the supervisor to reconnect.
+// Blocks up to 35s (matching the MCP toolset).
 func (t *LSPTool) Restart(ctx context.Context) error {
-	switch t.handler.supervisor.State().State {
-	case lifecycle.StateFailed, lifecycle.StateStopped:
+	if t.handler.supervisor.State().State.IsTerminal() {
 		return t.handler.supervisor.Start(ctx)
-	default:
-		return t.handler.supervisor.RestartAndWait(ctx, 35*time.Second)
 	}
+	return t.handler.supervisor.RestartAndWait(ctx, 35*time.Second)
 }
 
 func (t *LSPTool) Instructions() string {

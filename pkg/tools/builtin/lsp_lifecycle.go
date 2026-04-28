@@ -16,27 +16,67 @@ import (
 )
 
 // lspConnector adapts the LSP server lifecycle to lifecycle.Connector. It
-// spawns the LSP server process, runs the initialize/initialized
-// handshake, and returns an lspSession that the supervisor can Wait on
-// and Close.
-type lspConnector struct {
-	h *lspHandler
-}
+// spawns the server process, runs the initialize/initialized handshake,
+// and returns an lspSession the supervisor can Wait on and Close.
+type lspConnector struct{ h *lspHandler }
 
 // Connect spawns the LSP server, performs the LSP handshake, and returns
-// a Session bound to the running process.
-//
-// On success the active process state (cmd, stdin, stdout, capabilities,
-// serverInfo) is published on h under h.mu so that per-request methods
-// can use them without going through the supervisor.
+// a Session. On success the active session state (cmd, stdin, stdout,
+// capabilities, serverInfo) is published on h under h.mu so per-request
+// methods can use them without going through the supervisor.
 func (c *lspConnector) Connect(ctx context.Context) (lifecycle.Session, error) {
 	h := c.h
-
 	slog.Debug("Starting LSP server", "command", h.command, "args", h.args)
 
+	p, err := spawnLSPProcess(h)
+	if err != nil {
+		return nil, err
+	}
+
+	h.publishSession(p.cmd, p.stdin, p.stdout, p.cancel)
+
+	if err := h.runHandshake(ctx, p.stdin); err != nil {
+		h.clearSession()
+		_ = p.stdin.Close()
+		p.cancel()
+		_ = p.cmd.Wait()
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, lifecycle.Classify(err)
+	}
+
+	slog.Debug("LSP server initialized", "command", h.command)
+	h.fireToolsChanged()
+
+	return &lspSession{
+		h:             h,
+		processCancel: p.cancel,
+		stdin:         p.stdin,
+		cmd:           p.cmd,
+		waitDone:      make(chan struct{}),
+	}, nil
+}
+
+// lspProcess is the cohesive set of resources produced by spawnLSPProcess.
+// It does not store a Context (which would trip the containedctx lint);
+// the process-bound context exists only inside spawnLSPProcess where it
+// is consumed by the stderr drain goroutine before the function returns.
+type lspProcess struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
+	cancel context.CancelFunc // terminates the process and the stderr drain.
+}
+
+// spawnLSPProcess starts the LSP server process, wires up stdio, and
+// kicks off a stderr-drain goroutine bound to the process lifetime.
+// Errors are mapped to typed lifecycle errors so the supervisor can
+// apply the right policy.
+func spawnLSPProcess(h *lspHandler) (*lspProcess, error) {
 	// The process must outlive the caller's request context (which is
-	// often cancelled when an HTTP/agent turn ends). The supervisor calls
-	// Close() to shut it down on Stop or restart.
+	// often cancelled when an HTTP/agent turn ends). The supervisor
+	// calls Close to shut it down on Stop or restart.
 	processCtx, processCancel := context.WithCancel(context.Background())
 
 	cmd := exec.CommandContext(processCtx, h.command, h.args...)
@@ -54,46 +94,34 @@ func (c *lspConnector) Connect(ctx context.Context) (lifecycle.Session, error) {
 		processCancel()
 		return nil, fmt.Errorf("%w: stdout pipe: %w", lifecycle.ErrServerUnavailable, err)
 	}
-
 	stderrBuf := &concurrent.Buffer{}
 	cmd.Stderr = stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		processCancel()
-		// exec.ErrNotFound / fs.PathError → unavailable, supervisor backs off.
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("%w: %w", lifecycle.ErrServerUnavailable, err)
 		}
 		return nil, fmt.Errorf("failed to start LSP server: %w", err)
 	}
 
-	bufStdout := bufio.NewReader(stdout)
-
-	// Publish the active session state under h.mu so per-request methods
-	// see consistent fields (cmd / stdin / stdout, etc).
-	h.mu.Lock()
-	h.cmd = cmd
-	h.cancel = processCancel
-	h.stdin = stdin
-	h.stdout = bufStdout
-	h.initialized.Store(false)
-	// Reset open-files state: a fresh server has no knowledge of files
-	// the previous one had open.
-	h.openFilesMu.Lock()
-	h.openFiles = make(map[string]int)
-	h.openFilesMu.Unlock()
-	h.capabilities = nil
-	h.serverInfo = nil
-	h.mu.Unlock()
-
-	// Drain stderr in a separate goroutine; exits when processCtx is done.
+	// Drain stderr until the process context is cancelled. Started here
+	// so the process-bound ctx never leaks out of this function.
 	go h.readNotifications(processCtx, stderrBuf)
 
-	// Honour ctx cancellation during the handshake by closing stdin if
-	// the caller goes away. The supervisor's watcher uses a detached ctx
-	// for restarts, so cancellation here means the user pressed Ctrl-C
-	// during the initial Start.
+	return &lspProcess{
+		cmd:    cmd,
+		stdin:  stdin,
+		stdout: bufio.NewReader(stdout),
+		cancel: processCancel,
+	}, nil
+}
+
+// runHandshake performs the LSP initialize/initialized exchange under
+// h.mu. Honours ctx cancellation by closing stdin if the caller goes
+// away during the handshake (e.g. user pressed Ctrl-C during Start).
+func (h *lspHandler) runHandshake(ctx context.Context, stdin io.WriteCloser) error {
 	handshakeDone := make(chan struct{})
 	go func() {
 		select {
@@ -102,117 +130,105 @@ func (c *lspConnector) Connect(ctx context.Context) (lifecycle.Session, error) {
 		case <-handshakeDone:
 		}
 	}()
+	defer close(handshakeDone)
 
-	// Run initialize+initialized under h.mu so that no concurrent
-	// per-request method tries to send to stdin until we are ready.
 	h.mu.Lock()
-	err = h.initializeLocked()
-	h.mu.Unlock()
-	close(handshakeDone)
+	defer h.mu.Unlock()
+	return h.initializeLocked()
+}
 
-	if err != nil {
-		// Tear down the partially-started session, including the handler
-		// fields we just published so a subsequent Start sees a clean slate.
-		h.mu.Lock()
-		h.cmd = nil
-		h.stdin = nil
-		h.stdout = nil
-		h.cancel = nil
-		h.initialized.Store(false)
-		h.mu.Unlock()
-		_ = stdin.Close()
-		processCancel()
-		_ = cmd.Wait()
-		// Map handshake failures to typed errors so the supervisor's
-		// policy can react (init notification → retryable, ctx cancel →
-		// abort).
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
-		}
-		return nil, lifecycle.Classify(err)
-	}
+// publishSession atomically writes session state to the handler under
+// h.mu so per-request methods see consistent fields. Open-files state is
+// reset because a fresh server has no knowledge of previously-opened
+// files.
+func (h *lspHandler) publishSession(cmd *exec.Cmd, stdin io.WriteCloser, stdout *bufio.Reader, cancel context.CancelFunc) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cmd = cmd
+	h.cancel = cancel
+	h.stdin = stdin
+	h.stdout = stdout
+	h.initialized.Store(false)
+	h.capabilities = nil
+	h.serverInfo = nil
+	h.openFilesMu.Lock()
+	h.openFiles = make(map[string]int)
+	h.openFilesMu.Unlock()
+}
 
-	slog.Debug("LSP server initialized", "command", h.command)
+// clearSession is the inverse of publishSession: it nils all session
+// state on h. Called by Connect on handshake failure and by Close on
+// teardown.
+func (h *lspHandler) clearSession() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cmd = nil
+	h.cancel = nil
+	h.stdin = nil
+	h.stdout = nil
+	h.initialized.Store(false)
+	h.capabilities = nil
+	h.serverInfo = nil
+	h.openFilesMu.Lock()
+	h.openFiles = make(map[string]int)
+	h.openFilesMu.Unlock()
+}
 
-	// Notify the runtime that the tool catalogue may have changed: the
-	// capabilities we just received gate which lsp_* tools are visible.
-	// This fires on both initial connect and reconnect, so a model that
-	// was given the full catalogue before init now sees the refined one.
+// fireToolsChanged invokes the registered tools-changed handler if any,
+// outside h.mu so the runtime is free to call back into the toolset.
+func (h *lspHandler) fireToolsChanged() {
 	h.mu.Lock()
 	handler := h.toolsChangedHandler
 	h.mu.Unlock()
 	if handler != nil {
 		handler()
 	}
-
-	return &lspSession{
-		h:             h,
-		processCancel: processCancel,
-		stdin:         stdin,
-		cmd:           cmd,
-		waitDone:      make(chan struct{}),
-	}, nil
 }
 
-// lspSession is a single live LSP server session. Its Wait blocks on the
-// process exiting; its Close performs the LSP shutdown handshake and
-// terminates the process.
-//
-// cmd.Wait must be called exactly once per *exec.Cmd; both Wait and Close
-// can race to be the caller. We solve this with a shared sync.Once that
-// runs the wait body in a single goroutine and exposes the result via the
-// pre-allocated waitDone channel. Both Wait and Close block on waitDone
-// to observe the process exit.
+// lspSession is a single live LSP server session. cmd.Wait must be called
+// exactly once per *exec.Cmd; both Wait and Close can race to be the
+// caller. A shared sync.Once runs the wait body in one goroutine and
+// exposes the result via the pre-allocated waitDone channel; both Wait
+// and Close block on waitDone to observe the process exit.
 type lspSession struct {
 	h             *lspHandler
 	processCancel context.CancelFunc
 	stdin         io.WriteCloser
-	cmd           *exec.Cmd // captured at construction; never nilled by handler teardown
+	cmd           *exec.Cmd // captured at construction; never nilled by handler teardown.
 
 	mu     sync.Mutex
 	closed bool
 
 	waitOnce sync.Once
 	waitErr  error
-	waitDone chan struct{} // pre-allocated in Connect; closed by the wait goroutine
+	waitDone chan struct{} // pre-allocated in Connect; closed by the wait goroutine.
 }
 
-// Wait blocks until the LSP process exits and returns the exit status,
-// mapping clean exits and signal-induced exits to nil/typed errors as
-// the supervisor expects.
-//
-// Wait is safe to call concurrently with Close: the underlying cmd.Wait
-// runs at most once, sequenced by waitOnce, and both callers block on
-// the same waitDone channel.
+// Wait blocks until the LSP process exits. Safe to call concurrently with
+// Close.
 func (s *lspSession) Wait() error {
-	s.startWaitOnce()
+	s.startWait()
 	<-s.waitDone
 	return s.waitErr
 }
 
-// startWaitOnce launches a single goroutine to drive cmd.Wait and record
-// the result. It is called by both Wait (the supervisor's normal path)
-// and Close (so a Close-initiated shutdown still records a clean exit
-// even if Wait was never called).
-func (s *lspSession) startWaitOnce() {
+// startWait launches a single goroutine to drive cmd.Wait. Idempotent
+// via sync.Once; both Wait and Close call it.
+func (s *lspSession) startWait() {
 	s.waitOnce.Do(func() {
 		go func() {
 			defer close(s.waitDone)
-			if s.cmd == nil {
-				return
-			}
 			err := s.cmd.Wait()
 			if err == nil {
 				return
 			}
 			// An *exec.ExitError after a signal-induced shutdown
-			// (Close→cancel) is expected; treat it as a clean exit
-			// so the supervisor only restarts on actual crashes.
+			// (Close → cancel) is expected; treat it as a clean exit
+			// so the supervisor only restarts on real crashes.
 			s.mu.Lock()
 			closed := s.closed
 			s.mu.Unlock()
 			if closed {
-				s.waitErr = nil
 				return
 			}
 			s.waitErr = fmt.Errorf("%w: %w", lifecycle.ErrServerCrashed, err)
@@ -221,7 +237,7 @@ func (s *lspSession) startWaitOnce() {
 }
 
 // Close performs the LSP shutdown handshake and tears down the process.
-// It is idempotent and safe to call concurrently with an in-flight Wait.
+// Idempotent; safe to call concurrently with Wait.
 func (s *lspSession) Close(ctx context.Context) error {
 	s.mu.Lock()
 	if s.closed {
@@ -233,37 +249,23 @@ func (s *lspSession) Close(ctx context.Context) error {
 
 	slog.Debug("Stopping LSP server")
 
-	h := s.h
-	h.mu.Lock()
-	if h.initialized.Load() {
-		// Best-effort shutdown handshake; ignore errors because the
-		// process is going away regardless.
-		_, _ = h.sendRequestLocked("shutdown", nil)
-		_ = h.sendNotificationLocked("exit", nil)
+	// Best-effort shutdown handshake; the process is going away regardless.
+	s.h.mu.Lock()
+	if s.h.initialized.Load() {
+		_, _ = s.h.sendRequestLocked("shutdown", nil)
+		_ = s.h.sendNotificationLocked("exit", nil)
 	}
-	h.cancel = nil
-	h.cmd = nil
-	h.stdin = nil
-	h.stdout = nil
-	h.initialized.Store(false)
-	h.openFilesMu.Lock()
-	h.openFiles = make(map[string]int)
-	h.openFilesMu.Unlock()
-	h.capabilities = nil
-	h.serverInfo = nil
-	h.mu.Unlock()
+	s.h.mu.Unlock()
 
+	s.h.clearSession()
 	_ = s.stdin.Close()
 	s.processCancel()
 
-	// Ensure cmd.Wait runs exactly once — either because the supervisor
-	// already started it via lspSession.Wait, or because we are the only
-	// caller. waitDone is the synchronisation point; blocking on it
-	// guarantees Close returns only after the OS process is reaped.
-	s.startWaitOnce()
+	// Block until cmd.Wait completes (in startWait's goroutine) so Close
+	// returns only after the OS process is reaped.
+	s.startWait()
 	<-s.waitDone
 
-	// Honour cancellation: a context-cancelled close is not an error.
 	if ctx.Err() != nil {
 		return nil
 	}

@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -9,45 +10,28 @@ import (
 	"strings"
 )
 
-// Classify maps an underlying error from a transport (stdio MCP, remote MCP,
-// LSP) to one of the typed sentinels in this package.
+// Classify maps a transport-level error (stdio MCP, remote MCP, LSP) to one
+// of the typed sentinels in this package, wrapping it so errors.Is matches
+// both the sentinel and the original error.
 //
-// The returned error wraps the original via fmt.Errorf("%w: %w", sentinel,
-// err) so that:
-//   - errors.Is(returned, sentinel) is true,
-//   - errors.Is(returned, original) is true,
-//   - the original message is preserved for logs.
+// Already-classified errors (any wrapping a sentinel via errors.Is) are
+// returned unchanged. Unknown errors are returned as-is so callers can
+// decide their own policy.
 //
-// Classify returns nil when err is nil. When err matches no known pattern it
-// is returned unchanged so callers can decide policy (typically: treat as
-// transport failure).
-//
-// Classify is conservative: it only recognizes patterns we have evidence of
-// in the wild (the ones previously matched by the various ad-hoc helpers in
-// pkg/tools/mcp). Substring matching is kept for messages emitted by
-// upstream SDKs that wrap their errors with %v (dropping the chain).
+// Substring matching is used as a last resort because some upstream SDKs
+// wrap their errors with %v (which drops the chain).
 func Classify(err error) error {
 	if err == nil {
 		return nil
 	}
-
-	switch {
-	case errors.Is(err, ErrServerUnavailable),
-		errors.Is(err, ErrServerCrashed),
-		errors.Is(err, ErrInitTimeout),
-		errors.Is(err, ErrInitNotification),
-		errors.Is(err, ErrCapabilityMissing),
-		errors.Is(err, ErrAuthRequired),
-		errors.Is(err, ErrSessionMissing),
-		errors.Is(err, ErrTransport):
-		// Already classified.
+	if isClassified(err) {
 		return err
 	}
 
-	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
-		return wrap(ErrServerUnavailable, err)
-	}
-	if errors.Is(err, io.EOF) {
+	switch {
+	case errors.Is(err, exec.ErrNotFound),
+		errors.Is(err, os.ErrNotExist),
+		errors.Is(err, io.EOF):
 		return wrap(ErrServerUnavailable, err)
 	}
 
@@ -56,69 +40,67 @@ func Classify(err error) error {
 		return wrap(ErrTransport, err)
 	}
 
-	msg := err.Error()
-	lower := strings.ToLower(msg)
-
-	if strings.Contains(lower, "failed to send initialized notification") {
-		return wrap(ErrInitNotification, err)
-	}
-
-	if strings.Contains(lower, "session missing") || strings.Contains(lower, "session not found") {
-		return wrap(ErrSessionMissing, err)
-	}
-
-	if strings.Contains(lower, "connection reset") ||
-		strings.Contains(lower, "connection refused") ||
-		strings.Contains(lower, "broken pipe") ||
-		strings.Contains(msg, "EOF") {
-		return wrap(ErrTransport, err)
-	}
-
-	return err
+	return classifyByMessage(err)
 }
 
-// IsTransient reports whether err is one of the sentinel errors that the
-// supervisor should retry on. Permanent failures (capability missing,
-// auth required) return false.
-func IsTransient(err error) bool {
-	switch {
-	case errors.Is(err, ErrTransport),
-		errors.Is(err, ErrServerUnavailable),
-		errors.Is(err, ErrServerCrashed),
-		errors.Is(err, ErrInitTimeout),
-		errors.Is(err, ErrInitNotification),
-		errors.Is(err, ErrSessionMissing):
-		return true
+// isClassified reports whether err already wraps one of the package
+// sentinels. Used to make Classify idempotent.
+func isClassified(err error) bool {
+	for _, s := range []error{
+		ErrServerUnavailable, ErrServerCrashed, ErrInitTimeout,
+		ErrInitNotification, ErrCapabilityMissing, ErrAuthRequired,
+		ErrSessionMissing, ErrTransport,
+	} {
+		if errors.Is(err, s) {
+			return true
+		}
 	}
 	return false
 }
 
-// IsPermanent reports whether err is a sentinel that the supervisor should
-// NOT retry on. The current set is { ErrCapabilityMissing, ErrAuthRequired }.
+// classifyByMessage matches well-known substrings emitted by upstream SDKs
+// that wrap errors with %v (dropping the chain). Returns err unchanged
+// when no pattern matches.
+func classifyByMessage(err error) error {
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+
+	switch {
+	case strings.Contains(lower, "failed to send initialized notification"):
+		return wrap(ErrInitNotification, err)
+	case strings.Contains(lower, "session missing"),
+		strings.Contains(lower, "session not found"):
+		return wrap(ErrSessionMissing, err)
+	case strings.Contains(lower, "connection reset"),
+		strings.Contains(lower, "connection refused"),
+		strings.Contains(lower, "broken pipe"),
+		strings.Contains(msg, "EOF"):
+		return wrap(ErrTransport, err)
+	}
+	return err
+}
+
+// IsTransient reports whether err wraps a sentinel that warrants a retry.
+func IsTransient(err error) bool {
+	for _, s := range []error{
+		ErrTransport, ErrServerUnavailable, ErrServerCrashed,
+		ErrInitTimeout, ErrInitNotification, ErrSessionMissing,
+	} {
+		if errors.Is(err, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPermanent reports whether err wraps a sentinel that must NOT be retried
+// (currently ErrCapabilityMissing and ErrAuthRequired).
 func IsPermanent(err error) bool {
 	return errors.Is(err, ErrCapabilityMissing) || errors.Is(err, ErrAuthRequired)
 }
 
-// wrap returns an error that satisfies errors.Is for both sentinel and
-// underlying.
+// wrap returns an error satisfying errors.Is for both sentinel and
+// underlying, using Go 1.20+ multi-%w support.
 func wrap(sentinel, underlying error) error {
-	// fmt.Errorf("%w: %w", a, b) produces an error whose Unwrap() returns
-	// []error{a, b}, which errors.Is walks.
-	return &classified{sentinel: sentinel, err: underlying}
-}
-
-// classified is a small error type that wraps an underlying error with a
-// classification sentinel. It implements multi-target Unwrap so errors.Is
-// matches both.
-type classified struct {
-	sentinel error
-	err      error
-}
-
-func (c *classified) Error() string {
-	return c.sentinel.Error() + ": " + c.err.Error()
-}
-
-func (c *classified) Unwrap() []error {
-	return []error{c.sentinel, c.err}
+	return fmt.Errorf("%w: %w", sentinel, underlying)
 }

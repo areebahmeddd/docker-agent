@@ -544,7 +544,7 @@ func (r *LocalRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
 // timeout elapses.
 //
 // Returns an error when:
-//   - no toolset matches name (matches use the same logic as the
+//   - no toolset matches name (matching uses the same logic as the
 //     /toolsets dialog: the toolset's Name() if any, otherwise its
 //     description),
 //   - the toolset is not supervisor-backed (no Restartable capability),
@@ -556,14 +556,10 @@ func (r *LocalRuntime) RestartToolset(ctx context.Context, name string) error {
 		return errors.New("no active agent")
 	}
 	for _, ts := range a.ToolSets() {
-		inner := ts
-		if s, ok := ts.(*tools.StartableToolSet); ok {
-			inner = s.ToolSet
-		}
 		if nameFor(ts, tools.DescribeToolSet(ts)) != name {
 			continue
 		}
-		restartable, ok := tools.As[tools.Restartable](inner)
+		restartable, ok := tools.As[tools.Restartable](ts)
 		if !ok {
 			return fmt.Errorf("toolset %q does not support restart", name)
 		}
@@ -572,17 +568,13 @@ func (r *LocalRuntime) RestartToolset(ctx context.Context, name string) error {
 	return fmt.Errorf("toolset %q not found", name)
 }
 
-// toolsetStatusFor builds a ToolsetStatus for ts, unwrapping StartableToolSet
-// so the inner Statable/Describer is visible.
+// toolsetStatusFor builds a ToolsetStatus for ts. tools.As walks the
+// wrapper chain so Statable/Describer can live anywhere in the stack.
 func toolsetStatusFor(ts tools.ToolSet) tools.ToolsetStatus {
-	inner := ts
-	if s, ok := ts.(*tools.StartableToolSet); ok {
-		inner = s.ToolSet
-	}
 	status := tools.ToolsetStatus{
 		Description: tools.DescribeToolSet(ts),
 	}
-	if statable, ok := tools.As[tools.Statable](inner); ok {
+	if statable, ok := tools.As[tools.Statable](ts); ok {
 		info := statable.State()
 		status.State = info.State
 		status.LastError = info.LastError

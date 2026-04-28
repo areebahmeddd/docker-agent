@@ -219,30 +219,19 @@ func (ts *Toolset) State() lifecycle.StateInfo {
 	return ts.supervisor.State()
 }
 
-// Restart forces the supervisor to drop the current MCP session and
-// reconnect, blocking until either the new session reaches Ready or
-// sessionMissingRetryTimeout elapses.
-//
-// It is safe to call regardless of state: a Failed or Stopped (terminal)
-// supervisor is brought back via Start; a Ready/Restarting supervisor is
-// nudged via RestartAndWait. Stop'd supervisors stay Stopped (Stop is
-// permanent by contract).
+// Restart brings the toolset back up regardless of state. Failed or
+// Stopped supervisors are recovered via Start (RestartAndWait would
+// return immediately because `done` is closed). Otherwise the current
+// session is dropped and we wait for the supervisor to reconnect, up to
+// sessionMissingRetryTimeout.
 func (ts *Toolset) Restart(ctx context.Context) error {
 	if ts.supervisor == nil {
 		return errors.New("toolset has no supervisor: must be created via NewToolsetCommand or NewRemoteToolset")
 	}
-	switch ts.supervisor.State().State {
-	case lifecycle.StateFailed:
-		// Terminal-but-recoverable: the supervisor exhausted its restart
-		// budget. RestartAndWait would return immediately because `done`
-		// is closed; we want a fresh Connect attempt instead.
+	if ts.supervisor.State().State.IsTerminal() {
 		return ts.supervisor.Start(ctx)
-	case lifecycle.StateStopped:
-		// Initial state or post-failed-Start: bring it up.
-		return ts.supervisor.Start(ctx)
-	default:
-		return ts.supervisor.RestartAndWait(ctx, sessionMissingRetryTimeout)
 	}
+	return ts.supervisor.RestartAndWait(ctx, sessionMissingRetryTimeout)
 }
 
 // buildStdioDescription produces a user-visible description for a stdio MCP toolset.
@@ -279,10 +268,7 @@ func (ts *Toolset) Stop(ctx context.Context) error {
 	if ts.supervisor == nil {
 		return nil
 	}
-	if err := ts.supervisor.Stop(ctx); err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
+	if err := ts.supervisor.Stop(ctx); err != nil && ctx.Err() == nil {
 		slog.Error("Failed to stop MCP toolset", "server", ts.logID, "error", err)
 		return err
 	}
