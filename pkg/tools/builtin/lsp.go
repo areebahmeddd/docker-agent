@@ -70,6 +70,12 @@ type lspHandler struct {
 	// it via ensureInitialized to lazy-start on first use.
 	supervisor *lifecycle.Supervisor
 
+	// toolsChangedHandler is called after the supervisor's Connect has
+	// populated h.capabilities, so the runtime can re-fetch the (now
+	// capability-filtered) tool list. nil until SetToolsChangedHandler is
+	// called.
+	toolsChangedHandler func()
+
 	// Configuration
 	command    string
 	args       []string
@@ -445,6 +451,40 @@ func lspTool(name, title, description string, readOnly bool, params any, handler
 
 func (t *LSPTool) Tools(context.Context) ([]tools.Tool, error) {
 	h := t.handler
+	all := allLSPTools(h)
+
+	caps := h.snapshotCapabilities()
+	if caps == nil {
+		// The server has not been initialised yet. Advertise the full
+		// catalogue: the runtime will refresh after the first Connect
+		// completes (via toolsChangedHandler), at which point we filter.
+		return all, nil
+	}
+	return filterByCapabilities(all, caps), nil
+}
+
+// snapshotCapabilities returns the LSP server capabilities under h.mu,
+// or nil if the server has not yet completed initialize.
+func (h *lspHandler) snapshotCapabilities() *lspServerCapabilities {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.capabilities
+}
+
+// SetToolsChangedHandler registers a callback that is invoked after the
+// supervisor reaches Ready and the server's capability matrix becomes
+// available. The runtime uses this to re-query Tools() and pick up the
+// capability-filtered list.
+func (t *LSPTool) SetToolsChangedHandler(handler func()) {
+	t.handler.mu.Lock()
+	t.handler.toolsChangedHandler = handler
+	t.handler.mu.Unlock()
+}
+
+// allLSPTools returns the full catalogue of LSP tools backed by h. It is
+// extracted from Tools() so that capability-aware filtering can decide
+// which entries to emit without rebuilding the slice each call.
+func allLSPTools(h *lspHandler) []tools.Tool {
 	return []tools.Tool{
 		lspTool(ToolNameLSPWorkspace, "Get Workspace Info",
 			`Get workspace info and LSP server capabilities. Use at session start to discover available features. Takes no arguments.`,
@@ -491,7 +531,85 @@ func (t *LSPTool) Tools(context.Context) ([]tools.Tool, error) {
 		lspTool(ToolNameLSPInlayHints, "Inlay Hints",
 			`Get inlay hints (type annotations, parameter names) for a file or line range. Omit start_line/end_line to get hints for the entire file.`,
 			true, tools.MustSchemaFor[InlayHintsArgs](), tools.NewHandler(h.inlayHints)),
-	}, nil
+	}
+}
+
+// filterByCapabilities returns only the entries from all whose required
+// LSP server capability is advertised by caps.
+//
+// Tools without a 1:1 capability mapping (lsp_workspace, lsp_diagnostics)
+// are always retained: lsp_workspace surfaces the capability matrix
+// itself, and diagnostics arrive as server-pushed notifications and so
+// are usable even when no document* provider is advertised.
+func filterByCapabilities(all []tools.Tool, caps *lspServerCapabilities) []tools.Tool {
+	out := make([]tools.Tool, 0, len(all))
+	for _, t := range all {
+		if !capabilitySupports(t.Name, caps) {
+			slog.Debug("LSP tool hidden: server does not advertise capability", "tool", t.Name)
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// capabilitySupports reports whether the LSP server with the given
+// capabilities advertises support for the tool name.
+//
+// LSP capability values are loosely typed: each provider field is either
+// missing, false, true, or an options object. We treat missing/false as
+// "unsupported" and any non-false value as "supported".
+func capabilitySupports(toolName string, caps *lspServerCapabilities) bool {
+	if caps == nil {
+		return true
+	}
+	switch toolName {
+	case ToolNameLSPWorkspace, ToolNameLSPDiagnostics:
+		return true
+	case ToolNameLSPHover:
+		return isProviderEnabled(caps.HoverProvider)
+	case ToolNameLSPDefinition:
+		return isProviderEnabled(caps.DefinitionProvider)
+	case ToolNameLSPReferences:
+		return isProviderEnabled(caps.ReferencesProvider)
+	case ToolNameLSPDocumentSymbols:
+		return isProviderEnabled(caps.DocumentSymbolProvider)
+	case ToolNameLSPWorkspaceSymbols:
+		return isProviderEnabled(caps.WorkspaceSymbolProvider)
+	case ToolNameLSPCodeActions:
+		return isProviderEnabled(caps.CodeActionProvider)
+	case ToolNameLSPFormat:
+		return isProviderEnabled(caps.DocumentFormattingProvider)
+	case ToolNameLSPRename:
+		return isProviderEnabled(caps.RenameProvider)
+	case ToolNameLSPCallHierarchy:
+		return isProviderEnabled(caps.CallHierarchyProvider)
+	case ToolNameLSPTypeHierarchy:
+		return isProviderEnabled(caps.TypeHierarchyProvider)
+	case ToolNameLSPImplementations:
+		return isProviderEnabled(caps.ImplementationProvider)
+	case ToolNameLSPSignatureHelp:
+		return isProviderEnabled(caps.SignatureHelpProvider)
+	case ToolNameLSPInlayHints:
+		return isProviderEnabled(caps.InlayHintProvider)
+	default:
+		// Unknown tool name: be permissive rather than silently hiding
+		// future tools that haven't been added to this switch yet.
+		return true
+	}
+}
+
+// isProviderEnabled returns true when an LSP capability value advertises
+// support: any non-nil, non-false value (including options objects) is
+// considered "yes".
+func isProviderEnabled(v any) bool {
+	if v == nil {
+		return false
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return true
 }
 
 // lspHandler implementation

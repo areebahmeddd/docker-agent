@@ -133,6 +133,18 @@ func (c *lspConnector) Connect(ctx context.Context) (lifecycle.Session, error) {
 	}
 
 	slog.Debug("LSP server initialized", "command", h.command)
+
+	// Notify the runtime that the tool catalogue may have changed: the
+	// capabilities we just received gate which lsp_* tools are visible.
+	// This fires on both initial connect and reconnect, so a model that
+	// was given the full catalogue before init now sees the refined one.
+	h.mu.Lock()
+	handler := h.toolsChangedHandler
+	h.mu.Unlock()
+	if handler != nil {
+		handler()
+	}
+
 	return &lspSession{h: h, processCancel: processCancel, stdin: stdin}, nil
 }
 
