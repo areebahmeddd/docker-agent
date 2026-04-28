@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/dgageot/rubocop-go/cop"
@@ -30,38 +28,24 @@ func (*ConfigPackageName) Description() string {
 }
 func (*ConfigPackageName) Severity() cop.Severity { return cop.Error }
 
-// configDirRe matches files under pkg/config/<dir>/. The captured group is
-// the directory name immediately under pkg/config/. It accepts both
-// absolute and relative paths.
-var configDirRe = regexp.MustCompile(`(?:^|/)pkg/config/([^/]+)/[^/]+\.go$`)
-
 func (c *ConfigPackageName) Check(fset *token.FileSet, file *ast.File) []cop.Offense {
 	filename := fset.Position(file.Package).Filename
-	normalized := filepath.ToSlash(filename)
-
-	m := configDirRe.FindStringSubmatch(normalized)
-	if m == nil {
+	dir := configDir(filename)
+	if dir == "" {
 		return nil
 	}
 
-	dir := m[1]
-
-	// pkg/config/<dir> contains the parsers/dispatcher; skip files that live
-	// directly in pkg/config/.
-	if strings.HasSuffix(dir, ".go") {
-		return nil
-	}
-
-	expected := dir
 	got := file.Name.Name
-	if got == expected {
+	switch got {
+	case dir:
 		return nil
-	}
-	// Black-box test packages (<dir>_test) are a legitimate Go convention.
-	if strings.HasSuffix(filename, "_test.go") && got == expected+"_test" {
-		return nil
+	case dir + "_test":
+		// Black-box test packages are a legitimate Go convention.
+		if strings.HasSuffix(filename, "_test.go") {
+			return nil
+		}
 	}
 
-	return []cop.Offense{cop.NewOffense(c, fset, file.Name.Pos(), file.Name.End(),
-		fmt.Sprintf("file in pkg/config/%s/ must declare package %s, got %s", dir, expected, got))}
+	return []cop.Offense{offense(c, fset, file.Name,
+		fmt.Sprintf("file in pkg/config/%s/ must declare package %s, got %s", dir, dir, got))}
 }
