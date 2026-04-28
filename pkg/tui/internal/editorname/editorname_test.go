@@ -1,10 +1,8 @@
-package chat
+package editorname
 
-import (
-	"testing"
-)
+import "testing"
 
-func TestGetEditorDisplayNameFromEnv(t *testing.T) {
+func TestFromEnv(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -97,15 +95,51 @@ func TestGetEditorDisplayNameFromEnv(t *testing.T) {
 			editorEnv: "vim",
 			want:      "VSCode",
 		},
+		{
+			name:      "Whitespace-only command falls back to $EDITOR",
+			visual:    "",
+			editorEnv: "   ",
+			want:      "$EDITOR",
+		},
+		{
+			name:      "Nano",
+			visual:    "",
+			editorEnv: "nano",
+			want:      "Nano",
+		},
+		{
+			name:      "Emacs",
+			visual:    "",
+			editorEnv: "emacs -nw",
+			want:      "Emacs",
+		},
+		{
+			name:      "Sublime Text via subl",
+			visual:    "",
+			editorEnv: "subl --wait",
+			want:      "Sublime Text",
+		},
+		{
+			name:      "Zed",
+			visual:    "",
+			editorEnv: "zed --wait",
+			want:      "Zed",
+		},
+		{
+			name:      "Unknown editor with multi-byte first rune",
+			visual:    "",
+			editorEnv: "édit", // U+00E9 (é) is 2 bytes in UTF-8.
+			want:      "Édit", // First rune capitalised, rest preserved.
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := getEditorDisplayNameFromEnv(tt.visual, tt.editorEnv)
+			got := FromEnv(tt.visual, tt.editorEnv)
 			if got != tt.want {
-				t.Errorf("getEditorDisplayNameFromEnv(%q, %q) = %v, want %v", tt.visual, tt.editorEnv, got, tt.want)
+				t.Errorf("FromEnv(%q, %q) = %v, want %v", tt.visual, tt.editorEnv, got, tt.want)
 			}
 		})
 	}
