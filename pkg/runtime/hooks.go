@@ -104,6 +104,12 @@ func (r *LocalRuntime) dispatchHook(
 // returned slice through [session.Session.GetMessages] on every
 // iteration so cwd / OS / arch context reaches the model without ever
 // being stored.
+//
+// Compaction does NOT re-fire session_start. The transient nature of
+// sessionStartMsgs means env / cwd / OS context is automatically
+// included in every model call after a compaction, without any extra
+// dispatch — there's nothing to "re-inject" because nothing was
+// persisted in the first place.
 func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events chan Event) []chat.Message {
 	return contextMessages(r.dispatchHook(ctx, a, hooks.EventSessionStart, &hooks.Input{
 		SessionID: sess.ID,
@@ -306,4 +312,58 @@ func (r *LocalRuntime) executeOnUserInputHooks(ctx context.Context, sessionID, l
 	r.dispatchHook(ctx, a, hooks.EventOnUserInput, &hooks.Input{
 		SessionID: sessionID,
 	}, nil)
+}
+
+// executeBeforeCompactionHooks fires before a session compaction. The
+// hook may veto the compaction (Decision: "block") or supply a custom
+// summary string via [hooks.HookSpecificOutput.Summary] to skip the
+// LLM-based summarization. The Result is returned verbatim so the
+// caller (doCompact) can act on Allowed and Summary.
+//
+// Returns nil when no hook is configured for this event so the caller
+// can use a single nil check to mean "nothing to do, fall through to
+// the default LLM-based path".
+func (r *LocalRuntime) executeBeforeCompactionHooks(
+	ctx context.Context,
+	sess *session.Session,
+	a *agent.Agent,
+	reason string,
+	contextLimit int64,
+	events chan Event,
+) *hooks.Result {
+	return r.dispatchHook(ctx, a, hooks.EventBeforeCompaction, &hooks.Input{
+		SessionID:        sess.ID,
+		InputTokens:      sess.InputTokens,
+		OutputTokens:     sess.OutputTokens,
+		ContextLimit:     contextLimit,
+		CompactionReason: reason,
+	}, events)
+}
+
+// executeAfterCompactionHooks fires after a successful compaction has
+// applied a summary to the session. Purely observational — the result
+// is discarded.
+//
+// The Input carries the *pre-compaction* token counts (what was
+// summarized), not the new ones, so handlers can naturally express
+// "compacted from X to Y". The post-compaction counts are reflected
+// in the next [NewTokenUsageEvent] the runtime emits.
+func (r *LocalRuntime) executeAfterCompactionHooks(
+	ctx context.Context,
+	sess *session.Session,
+	a *agent.Agent,
+	reason string,
+	contextLimit int64,
+	preInputTokens, preOutputTokens int64,
+	summary string,
+	events chan Event,
+) {
+	r.dispatchHook(ctx, a, hooks.EventAfterCompaction, &hooks.Input{
+		SessionID:        sess.ID,
+		InputTokens:      preInputTokens,
+		OutputTokens:     preOutputTokens,
+		ContextLimit:     contextLimit,
+		CompactionReason: reason,
+		Summary:          summary,
+	}, events)
 }

@@ -1687,6 +1687,19 @@ type HooksConfig struct {
 	// gives audit pipelines a structured "who approved what" record
 	// without re-implementing the chain.
 	OnToolApprovalDecision []HookDefinition `json:"on_tool_approval_decision,omitempty" yaml:"on_tool_approval_decision,omitempty"`
+
+	// BeforeCompaction hooks run immediately before a session compaction.
+	// Hooks may veto compaction (Decision: "block") or supply a custom
+	// summary via HookSpecificOutput.summary, in which case the runtime
+	// applies that summary verbatim and skips the LLM call. Hooks receive
+	// the current input/output token counts, the model context limit, and
+	// a compaction_reason of "threshold", "overflow", or "manual".
+	BeforeCompaction []HookDefinition `json:"before_compaction,omitempty" yaml:"before_compaction,omitempty"`
+
+	// AfterCompaction hooks run after a successful compaction (a summary
+	// was applied to the session). The Input.summary field carries the
+	// produced summary text. AfterCompaction is purely observational.
+	AfterCompaction []HookDefinition `json:"after_compaction,omitempty" yaml:"after_compaction,omitempty"`
 }
 
 // IsEmpty returns true if no hooks are configured
@@ -1708,7 +1721,9 @@ func (h *HooksConfig) IsEmpty() bool {
 		len(h.OnMaxIterations) == 0 &&
 		len(h.OnAgentSwitch) == 0 &&
 		len(h.OnSessionResume) == 0 &&
-		len(h.OnToolApprovalDecision) == 0
+		len(h.OnToolApprovalDecision) == 0 &&
+		len(h.BeforeCompaction) == 0 &&
+		len(h.AfterCompaction) == 0
 }
 
 // HookMatcherConfig represents a hook matcher with its hooks.
@@ -1883,6 +1898,20 @@ func (h *HooksConfig) validate() error {
 	// Validate OnToolApprovalDecision hooks
 	for i, hook := range h.OnToolApprovalDecision {
 		if err := hook.validate("on_tool_approval_decision", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate BeforeCompaction hooks
+	for i, hook := range h.BeforeCompaction {
+		if err := hook.validate("before_compaction", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate AfterCompaction hooks
+	for i, hook := range h.AfterCompaction {
+		if err := hook.validate("after_compaction", i); err != nil {
 			return err
 		}
 	}

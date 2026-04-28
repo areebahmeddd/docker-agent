@@ -946,9 +946,26 @@ func (r *LocalRuntime) startSpan(ctx context.Context, name string, opts ...trace
 // Summarize generates a summary for the session based on the conversation history.
 // The additionalPrompt parameter allows users to provide additional instructions
 // for the summarization (e.g., "focus on code changes" or "include action items").
+//
+// Summarize is the public entry point used by user-driven /compact actions; it
+// reports compactionReasonManual to BeforeCompaction / AfterCompaction hooks.
+// Internal callers (proactive threshold, overflow recovery) use
+// [LocalRuntime.compactWithReason] directly to forward a more specific reason.
 func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan Event) {
+	r.compactWithReason(ctx, sess, additionalPrompt, compactionReasonManual, events)
+}
+
+// compactWithReason runs a session compaction with the supplied reason and
+// emits a TokenUsageEvent so the UI immediately reflects the new context
+// pressure.
+//
+// reason is reported to BeforeCompaction / AfterCompaction hooks as
+// CompactionReason. Use [compactionReasonThreshold] for proactive
+// 90%-of-context triggers, [compactionReasonOverflow] for post-overflow
+// auto-recovery, or [compactionReasonManual] for user-invoked compactions.
+func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Session, additionalPrompt, reason string, events chan Event) {
 	a := r.resolveSessionAgent(sess)
-	r.doCompact(ctx, sess, a, additionalPrompt, events)
+	r.doCompact(ctx, sess, a, additionalPrompt, reason, events)
 
 	// Emit a TokenUsageEvent so the sidebar immediately reflects the
 	// compaction: tokens drop to the summary size, context % drops, and

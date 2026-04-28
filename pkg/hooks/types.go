@@ -65,6 +65,39 @@ const (
 	// Observational; gives audit pipelines a single, structured "who
 	// approved what" record without re-implementing the chain.
 	EventOnToolApprovalDecision EventType = "on_tool_approval_decision"
+	// EventBeforeCompaction fires immediately before a session compaction
+	// runs. The hook can:
+	//   - veto the compaction by returning Decision == "block" (the runtime
+	//     skips compaction entirely);
+	//   - replace the LLM-generated summary by returning a non-empty
+	//     [HookSpecificOutput.Summary] (the runtime applies that summary
+	//     verbatim and skips the model call).
+	// The Input carries [Input.InputTokens], [Input.OutputTokens],
+	// [Input.ContextLimit] and [Input.CompactionReason] ("threshold",
+	// "overflow", or "manual") so handlers can decide based on real
+	// session pressure.
+	//
+	// [Input.ContextLimit] may be 0 when the model definition is
+	// unavailable (e.g. an unknown model ID); hooks should treat 0 as
+	// "unknown" rather than as a real limit.
+	//
+	// Hook authors should be cautious about denying when
+	// CompactionReason == "overflow": the runtime is recovering from a
+	// context-overflow error. A denial here means the next LLM call will
+	// hit the same overflow; the runtime allows at most one
+	// retry-with-compaction (see maxOverflowCompactions in loop.go), so a
+	// second denial fails the turn and surfaces the overflow as an Error
+	// event.
+	EventBeforeCompaction EventType = "before_compaction"
+	// EventAfterCompaction fires after a session compaction completes
+	// successfully (a summary was applied to the session). The Input
+	// carries the produced [Input.Summary] together with the
+	// *pre-compaction* [Input.InputTokens] / [Input.OutputTokens] (what
+	// was summarized) so observability handlers can naturally express
+	// "compacted from X to Y". The post-compaction counts are reflected
+	// in the next runtime token-usage event. AfterCompaction is purely
+	// observational; output is ignored.
+	EventAfterCompaction EventType = "after_compaction"
 )
 
 // Input is the JSON-serializable payload passed to hooks via stdin.
@@ -82,7 +115,7 @@ type Input struct {
 	ToolResponse any  `json:"tool_response,omitempty"`
 	ToolError    bool `json:"tool_error,omitempty"`
 
-	// SessionStart specific: "startup", "resume", "clear", "compact".
+	// SessionStart specific: "startup", "resume", "clear".
 	Source string `json:"source,omitempty"`
 	// SessionEnd specific: "clear", "logout", "prompt_input_exit", "other".
 	Reason string `json:"reason,omitempty"`
@@ -118,6 +151,23 @@ type Input struct {
 	// "user_approved_tool", "user_rejected", "context_canceled").
 	ApprovalDecision string `json:"approval_decision,omitempty"`
 	ApprovalSource   string `json:"approval_source,omitempty"`
+
+	// Compaction fields (BeforeCompaction, AfterCompaction).
+	InputTokens  int64 `json:"input_tokens,omitempty"`
+	OutputTokens int64 `json:"output_tokens,omitempty"`
+	// ContextLimit is the model's context-window size in tokens. It is
+	// 0 when the model definition is unavailable (e.g. an unknown
+	// model ID); hooks should treat 0 as "unknown" rather than as a
+	// real limit.
+	ContextLimit int64 `json:"context_limit,omitempty"`
+	// CompactionReason is one of "threshold", "overflow", "manual".
+	CompactionReason string `json:"compaction_reason,omitempty"`
+	// Summary is the produced compaction summary text. It is populated
+	// only on AfterCompaction (BeforeCompaction fires before any
+	// summary exists); on AfterCompaction it carries the actual text
+	// applied to the session so observability handlers can audit /
+	// archive what was summarized.
+	Summary string `json:"summary,omitempty"`
 }
 
 // ToJSON serializes the input.
@@ -196,6 +246,11 @@ type HookSpecificOutput struct {
 
 	// PostToolUse / SessionStart / TurnStart / Stop fields.
 	AdditionalContext string `json:"additional_context,omitempty"`
+
+	// BeforeCompaction: when non-empty, the runtime applies this string as
+	// the compaction summary verbatim and skips the LLM-based
+	// summarization. Ignored on every other event.
+	Summary string `json:"summary,omitempty"`
 }
 
 // Result is the aggregated outcome of dispatching one event.
@@ -214,4 +269,8 @@ type Result struct {
 	ExitCode int
 	// Stderr captures stderr from a failing hook.
 	Stderr string
+	// Summary is set by EventBeforeCompaction hooks to override the
+	// LLM-generated compaction summary. When multiple hooks return a
+	// non-empty summary, the first one wins.
+	Summary string
 }

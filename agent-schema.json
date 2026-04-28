@@ -588,6 +588,20 @@
           "items": {
             "$ref": "#/definitions/HookDefinition"
           }
+        },
+        "before_compaction": {
+          "type": "array",
+          "description": "Hooks that run immediately before a session compaction. The Input carries input_tokens, output_tokens, context_limit, and compaction_reason ('threshold', 'overflow', 'manual'). A hook may veto compaction by setting decision='block' (or exiting with code 2), or supply a custom summary via hookSpecificOutput.summary, in which case the runtime applies that summary verbatim and skips the LLM-based summarization. Be cautious about denying when compaction_reason='overflow': the runtime is recovering from a context-overflow error and a denial there will leave the session unable to make progress.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
+        },
+        "after_compaction": {
+          "type": "array",
+          "description": "Hooks that run after a successful compaction (a summary was applied to the session). Receives the final summary text in Input.summary alongside input_tokens, output_tokens, context_limit and compaction_reason. Purely observational — hook output is ignored.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
         }
       },
       "additionalProperties": false

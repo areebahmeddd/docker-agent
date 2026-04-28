@@ -325,7 +325,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 			contextLimit = int64(m.Limit.Context)
 
 			if r.sessionCompaction && compaction.ShouldCompact(sess.InputTokens, sess.OutputTokens, 0, contextLimit) {
-				r.Summarize(ctx, sess, "", events)
+				r.compactWithReason(ctx, sess, "", compactionReasonThreshold, events)
 			}
 		}
 
@@ -615,7 +615,7 @@ func (r *LocalRuntime) compactIfNeeded(
 		"estimated_total", sess.InputTokens+sess.OutputTokens+addedTokens,
 		"context_limit", contextLimit,
 	)
-	r.Summarize(ctx, sess, "", events)
+	r.compactWithReason(ctx, sess, "", compactionReasonThreshold, events)
 }
 
 // getTools executes tool retrieval with automatic OAuth handling.
