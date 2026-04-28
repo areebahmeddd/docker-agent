@@ -134,7 +134,9 @@ func loadSkillsFromDir(dir string, recursive bool) []Skill {
 	return loadSkillsFlat(dir)
 }
 
-// loadSkillsFlat loads skills from immediate subdirectories only (Claude format).
+// loadSkillsFlat loads skills from immediate subdirectories only (Claude
+// format). Symlinks are explicitly skipped here because flat-mode skills are
+// expected to live as plain directories under the search root.
 func loadSkillsFlat(dir string) []Skill {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -154,8 +156,15 @@ func loadSkillsFlat(dir string) []Skill {
 	return skills
 }
 
-// loadSkillsRecursive walks dir for SKILL.md files (Codex format), tracking
-// real directory paths so symlink cycles can't loop forever.
+// loadSkillsRecursive walks dir for SKILL.md files (Codex format).
+//
+// filepath.WalkDir does not follow symlinks inside the tree (it uses
+// fs.DirEntry which is Lstat-based), so a symlink-to-directory has
+// IsDir() == false and is naturally not entered. The visited map is
+// defensive: it catches the (rare) cases where the same real directory
+// is reachable via two non-symlink paths — e.g. Linux bind mounts, or
+// when the search root itself is a symlink whose target also appears
+// as a sibling deeper in the tree.
 func loadSkillsRecursive(dir string) []Skill {
 	visited := make(map[string]bool)
 	if realDir, err := filepath.EvalSymlinks(dir); err == nil {

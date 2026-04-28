@@ -72,7 +72,13 @@ func Load(sources []string) []Skill {
 	}
 
 	return slices.SortedFunc(maps.Values(skillMap), func(a, b Skill) int {
-		return strings.Compare(a.Name, b.Name)
+		if c := strings.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		// FilePath is unique per skill, so this gives a fully
+		// deterministic ordering even when a local and a remote source
+		// expose a skill with the same name.
+		return strings.Compare(a.FilePath, b.FilePath)
 	})
 }
 
