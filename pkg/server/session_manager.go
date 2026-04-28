@@ -411,13 +411,15 @@ func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.S
 		return nil, nil, err
 	}
 
-	agent, err := t.Agent(currentAgent)
+	// Resolve the team's default agent when no specific agent was requested.
+	agt, err := t.AgentOrDefault(currentAgent)
 	if err != nil {
 		return nil, nil, err
 	}
-	sess.MaxIterations = agent.MaxIterations()
-	sess.MaxConsecutiveToolCalls = agent.MaxConsecutiveToolCalls()
-	sess.MaxOldToolCallTokens = agent.MaxOldToolCallTokens()
+	currentAgent = agt.Name()
+	sess.MaxIterations = agt.MaxIterations()
+	sess.MaxConsecutiveToolCalls = agt.MaxConsecutiveToolCalls()
+	sess.MaxOldToolCallTokens = agt.MaxOldToolCallTokens()
 
 	opts := []runtime.Opt{
 		runtime.WithCurrentAgent(currentAgent),
@@ -429,7 +431,7 @@ func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.S
 		return nil, nil, err
 	}
 
-	titleGen := sessiontitle.New(agent.Model(), agent.FallbackModels()...)
+	titleGen := sessiontitle.New(agt.Model(), agt.FallbackModels()...)
 
 	sm.runtimeSessions.Store(sess.ID, &activeRuntimes{
 		runtime:  run,
@@ -452,7 +454,8 @@ func (sm *SessionManager) loadTeam(ctx context.Context, agentFilename string, ru
 }
 
 // GetAgentToolCount loads the agent's team and returns the number of
-// tools available to the given agent.
+// tools available to the given agent. When agentName is empty, it
+// resolves to the team's default agent.
 func (sm *SessionManager) GetAgentToolCount(ctx context.Context, agentFilename, agentName string) (int, error) {
 	t, err := sm.loadTeam(ctx, agentFilename, sm.runConfig)
 	if err != nil {
@@ -464,7 +467,7 @@ func (sm *SessionManager) GetAgentToolCount(ctx context.Context, agentFilename, 
 		}
 	}()
 
-	a, err := t.Agent(agentName)
+	a, err := t.AgentOrDefault(agentName)
 	if err != nil {
 		return 0, err
 	}

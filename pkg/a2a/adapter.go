@@ -18,12 +18,15 @@ import (
 	"github.com/docker/docker-agent/pkg/team"
 )
 
-// newDockerAgentAdapter creates a new ADK agent adapter from a docker agent team and agent name
+// newDockerAgentAdapter creates a new ADK agent adapter from a docker agent team and agent name.
+// When agentName is empty, the team's default agent (one explicitly named "root" if it
+// exists, otherwise the first agent declared) is used.
 func newDockerAgentAdapter(t *team.Team, agentName string) (agent.Agent, error) {
-	a, err := t.Agent(agentName)
+	a, err := t.AgentOrDefault(agentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get agent %s: %w", agentName, err)
 	}
+	agentName = a.Name()
 
 	desc := cmp.Or(a.Description(), "Agent "+agentName)
 

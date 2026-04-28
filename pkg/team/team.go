@@ -108,6 +108,19 @@ func (t *Team) Agent(name string) (*agent.Agent, error) {
 	return nil, fmt.Errorf("agent not found: %s (available agents: %s)", name, strings.Join(t.AgentNames(), ", "))
 }
 
+// AgentOrDefault returns the agent identified by name, or the team's
+// [DefaultAgent] when name is empty. It is a convenience for the many
+// call sites that accept an optional agent selector (CLI flag, HTTP
+// route, ...) and want "empty means whatever the team considers
+// default" semantics without sprinkling the same `if name == ""` check
+// everywhere.
+func (t *Team) AgentOrDefault(name string) (*agent.Agent, error) {
+	if name == "" {
+		return t.DefaultAgent()
+	}
+	return t.Agent(name)
+}
+
 func (t *Team) Size() int {
 	return len(t.agents)
 }

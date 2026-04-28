@@ -279,7 +279,11 @@ func (s *Server) deleteSession(c echo.Context) error {
 func (s *Server) runAgent(c echo.Context) error {
 	sessionID := c.Param("id")
 	agentFilename := c.Param("agent")
-	currentAgent := cmp.Or(c.Param("agent_name"), "root")
+	// agent_name may be empty when the route /api/sessions/:id/agent/:agent
+	// is used. In that case, the session manager resolves the team's default
+	// agent (one explicitly named "root" if it exists, otherwise the first
+	// agent declared).
+	currentAgent := c.Param("agent_name")
 
 	slog.Debug("Running agent", "agent_filename", agentFilename, "session_id", sessionID, "current_agent", currentAgent)
 

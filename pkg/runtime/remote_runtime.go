@@ -1,12 +1,14 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -32,6 +34,12 @@ type RemoteRuntime struct {
 	sessionID               string
 	team                    *team.Team
 	pendingOAuthElicitation *ElicitationRequestEvent
+
+	// resolvedDefault caches the team's default agent name fetched from the
+	// server, so [CurrentAgentName] stays an O(1) field read after the first
+	// call when no specific agent has been selected.
+	resolvedDefault     string
+	resolvedDefaultOnce sync.Once
 }
 
 // RemoteRuntimeOption is a function for configuring the RemoteRuntime
@@ -60,7 +68,6 @@ func NewRemoteRuntime(client RemoteClient, opts ...RemoteRuntimeOption) (*Remote
 
 	r := &RemoteRuntime{
 		client:        client,
-		currentAgent:  "root",
 		agentFilename: "agent.yaml",
 		team:          team.New(),
 	}
@@ -72,15 +79,33 @@ func NewRemoteRuntime(client RemoteClient, opts ...RemoteRuntimeOption) (*Remote
 	return r, nil
 }
 
-// CurrentAgentName returns the name of the currently active agent
+// resolvedAgent returns the active agent's name and config from the remote
+// team. When no specific agent has been selected, both come from the team's
+// first agent — the server owns the notion of "default agent" instead of the
+// client hard-coding the historical "root" name.
+func (r *RemoteRuntime) resolvedAgent(ctx context.Context) (string, latest.AgentConfig) {
+	cfg := r.readCurrentAgentConfig(ctx)
+	return cmp.Or(r.currentAgent, cfg.Name), cfg
+}
+
+// CurrentAgentName returns the name of the currently active agent.
+// When no specific agent has been selected, it falls back to the first agent
+// declared by the remote team config. The remote lookup happens at most once;
+// the result is cached so subsequent calls are O(1).
 func (r *RemoteRuntime) CurrentAgentName() string {
-	return r.currentAgent
+	if r.currentAgent != "" {
+		return r.currentAgent
+	}
+	r.resolvedDefaultOnce.Do(func() {
+		r.resolvedDefault, _ = r.resolvedAgent(context.Background())
+	})
+	return r.resolvedDefault
 }
 
 func (r *RemoteRuntime) CurrentAgentInfo(ctx context.Context) CurrentAgentInfo {
-	cfg := r.readCurrentAgentConfig(ctx)
+	name, cfg := r.resolvedAgent(ctx)
 	return CurrentAgentInfo{
-		Name:        r.currentAgent,
+		Name:        name,
 		Description: cfg.Description,
 		Commands:    cfg.Commands,
 	}
@@ -101,23 +126,23 @@ func (r *RemoteRuntime) CurrentAgentTools(_ context.Context) ([]tools.Tool, erro
 
 // EmitStartupInfo emits initial agent, team, and toolset information
 func (r *RemoteRuntime) EmitStartupInfo(ctx context.Context, _ *session.Session, events chan Event) {
-	cfg := r.readCurrentAgentConfig(ctx)
+	agentName, cfg := r.resolvedAgent(ctx)
 
-	events <- AgentInfo(r.currentAgent, cfg.Model, cfg.Description, cfg.WelcomeMessage)
-	events <- TeamInfo(r.agentDetailsFromConfig(ctx), r.currentAgent)
+	events <- AgentInfo(agentName, cfg.Model, cfg.Description, cfg.WelcomeMessage)
+	events <- TeamInfo(r.agentDetailsFromConfig(ctx), agentName)
 
 	// Emit a loading indicator while we fetch the real tool count from the server.
 	if len(cfg.Toolsets) > 0 {
-		events <- ToolsetInfo(0, true, r.currentAgent)
+		events <- ToolsetInfo(0, true, agentName)
 	}
 
-	toolCount, err := r.client.GetAgentToolCount(ctx, r.agentFilename, r.currentAgent)
+	toolCount, err := r.client.GetAgentToolCount(ctx, r.agentFilename, agentName)
 	if err != nil {
 		slog.Warn("Failed to get agent tool count", "error", err)
 		return
 	}
 
-	events <- ToolsetInfo(toolCount, false, r.currentAgent)
+	events <- ToolsetInfo(toolCount, false, agentName)
 }
 
 func (r *RemoteRuntime) agentDetailsFromConfig(ctx context.Context) []AgentDetails {
@@ -147,10 +172,18 @@ func (r *RemoteRuntime) agentDetailsFromConfig(ctx context.Context) []AgentDetai
 	return details
 }
 
+// readCurrentAgentConfig fetches the active agent's config from the server.
+// When no specific agent has been selected, it falls back to the first agent
+// in the team — letting the server own the notion of "default agent" instead
+// of hard-coding the historical "root" name.
 func (r *RemoteRuntime) readCurrentAgentConfig(ctx context.Context) latest.AgentConfig {
 	cfg, err := r.client.GetAgent(ctx, r.agentFilename)
-	if err != nil {
+	if err != nil || len(cfg.Agents) == 0 {
 		return latest.AgentConfig{}
+	}
+
+	if r.currentAgent == "" {
+		return cfg.Agents[0]
 	}
 
 	for _, agent := range cfg.Agents {
@@ -176,7 +209,7 @@ func (r *RemoteRuntime) RunStream(ctx context.Context, sess *session.Session) <-
 		var streamChan <-chan Event
 		var err error
 
-		if r.currentAgent != "" && r.currentAgent != "root" {
+		if r.currentAgent != "" {
 			streamChan, err = r.client.RunAgentWithAgentName(ctx, r.sessionID, r.agentFilename, r.currentAgent, messages)
 		} else {
 			streamChan, err = r.client.RunAgent(ctx, r.sessionID, r.agentFilename, messages)

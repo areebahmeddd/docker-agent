@@ -95,7 +95,7 @@ func newRunCmd() *cobra.Command {
 }
 
 func addRunOrExecFlags(cmd *cobra.Command, flags *runExecFlags) {
-	cmd.PersistentFlags().StringVarP(&flags.agentName, "agent", "a", "root", "Name of the agent to run")
+	cmd.PersistentFlags().StringVarP(&flags.agentName, "agent", "a", "", "Name of the agent to run (defaults to the team's first agent)")
 	cmd.PersistentFlags().BoolVar(&flags.autoApprove, "yolo", false, "Automatically approve all tool calls without prompting")
 	cmd.PersistentFlags().BoolVar(&flags.hideToolResults, "hide-tool-results", false, "Hide tool call results")
 	cmd.PersistentFlags().StringVar(&flags.attachmentPath, "attach", "", "Attach an image file to the message")
@@ -333,10 +333,11 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		t.SetPermissions(permissions.Merge(t.Permissions(), f.globalPermissions))
 	}
 
-	agt, err := t.Agent(f.agentName)
+	agt, err := t.AgentOrDefault(f.agentName)
 	if err != nil {
 		return nil, nil, err
 	}
+	agentName := agt.Name()
 
 	// Expand tilde in session database path
 	sessionDB, err := expandTilde(f.sessionDB)
@@ -360,7 +361,7 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 
 	localRt, err := runtime.New(t,
 		runtime.WithSessionStore(sessStore),
-		runtime.WithCurrentAgent(f.agentName),
+		runtime.WithCurrentAgent(agentName),
 		runtime.WithTracer(otel.Tracer(AppName)),
 		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
 	)
@@ -395,13 +396,13 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 			}
 		}
 
-		slog.Debug("Loaded existing session", "session_id", resolvedID, "session_ref", f.sessionID, "agent", f.agentName)
+		slog.Debug("Loaded existing session", "session_id", resolvedID, "session_ref", f.sessionID, "agent", agentName)
 	} else {
 		wd, _ := os.Getwd()
 		sess = session.New(f.buildSessionOpts(agt, wd)...)
 		// Session is stored lazily on first UpdateSession call (when content is added)
 		// This avoids creating empty sessions in the database
-		slog.Debug("Using local runtime", "agent", f.agentName)
+		slog.Debug("Using local runtime", "agent", agentName)
 	}
 
 	return localRt, sess, nil
@@ -529,8 +530,8 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 			return nil, nil, nil, err
 		}
 
-		team := loadResult.Team
-		agt, err := team.Agent(f.agentName)
+		t := loadResult.Team
+		agt, err := t.AgentOrDefault(f.agentName)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -546,13 +547,13 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 
 		// Merge global permissions into the team's checker
 		if f.globalPermissions != nil && !f.globalPermissions.IsEmpty() {
-			team.SetPermissions(permissions.Merge(team.Permissions(), f.globalPermissions))
+			t.SetPermissions(permissions.Merge(t.Permissions(), f.globalPermissions))
 		}
 
 		// Create the local runtime
-		localRt, err := runtime.New(team,
+		localRt, err := runtime.New(t,
 			runtime.WithSessionStore(sessStore),
-			runtime.WithCurrentAgent(f.agentName),
+			runtime.WithCurrentAgent(agt.Name()),
 			runtime.WithTracer(otel.Tracer(AppName)),
 			runtime.WithModelSwitcherConfig(modelSwitcherCfg),
 		)
@@ -565,7 +566,7 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 
 		// Create cleanup function
 		cleanup := func() {
-			stopToolSets(team)
+			stopToolSets(t)
 		}
 
 		// Create the app

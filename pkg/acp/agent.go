@@ -136,25 +136,24 @@ func (a *Agent) NewSession(ctx context.Context, params acp.NewSessionRequest) (a
 		workingDir = absWd
 	}
 
+	defaultAgent, err := a.team.DefaultAgent()
+	if err != nil {
+		return acp.NewSessionResponse{}, fmt.Errorf("failed to resolve default agent: %w", err)
+	}
+
 	rt, err := runtime.New(a.team,
-		runtime.WithCurrentAgent("root"),
+		runtime.WithCurrentAgent(defaultAgent.Name()),
 		runtime.WithSessionStore(a.sessionStore),
 	)
 	if err != nil {
 		return acp.NewSessionResponse{}, fmt.Errorf("failed to create runtime: %w", err)
 	}
 
-	// Get root agent config for session settings
-	rootAgent, err := a.team.Agent("root")
-	if err != nil {
-		return acp.NewSessionResponse{}, fmt.Errorf("failed to get root agent: %w", err)
-	}
-
 	// Build session options (title will be set after we have the session ID)
 	sessOpts := []session.Opt{
-		session.WithMaxIterations(rootAgent.MaxIterations()),
-		session.WithMaxConsecutiveToolCalls(rootAgent.MaxConsecutiveToolCalls()),
-		session.WithMaxOldToolCallTokens(rootAgent.MaxOldToolCallTokens()),
+		session.WithMaxIterations(defaultAgent.MaxIterations()),
+		session.WithMaxConsecutiveToolCalls(defaultAgent.MaxConsecutiveToolCalls()),
+		session.WithMaxOldToolCallTokens(defaultAgent.MaxOldToolCallTokens()),
 	}
 	if workingDir != "" {
 		sessOpts = append(sessOpts, session.WithWorkingDir(workingDir))
