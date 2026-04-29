@@ -124,6 +124,13 @@ func TestConfigIsEmpty(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name: "with turn_end",
+			config: Config{
+				TurnEnd: []Hook{{Type: HookTypeCommand}},
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -706,7 +713,7 @@ func TestPlainStdoutBecomesAdditionalContext(t *testing.T) {
 	observationalEvents := []EventType{
 		EventBeforeLLMCall, EventAfterLLMCall, EventOnError,
 		EventOnMaxIterations, EventNotification, EventOnUserInput, EventSessionEnd,
-		EventBeforeCompaction, EventAfterCompaction,
+		EventBeforeCompaction, EventAfterCompaction, EventTurnEnd,
 	}
 
 	for _, ev := range contextEvents {
@@ -750,6 +757,8 @@ func configWithFlatHook(ev EventType, h Hook) *Config {
 		cfg.SessionStart = []Hook{h}
 	case EventTurnStart:
 		cfg.TurnStart = []Hook{h}
+	case EventTurnEnd:
+		cfg.TurnEnd = []Hook{h}
 	case EventBeforeLLMCall:
 		cfg.BeforeLLMCall = []Hook{h}
 	case EventAfterLLMCall:
