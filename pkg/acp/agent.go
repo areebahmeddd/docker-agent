@@ -188,10 +188,48 @@ func (a *Agent) Authenticate(context.Context, acp.AuthenticateRequest) (acp.Auth
 	return acp.AuthenticateResponse{}, nil
 }
 
-// LoadSession implements [acp.Agent] (optional, not supported)
+// LoadSession implements [acp.AgentLoader] (optional, not supported)
 func (a *Agent) LoadSession(context.Context, acp.LoadSessionRequest) (acp.LoadSessionResponse, error) {
 	slog.Debug("ACP LoadSession called (not supported)")
 	return acp.LoadSessionResponse{}, errors.New("load session not supported")
+}
+
+// CloseSession implements [acp.Agent] (optional, not advertised in capabilities)
+func (a *Agent) CloseSession(_ context.Context, params acp.CloseSessionRequest) (acp.CloseSessionResponse, error) {
+	sid := string(params.SessionId)
+	slog.Debug("ACP CloseSession called", "session_id", sid)
+
+	a.mu.Lock()
+	acpSess, ok := a.sessions[sid]
+	if ok {
+		delete(a.sessions, sid)
+	}
+	a.mu.Unlock()
+
+	// Cancel any ongoing work for this session.
+	if ok && acpSess != nil && acpSess.cancel != nil {
+		acpSess.cancel()
+	}
+
+	return acp.CloseSessionResponse{}, nil
+}
+
+// ListSessions implements [acp.Agent] (optional, not advertised in capabilities)
+func (a *Agent) ListSessions(context.Context, acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
+	slog.Debug("ACP ListSessions called (not supported)")
+	return acp.ListSessionsResponse{}, errors.New("list sessions not supported")
+}
+
+// ResumeSession implements [acp.Agent] (optional, not advertised in capabilities)
+func (a *Agent) ResumeSession(context.Context, acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
+	slog.Debug("ACP ResumeSession called (not supported)")
+	return acp.ResumeSessionResponse{}, errors.New("resume session not supported")
+}
+
+// SetSessionConfigOption implements [acp.Agent] (optional, not advertised in capabilities)
+func (a *Agent) SetSessionConfigOption(context.Context, acp.SetSessionConfigOptionRequest) (acp.SetSessionConfigOptionResponse, error) {
+	slog.Debug("ACP SetSessionConfigOption called (not supported)")
+	return acp.SetSessionConfigOptionResponse{}, nil
 }
 
 // Cancel implements [acp.Agent]
@@ -522,7 +560,7 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 func (a *Agent) handleMaxIterationsReached(ctx context.Context, acpSess *Session, e *runtime.MaxIterationsReachedEvent) error {
 	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 		SessionId: acp.SessionId(acpSess.id),
-		ToolCall: acp.RequestPermissionToolCall{
+		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: "max_iterations",
 			Title:      new(fmt.Sprintf("Maximum iterations (%d) reached", e.MaxIterations)),
 			Kind:       acp.Ptr(acp.ToolKindExecute),
@@ -755,7 +793,7 @@ func extractDiffContent(toolCallName, arguments string) *acp.ToolCallContent {
 }
 
 // buildToolCallUpdate creates a tool call update for permission requests
-func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.ToolCallStatus) acp.RequestPermissionToolCall {
+func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.ToolCallStatus) acp.ToolCallUpdate {
 	kind := acp.ToolKindExecute
 	title := cmp.Or(tool.Annotations.Title, toolCall.Function.Name)
 
@@ -763,7 +801,7 @@ func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.To
 		kind = acp.ToolKindRead
 	}
 
-	return acp.RequestPermissionToolCall{
+	return acp.ToolCallUpdate{
 		ToolCallId: acp.ToolCallId(toolCall.ID),
 		Title:      &title,
 		Kind:       &kind,
