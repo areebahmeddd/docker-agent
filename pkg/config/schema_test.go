@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xeipuuv/gojsonschema"
 
+	hclconv "github.com/docker/docker-agent/pkg/config/hcl"
 	"github.com/docker/docker-agent/pkg/config/latest"
 )
 
@@ -32,6 +34,14 @@ func TestJsonSchemaWorksForExamples(t *testing.T) {
 
 			buf, err := os.ReadFile(file)
 			require.NoError(t, err)
+
+			// HCL examples are converted to their YAML equivalent before
+			// being validated against the JSON schema, since the schema
+			// describes the YAML/JSON representation only.
+			if filepath.Ext(file) == ".hcl" {
+				buf, err = hclconv.ToYAML(buf, file)
+				require.NoError(t, err)
+			}
 
 			var rawJSON any
 			err = yaml.Unmarshal(buf, &rawJSON)
