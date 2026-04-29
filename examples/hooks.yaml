@@ -16,6 +16,7 @@
 #   session_start     - one-time setup; AdditionalContext PERSISTS in the session
 #   user_prompt_submit- runs once per user message, before the first LLM call
 #   turn_start        - per-turn context; AdditionalContext is TRANSIENT
+#   turn_end          - per-turn finalizer; fires no matter why the turn ended
 #   before_llm_call   - just before each model call (observability, guardrails)
 #   after_llm_call    - just after a successful model call
 #   session_end       - cleanup when the session terminates
@@ -62,6 +63,7 @@
 #   /tmp/agent-session.log         (session_start, session_end)
 #   /tmp/agent-prompts.log         (user_prompt_submit)
 #   /tmp/agent-llm-calls.log       (before_llm_call, after_llm_call)
+#   /tmp/agent-turns.log           (turn_end)
 #   /tmp/agent-tool-results.log    (post_tool_use)
 #   /tmp/agent-permissions.log     (permission_request)
 #   /tmp/agent-compactions.log     (pre_compact)
@@ -224,6 +226,36 @@ agents:
           args:
             - GUIDELINES.md
             - PROJECT.md
+
+      # ====================================================================
+      # TURN-END - runs ONCE per turn after the iteration finishes — the
+      # symmetric counterpart of turn_start. Fires no matter why the turn
+      # ended: a normal stop, an error, a hook-driven shutdown, the
+      # max_iterations limit, the loop detector, or context cancellation.
+      # The reason is reported via the .reason field:
+      #
+      #   normal           - model finished cleanly, no follow-up
+      #   continue         - more iterations to come (e.g. tool calls)
+      #   steered          - drained steered messages prompted a re-entry
+      #   error            - model call failed (handleStreamError)
+      #   canceled         - context cancellation (Ctrl+C, parent ctx done)
+      #   hook_blocked     - before_llm_call or post_tool_use signalled stop
+      #   loop_detected    - degenerate consecutive-tool-call loop
+      #   max_iterations   - iteration cap was reached during this turn
+      #
+      # Observational; the result is ignored. Use it to time turns,
+      # accumulate per-turn metrics (token usage, tool counts), or notify
+      # external observability pipelines.
+      # ====================================================================
+      turn_end:
+        - type: command
+          timeout: 5
+          command: |
+            INPUT=$(cat)
+            SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+            AGENT=$(echo "$INPUT" | jq -r '.agent_name // "unknown"')
+            REASON=$(echo "$INPUT" | jq -r '.reason // "unknown"')
+            echo "[$(date)] [←] $SESSION_ID $AGENT turn ended (reason=$REASON)" >> /tmp/agent-turns.log
 
       # ====================================================================
       # BEFORE-LLM-CALL - fires just before every model invocation, AFTER

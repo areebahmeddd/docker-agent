@@ -620,6 +620,13 @@
             "$ref": "#/definitions/HookDefinition"
           }
         },
+        "turn_end": {
+          "type": "array",
+          "description": "Hooks that run once per agent turn when the turn finishes — the symmetric counterpart of turn_start. Fires no matter why the turn ended: a normal stop, an error, a hook-driven shutdown, the max_iterations limit, the loop detector, or context cancellation. The reason is reported via the hook input's reason field ('normal', 'continue', 'steered', 'error', 'canceled', 'hook_blocked', 'max_iterations', 'loop_detected'). Observational; output is ignored.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
+        },
         "before_llm_call": {
           "type": "array",
           "description": "Hooks that run just before each model call (after turn_start has assembled the messages). Use for observability, cost guardrails, or auditing without contributing system messages — turn_start is the right event for the latter.",

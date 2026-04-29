@@ -132,6 +132,51 @@ func (r *LocalRuntime) executeTurnStartHooks(ctx context.Context, sess *session.
 	}, events))
 }
 
+// Reason values reported in [hooks.Input.Reason] when [hooks.EventTurnEnd]
+// fires. The runtime guarantees that turn_end runs once per turn that
+// fired turn_start, no matter how the turn exited; the reason classifies
+// which exit path the runtime took.
+const (
+	// turnEndReasonNormal — the model finished the turn cleanly and the
+	// run loop is about to break out (no further iterations).
+	turnEndReasonNormal = "normal"
+	// turnEndReasonContinue — the turn finished cleanly and the loop is
+	// about to start a new iteration (e.g. after tool calls, or after a
+	// stop with a queued follow-up).
+	turnEndReasonContinue = "continue"
+	// turnEndReasonSteered — the turn finished and was followed by
+	// drained steered messages, prompting a new iteration.
+	turnEndReasonSteered = "steered"
+	// turnEndReasonError — the model call failed and the runtime is
+	// shutting down the run (handleStreamError returned non-retry).
+	turnEndReasonError = "error"
+	// turnEndReasonCanceled — the turn ended because the stream context
+	// was cancelled (e.g. user Ctrl+C). Includes deferred firing on
+	// any return path while ctx is done.
+	turnEndReasonCanceled = "canceled"
+	// turnEndReasonHookBlocked — a hook (before_llm_call or
+	// post_tool_use) signalled run termination via a deny verdict.
+	turnEndReasonHookBlocked = "hook_blocked"
+	// turnEndReasonLoopDetected — the consecutive-tool-call loop
+	// detector terminated the turn.
+	turnEndReasonLoopDetected = "loop_detected"
+	// turnEndReasonMaxIterations — the iteration limit was reached
+	// during this turn.
+	turnEndReasonMaxIterations = "max_iterations"
+)
+
+// executeTurnEndHooks fires turn_end once per turn — symmetric to
+// turn_start. Observational; the result is discarded. Reason is one
+// of the turnEndReason* constants above and is reported via
+// [hooks.Input.Reason] so handlers can branch on the exit path.
+func (r *LocalRuntime) executeTurnEndHooks(ctx context.Context, sess *session.Session, a *agent.Agent, reason string, events chan Event) {
+	r.dispatchHook(ctx, a, hooks.EventTurnEnd, &hooks.Input{
+		SessionID: sess.ID,
+		AgentName: a.Name(),
+		Reason:    reason,
+	}, events)
+}
+
 // contextMessages converts a context-providing hook's AdditionalContext
 // into a one-element transient system-message slice ready to thread
 // through [session.Session.GetMessages]. Returns nil for empty results

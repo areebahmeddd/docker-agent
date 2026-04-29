@@ -51,6 +51,16 @@ const (
 	// EventTurnStart fires at the start of every agent turn (each model
 	// call). AdditionalContext is injected transiently and never persisted.
 	EventTurnStart EventType = "turn_start"
+	// EventTurnEnd fires once per agent turn (each model call) when the
+	// turn finishes — symmetric to [EventTurnStart]. It runs no matter
+	// why the turn ended: a normal stop, an error, a hook-driven
+	// shutdown, the iteration limit, the loop detector, or context
+	// cancellation. The reason is reported in [Input.Reason] using one
+	// of the turnEndReason* constants in the runtime package ("normal",
+	// "continue", "steered", "error", "canceled", "hook_blocked",
+	// "max_iterations", "loop_detected"). Observational; output is
+	// ignored.
+	EventTurnEnd EventType = "turn_end"
 	// EventBeforeLLMCall fires immediately before each model call.
 	// Returning decision="block" (or continue=false / exit code 2)
 	// stops the run loop before the model is invoked — useful for hard
@@ -209,6 +219,8 @@ type Input struct {
 	// PreCompact specific: "manual", "auto", "overflow", "tool_overflow".
 	Source string `json:"source,omitempty"`
 	// SessionEnd specific: "clear", "logout", "prompt_input_exit", "other".
+	// TurnEnd specific: "normal", "continue", "steered", "error",
+	// "canceled", "hook_blocked", "max_iterations", "loop_detected".
 	Reason string `json:"reason,omitempty"`
 	// Stop / AfterLLMCall / SubagentStop: the model's final response content.
 	StopResponse string `json:"stop_response,omitempty"`

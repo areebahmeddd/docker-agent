@@ -25,6 +25,7 @@ var onlyHooks = map[EventType]*Config{
 	EventPostToolUse:      {PostToolUse: matcherWildcard},
 	EventSessionStart:     {SessionStart: trueHook},
 	EventTurnStart:        {TurnStart: trueHook},
+	EventTurnEnd:          {TurnEnd: trueHook},
 	EventBeforeLLMCall:    {BeforeLLMCall: trueHook},
 	EventAfterLLMCall:     {AfterLLMCall: trueHook},
 	EventSessionEnd:       {SessionEnd: trueHook},

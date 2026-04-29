@@ -79,6 +79,7 @@ func compileEvents(c *Config) map[EventType][]matcher {
 		EventSessionStart:           flat(c.SessionStart),
 		EventUserPromptSubmit:       flat(c.UserPromptSubmit),
 		EventTurnStart:              flat(c.TurnStart),
+		EventTurnEnd:                flat(c.TurnEnd),
 		EventBeforeLLMCall:          flat(c.BeforeLLMCall),
 		EventAfterLLMCall:           flat(c.AfterLLMCall),
 		EventSessionEnd:             flat(c.SessionEnd),
