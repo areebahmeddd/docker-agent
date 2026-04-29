@@ -25,6 +25,8 @@ func allCops() []cop.Cop {
 		NewTUIViewPurity(),
 		NewRuntimeEventRegistry(),
 		NewRuntimeSessionScoped(),
+		NewHookConfigSync(),
+		NewHookBuiltinsRegistered(),
 	}
 }
 
