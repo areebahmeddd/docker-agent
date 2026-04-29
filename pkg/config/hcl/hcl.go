@@ -19,7 +19,6 @@ package hcl
 import (
 	"fmt"
 	"math/big"
-	"sort"
 	"strings"
 
 	"github.com/goccy/go-yaml"
@@ -55,13 +54,7 @@ func LooksLikeHCL(data []byte) bool {
 // topLevelHCLKeywords lists the block names that may legitimately appear at
 // the top level of a docker-agent HCL document.
 var topLevelHCLKeywords = []string{
-	"agent",
-	"model",
-	"provider",
-	"mcp",
-	"rag",
-	"metadata",
-	"permissions",
+	"agent", "model", "provider", "mcp", "rag", "metadata", "permissions",
 }
 
 // ToYAML parses an HCL document and returns an equivalent YAML document
@@ -110,6 +103,14 @@ const (
 	// modeList: block has 0 labels; multiple occurrences are appended to a list.
 	modeList
 )
+
+// expectedLabels returns the number of labels a block of this mode requires.
+func (m blockMode) expectedLabels() int {
+	if m == modeMapByLabel || m == modeListLabelAsField {
+		return 1
+	}
+	return 0
+}
 
 type blockRule struct {
 	mode       blockMode
@@ -182,47 +183,39 @@ func lookupRule(name string, labels int) blockRule {
 	return blockRule{mode: modeSingleton, outKey: name}
 }
 
+// convertBody walks an HCL body, converting attributes into Go values and
+// blocks into nested map / list / yaml.MapSlice structures according to the
+// block rules.
+//
+// HCL's parser already rejects duplicate attribute names within a body, so
+// we don't guard against them here.
 func convertBody(body *hclsyntax.Body) (map[string]any, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	out := map[string]any{}
 
-	// Iterate attributes in source order for deterministic error reporting.
-	attrNames := make([]string, 0, len(body.Attributes))
-	for name := range body.Attributes {
-		attrNames = append(attrNames, name)
-	}
-	sort.Slice(attrNames, func(i, j int) bool {
-		return body.Attributes[attrNames[i]].Range().Start.Byte <
-			body.Attributes[attrNames[j]].Range().Start.Byte
-	})
-
-	for _, name := range attrNames {
-		attr := body.Attributes[name]
+	for name, attr := range body.Attributes {
 		val, attrDiags := convertExpr(attr.Expr)
 		diags = append(diags, attrDiags...)
-		if existing, ok := out[name]; ok {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "Duplicate key",
-				Detail:   fmt.Sprintf("Key %q is set multiple times in the same block.", name),
-				Subject:  attr.Range().Ptr(),
-			})
-			_ = existing
-			continue
-		}
 		out[name] = val
 	}
 
 	for _, block := range body.Blocks {
-		blockDiags := mergeBlock(out, block)
-		diags = append(diags, blockDiags...)
+		diags = append(diags, mergeBlock(out, block)...)
 	}
 
 	return out, diags
 }
 
+// mergeBlock decodes a single child block and merges its body into out
+// according to the block's rule. It validates label count and detects
+// per-rule duplicates (e.g. two singleton blocks of the same name, or two
+// labeled blocks with the same label).
 func mergeBlock(out map[string]any, block *hclsyntax.Block) hcl.Diagnostics {
 	rule := lookupRule(block.Type, len(block.Labels))
+
+	if d := checkLabels(block, rule.mode.expectedLabels()); d != nil {
+		return d
+	}
 
 	body, diags := convertBody(block.Body)
 	if diags.HasErrors() {
@@ -231,75 +224,59 @@ func mergeBlock(out map[string]any, block *hclsyntax.Block) hcl.Diagnostics {
 
 	switch rule.mode {
 	case modeSingleton:
-		if len(block.Labels) != 0 {
-			return hcl.Diagnostics{{
-				Severity: hcl.DiagError,
-				Summary:  "Unexpected block label",
-				Detail:   fmt.Sprintf("Block %q does not take any label.", block.Type),
-				Subject:  block.LabelRanges[0].Ptr(),
-			}}
-		}
 		if _, exists := out[rule.outKey]; exists {
-			return hcl.Diagnostics{{
-				Severity: hcl.DiagError,
-				Summary:  "Duplicate block",
-				Detail:   fmt.Sprintf("Block %q can only appear once in this scope.", block.Type),
-				Subject:  block.DefRange().Ptr(),
-			}}
+			return errf(block.DefRange().Ptr(), "Duplicate block",
+				"Block %q can only appear once in this scope.", block.Type)
 		}
 		out[rule.outKey] = body
 
 	case modeList:
-		if len(block.Labels) != 0 {
-			return hcl.Diagnostics{{
-				Severity: hcl.DiagError,
-				Summary:  "Unexpected block label",
-				Detail:   fmt.Sprintf("Block %q does not take any label.", block.Type),
-				Subject:  block.LabelRanges[0].Ptr(),
-			}}
-		}
+		list, _ := out[rule.outKey].([]any)
+		out[rule.outKey] = append(list, body)
+
+	case modeListLabelAsField:
+		body[rule.labelField] = block.Labels[0]
 		list, _ := out[rule.outKey].([]any)
 		out[rule.outKey] = append(list, body)
 
 	case modeMapByLabel:
-		if len(block.Labels) != 1 {
-			return hcl.Diagnostics{{
-				Severity: hcl.DiagError,
-				Summary:  "Block label required",
-				Detail:   fmt.Sprintf("Block %q expects exactly one label.", block.Type),
-				Subject:  block.DefRange().Ptr(),
-			}}
-		}
-		slice, _ := out[rule.outKey].(yaml.MapSlice)
 		label := block.Labels[0]
+		slice, _ := out[rule.outKey].(yaml.MapSlice)
 		for _, item := range slice {
 			if item.Key == label {
-				return hcl.Diagnostics{{
-					Severity: hcl.DiagError,
-					Summary:  "Duplicate block",
-					Detail:   fmt.Sprintf("Block %q with label %q is defined more than once.", block.Type, label),
-					Subject:  block.LabelRanges[0].Ptr(),
-				}}
+				return errf(block.LabelRanges[0].Ptr(), "Duplicate block",
+					"Block %q with label %q is defined more than once.", block.Type, label)
 			}
 		}
-		slice = append(slice, yaml.MapItem{Key: label, Value: body})
-		out[rule.outKey] = slice
-
-	case modeListLabelAsField:
-		if len(block.Labels) != 1 {
-			return hcl.Diagnostics{{
-				Severity: hcl.DiagError,
-				Summary:  "Block label required",
-				Detail:   fmt.Sprintf("Block %q expects exactly one label.", block.Type),
-				Subject:  block.DefRange().Ptr(),
-			}}
-		}
-		body[rule.labelField] = block.Labels[0]
-		list, _ := out[rule.outKey].([]any)
-		out[rule.outKey] = append(list, body)
+		out[rule.outKey] = append(slice, yaml.MapItem{Key: label, Value: body})
 	}
 
 	return nil
+}
+
+// checkLabels returns a diagnostic if the block's label count does not match
+// what the rule requires, and nil otherwise.
+func checkLabels(block *hclsyntax.Block, want int) hcl.Diagnostics {
+	got := len(block.Labels)
+	if got == want {
+		return nil
+	}
+	if want == 0 {
+		return errf(block.LabelRanges[0].Ptr(), "Unexpected block label",
+			"Block %q does not take any label.", block.Type)
+	}
+	return errf(block.DefRange().Ptr(), "Block label required",
+		"Block %q expects exactly one label.", block.Type)
+}
+
+// errf builds a single-error diagnostics slice with a formatted detail.
+func errf(subj *hcl.Range, summary, format string, args ...any) hcl.Diagnostics {
+	return hcl.Diagnostics{{
+		Severity: hcl.DiagError,
+		Summary:  summary,
+		Detail:   fmt.Sprintf(format, args...),
+		Subject:  subj,
+	}}
 }
 
 func convertExpr(expr hclsyntax.Expression) (any, hcl.Diagnostics) {
@@ -344,6 +321,5 @@ func ctyToGo(val cty.Value) any {
 		}
 		return out
 	}
-	// Fallback for any unexpected type.
 	return val.GoString()
 }
