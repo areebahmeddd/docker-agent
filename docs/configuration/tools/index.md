@@ -49,6 +49,12 @@ toolsets:
 
 Extend agents with external tools via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
+<div class="callout callout-tip" markdown="1">
+<div class="callout-title">💡 Reusable MCP definitions
+</div>
+  <p>Repeated MCP server definitions can be hoisted into the top-level <code>mcps:</code> section and referenced by name with <code>{type: mcp, ref: &lt;name&gt;}</code>. See <a href="{{ '/configuration/overview/#reusable-mcp-servers-mcps' | relative_url }}">Reusable MCP Servers</a>.</p>
+</div>
+
 ### Docker MCP (Recommended)
 
 Run MCP servers as secure Docker containers via the [MCP Gateway](https://github.com/docker/mcp-gateway):
@@ -264,6 +270,64 @@ The TUI exposes the supervisor through two slash commands:
 - `/toolset-restart <name>` — force the supervisor to reconnect the named toolset. Useful after completing OAuth, when a remote MCP server has been redeployed, or when an LSP like `gopls` is stuck.
 
 See the [TUI reference]({{ '/features/tui/' | relative_url }}) for the full list of slash commands.
+
+## TOON-Encoded Tool Outputs
+
+Many MCP servers return verbose JSON responses that consume a lot of context budget. The `toon` field on a toolset transparently re-encodes matching tools' JSON output as [TOON](https://github.com/alpkeskin/gotoon) — a compact, model-friendly key/value format — before the result is shown to the model.
+
+```yaml
+toolsets:
+  - type: mcp
+    ref: docker:github-official
+    toon: ".*"          # toonify every tool from this MCP server
+  - type: mcp
+    command: my-server
+    toon: "list_.*,get_.*" # only toonify list_/get_ tools
+```
+
+| Property | Type   | Description |
+| -------- | ------ | ----------- |
+| `toon`   | string | Comma-delimited list of regular expressions matching tool names whose JSON output should be re-encoded as TOON. Non-JSON outputs and non-matching tools are passed through untouched. |
+
+When a tool's output is not valid JSON, it is returned unchanged — TOON encoding is best-effort and never breaks tools that emit plain text.
+
+<div class="callout callout-info" markdown="1">
+<div class="callout-title">ℹ️ When to use TOON
+</div>
+  <p>TOON typically yields 30-60% smaller payloads than equivalent JSON for MCP tools that return arrays of records (issue lists, search results, file listings, …). It works best when the schema is regular; one-off responses with deeply nested or heterogeneous shapes may benefit less.</p>
+</div>
+
+## Per-Toolset Model Routing
+
+The `model` field on a toolset overrides which LLM is invoked for the **next turn** after a tool from that toolset returns — letting you process simple tool results (file reads, knowledge-base lookups, shell stdout) with a cheaper or faster model while keeping the agent's primary model for reasoning.
+
+```yaml
+models:
+  primary:
+    provider: anthropic
+    model: claude-sonnet-4-5
+  fast:
+    provider: anthropic
+    model: claude-haiku-4-5
+
+agents:
+  root:
+    model: primary
+    toolsets:
+      - type: filesystem
+        model: fast            # process file reads with the fast model
+      - type: shell
+        model: fast            # ditto for shell stdout
+      - type: mcp
+        ref: docker:github-official
+        model: openai/gpt-4o-mini  # inline provider/model also works
+```
+
+| Property | Type   | Description |
+| -------- | ------ | ----------- |
+| `model`  | string | Model used for the LLM turn that processes tool results from this toolset. Either a name from the `models:` section or an inline `provider/model` (e.g. `openai/gpt-4o-mini`). The override is **one-shot**: subsequent turns return to the agent's primary model. |
+
+When multiple tool calls in a single turn come from toolsets with different `model` overrides, the runtime picks the override of the **first** tool call that has one set. See [`examples/per_tool_model_routing.yaml`](https://github.com/docker/docker-agent/blob/main/examples/per_tool_model_routing.yaml) for a complete configuration.
 
 ## Tool Filtering
 
