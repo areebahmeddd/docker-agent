@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 
@@ -198,39 +197,45 @@ func TestTurnEndFiresOnStreamError(t *testing.T) {
 }
 
 // blockingProvider returns a stream whose Recv blocks until the
-// provided context is cancelled, modelling a slow upstream that
-// receives a cancel mid-stream.
+// CreateChatCompletionStream-supplied context is cancelled, modelling
+// a slow upstream that receives a cancel mid-stream. The cancellation
+// signal is plumbed via the per-call done channel captured below —
+// stashing the context on the stream itself would trip the
+// containedctx linter, since context belongs in function arguments,
+// not struct fields.
 type blockingProvider struct {
-	id      string
-	release chan struct{}
+	id string
 }
 
 func (p *blockingProvider) ID() string { return p.id }
 
 func (p *blockingProvider) CreateChatCompletionStream(ctx context.Context, _ []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
-	return &blockingStream{ctx: ctx, release: p.release}, nil
+	// Snapshot ctx.Done() at stream-construction time — the runtime
+	// passes a per-call streamCtx that is cancelled when the parent
+	// (RunStream's) context is cancelled, so capturing the channel
+	// here is equivalent to capturing the context for our purposes
+	// and avoids holding a context.Context in struct state.
+	return &blockingStream{
+		done: ctx.Done(),
+		err:  func() error { return ctx.Err() },
+	}, nil
 }
 
 func (p *blockingProvider) BaseConfig() base.Config { return base.Config{} }
 func (p *blockingProvider) MaxTokens() int          { return 0 }
 
 type blockingStream struct {
-	ctx     context.Context
-	release chan struct{}
+	done <-chan struct{}
+	err  func() error
 }
 
 func (s *blockingStream) Recv() (chat.MessageStreamResponse, error) {
-	// Block until the parent context is cancelled or a release signal
-	// is received. On cancellation we surface ctx.Err() so the
-	// runtime's fallback.execute treats it as a stream error and
-	// proceeds to handleStreamError, which exits the loop and
-	// triggers the deferred turn_end dispatch.
-	select {
-	case <-s.ctx.Done():
-		return chat.MessageStreamResponse{}, s.ctx.Err()
-	case <-s.release:
-		return chat.MessageStreamResponse{}, errors.New("released without data")
-	}
+	// Block until the parent context is cancelled. On cancellation
+	// we surface ctx.Err() so the runtime's fallback.execute treats
+	// it as a stream error and proceeds to handleStreamError, which
+	// exits the loop and triggers the deferred turn_end dispatch.
+	<-s.done
+	return chat.MessageStreamResponse{}, s.err()
 }
 
 func (s *blockingStream) Close() {}
@@ -251,7 +256,7 @@ func (s *blockingStream) Close() {}
 func TestTurnEndFiresOnContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	prov := &blockingProvider{id: "test/blocking-model", release: make(chan struct{})}
+	prov := &blockingProvider{id: "test/blocking-model"}
 
 	root := agent.New("root", "test agent",
 		agent.WithModel(prov),
@@ -381,4 +386,3 @@ func TestTurnEndFiresEveryIteration(t *testing.T) {
 	assert.Equal(t, "normal", reasons[1],
 		"final iteration must report 'normal'")
 }
-

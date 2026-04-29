@@ -160,9 +160,6 @@ const (
 	// turnEndReasonLoopDetected — the consecutive-tool-call loop
 	// detector terminated the turn.
 	turnEndReasonLoopDetected = "loop_detected"
-	// turnEndReasonMaxIterations — the iteration limit was reached
-	// during this turn.
-	turnEndReasonMaxIterations = "max_iterations"
 )
 
 // executeTurnEndHooks fires turn_end once per turn — symmetric to

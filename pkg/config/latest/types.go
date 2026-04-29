@@ -1712,11 +1712,10 @@ type HooksConfig struct {
 	// TurnEnd hooks run once per agent turn when the turn finishes —
 	// the symmetric counterpart of TurnStart. Fires no matter why the
 	// turn ended: a normal stop, an error, a hook-driven shutdown, the
-	// max_iterations limit, the loop detector, or context cancellation.
-	// The reason is reported in the hook input's reason field
-	// ("normal", "continue", "steered", "error", "canceled",
-	// "hook_blocked", "max_iterations", "loop_detected"). Observational;
-	// output is ignored.
+	// loop detector, or context cancellation. The reason is reported
+	// in the hook input's reason field ("normal", "continue",
+	// "steered", "error", "canceled", "hook_blocked",
+	// "loop_detected"). Observational; output is ignored.
 	TurnEnd []HookDefinition `json:"turn_end,omitempty" yaml:"turn_end,omitempty"`
 
 	// BeforeLLMCall hooks run just before each model call (after

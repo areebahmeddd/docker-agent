@@ -230,9 +230,9 @@ agents:
       # ====================================================================
       # TURN-END - runs ONCE per turn after the iteration finishes — the
       # symmetric counterpart of turn_start. Fires no matter why the turn
-      # ended: a normal stop, an error, a hook-driven shutdown, the
-      # max_iterations limit, the loop detector, or context cancellation.
-      # The reason is reported via the .reason field:
+      # ended: a normal stop, an error, a hook-driven shutdown, the loop
+      # detector, or context cancellation. The reason is reported via
+      # the .reason field:
       #
       #   normal           - model finished cleanly, no follow-up
       #   continue         - more iterations to come (e.g. tool calls)
@@ -241,7 +241,6 @@ agents:
       #   canceled         - context cancellation (Ctrl+C, parent ctx done)
       #   hook_blocked     - before_llm_call or post_tool_use signalled stop
       #   loop_detected    - degenerate consecutive-tool-call loop
-      #   max_iterations   - iteration cap was reached during this turn
       #
       # Observational; the result is ignored. Use it to time turns,
       # accumulate per-turn metrics (token usage, tool counts), or notify
