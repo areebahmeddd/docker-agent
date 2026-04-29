@@ -272,9 +272,35 @@ func parseStdoutJSON(stdout string) *Output {
 	return &parsed
 }
 
+// failClosed reports whether a hook failure on event must deny the
+// event. Only PreToolUse is a hard security boundary; every other
+// event surfaces failures as warnings unless the hook opts into
+// ErrorPolicyBlock.
+func failClosed(event EventType) bool {
+	return event == EventPreToolUse
+}
+
+// stdoutAsContext reports whether plain stdout (non-JSON, exit 0)
+// from a hook should be routed into Result.AdditionalContext. It is
+// the runtime's emit site that decides whether AdditionalContext is
+// surfaced; events that don't consume it MUST drop plain stdout so
+// hook authors don't think their output mattered when it would have
+// been thrown away.
+func stdoutAsContext(event EventType) bool {
+	switch event {
+	case EventPostToolUse,
+		EventSessionStart,
+		EventUserPromptSubmit,
+		EventTurnStart,
+		EventPreCompact,
+		EventStop:
+		return true
+	}
+	return false
+}
+
 // aggregate combines per-hook results into a single [Result].
 func aggregate(results []hookResult, event EventType) *Result {
-	spec := eventSpec(event)
 	final := &Result{Allowed: true}
 	var messages, contexts, sysMsgs []string
 
@@ -285,7 +311,7 @@ func aggregate(results []hookResult, event EventType) *Result {
 			if policy == "" {
 				policy = ErrorPolicyWarn
 			}
-			if spec.FailClosed || policy == ErrorPolicyBlock {
+			if failClosed(event) || policy == ErrorPolicyBlock {
 				slog.Warn("Hook failed; blocking event", "hook", r.hook.DisplayName(), "error", r.err)
 				final.Allowed = false
 				final.ExitCode = -1
@@ -312,7 +338,7 @@ func aggregate(results []hookResult, event EventType) *Result {
 		case r.Output == nil:
 			// Plain stdout becomes AdditionalContext only for events
 			// whose runtime consumes it.
-			if r.Stdout != "" && spec.StdoutPolicy == StdoutAdditionalContext {
+			if r.Stdout != "" && stdoutAsContext(event) {
 				contexts = append(contexts, strings.TrimSpace(r.Stdout))
 			}
 			continue

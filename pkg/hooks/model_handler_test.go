@@ -253,6 +253,19 @@ func TestPreToolUseDecisionShapeIsRegistered(t *testing.T) {
 	assert.True(t, schema.Strict)
 }
 
+// TestLookupShapeDefault pins that the empty schema name maps to the
+// free-form additional_context shape with no structured-output
+// schema, so a `type: model` hook without a Schema field works
+// out of the box.
+func TestLookupShapeDefault(t *testing.T) {
+	t.Parallel()
+
+	shape, ok := lookupShape("")
+	require.True(t, ok)
+	require.NotNil(t, shape)
+	assert.Nil(t, lookupSchema(""), "default shape must NOT request structured output")
+}
+
 // TestRegisterResponseShapeRejectsBadInput pins the public contract of
 // the registration helpers — empty names and nil shapes/schemas must
 // be rejected so a typo fails loudly at startup.
@@ -262,6 +275,35 @@ func TestRegisterResponseShapeRejectsBadInput(t *testing.T) {
 	require.Error(t, RegisterResponseShape("", defaultShape))
 	require.Error(t, RegisterResponseShape("nil-shape", nil))
 	require.Error(t, RegisterResponseSchema("", &latest.StructuredOutput{Name: "x"}))
+}
+
+// TestRegisterResponseShapeRoundTrip exercises the public extension
+// point: an external caller can register a custom shape + schema
+// pair, reference it from a `type: model` hook via Hook.Schema, and
+// have it drive the aggregated Result. This is the contract that
+// makes pkg/hooks reusable beyond docker-agent's built-in shapes.
+func TestRegisterResponseShapeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	const name = "test_round_trip_shape"
+	require.NoError(t, RegisterResponseShape(name, func(raw string, in *Input) (*Output, error) {
+		return NewAdditionalContextOutput(in.HookEventName, "shape saw: "+raw), nil
+	}))
+	require.NoError(t, RegisterResponseSchema(name, &latest.StructuredOutput{Name: name, Strict: true}))
+
+	client := &fakeClient{reply: "hello"}
+	res, err := runModelHook(t, client, Hook{
+		Type:   HookTypeModel,
+		Model:  "openai/gpt-4o-mini",
+		Prompt: "hi",
+		Schema: name,
+	}, &Input{HookEventName: EventTurnStart})
+	require.NoError(t, err)
+	require.NotNil(t, res.Output)
+	require.NotNil(t, res.Output.HookSpecificOutput)
+	assert.Equal(t, "shape saw: hello", res.Output.HookSpecificOutput.AdditionalContext)
+	require.NotNil(t, client.gotSchema, "registered schema must be threaded to the ModelClient")
+	assert.Equal(t, name, client.gotSchema.Name)
 }
 
 // TestNilModelClientFailsAtFirstDispatch documents the lazy-failure

@@ -76,9 +76,7 @@ func RegisterResponseShape(name string, shape ResponseShape) error {
 
 // RegisterResponseSchema associates a [latest.StructuredOutput] with a
 // shape name so the [ModelClient] can request strict JSON output from
-// providers that honor it. The shape name must already be registered
-// (or be the empty default) — calling this for an unknown shape is an
-// error to catch typos at startup.
+// providers that honor it.
 func RegisterResponseSchema(name string, schema *latest.StructuredOutput) error {
 	if name == "" {
 		return errors.New("response schema name must not be empty")
@@ -114,7 +112,7 @@ func lookupSchema(name string) *latest.StructuredOutput {
 
 // defaultShape passes the model's reply through as additional_context.
 // Useful for turn_start summarizers, post_tool_use commentary, etc. —
-// any event where [EventType.consumesContext] is true.
+// any event where the runtime consumes AdditionalContext.
 func defaultShape(raw string, in *Input) (*Output, error) {
 	if in == nil {
 		return nil, nil

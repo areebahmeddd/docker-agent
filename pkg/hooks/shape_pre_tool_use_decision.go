@@ -19,11 +19,11 @@ import (
 const ShapePreToolUseDecision = "pre_tool_use_decision"
 
 // registerPreToolUseDecisionShape installs the shape and its strict
-// JSON schema on the package-level [modelRegistry]. It is called via a
+// JSON schema on the package-level registry. It is called via a
 // package-level var initializer so the shape is available before any
-// caller looks it up; using `init()` would trip linters and obscure
-// dependency order, while `var _ = registerXxx()` keeps the side
-// effect explicit at the declaration site.
+// caller looks it up; using `init()` would trip the gochecknoinits
+// linter, while `var _ = registerXxx()` keeps the side effect
+// explicit at the declaration site.
 //
 // Returns true on success; panics on registry error since the inputs
 // are static.
@@ -67,10 +67,7 @@ var preToolUseDecisionSchema = &latest.StructuredOutput{
 // It is deliberately tolerant of providers that wrap JSON in markdown
 // fences or surround it with prose, but rejects unparseable text by
 // returning an error — which the executor maps to fail-closed (deny)
-// per the documented PreToolUse contract. This means the caller does
-// NOT need to special-case error paths to "ask the user instead": that
-// fallback is the executor's job, configured per-hook via timeout /
-// continue / system_message.
+// per the documented PreToolUse contract.
 func preToolUseDecisionShape(raw string, in *Input) (*Output, error) {
 	body, err := extractJSONObject(raw)
 	if err != nil {
