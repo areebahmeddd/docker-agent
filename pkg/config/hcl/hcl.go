@@ -93,29 +93,28 @@ func ToMap(data []byte, filename string) (map[string]any, error) {
 type blockMode int
 
 const (
-	// modeMapByLabel: block has 1 label; output as a map keyed by the label.
+	// modeMapByLabel: block has 1 label; output as a label-keyed yaml.MapSlice.
 	modeMapByLabel blockMode = iota
-	// modeListLabelAsField: block has 1 label; output as a list with the label
-	// injected as a named field of each entry.
-	modeListLabelAsField
 	// modeSingleton: block has 0 labels and may appear at most once.
 	modeSingleton
-	// modeList: block has 0 labels; multiple occurrences are appended to a list.
+	// modeList: blocks aggregated into a list. If labelField is set, the
+	// block's single label is injected as that field on each entry.
 	modeList
 )
-
-// expectedLabels returns the number of labels a block of this mode requires.
-func (m blockMode) expectedLabels() int {
-	if m == modeMapByLabel || m == modeListLabelAsField {
-		return 1
-	}
-	return 0
-}
 
 type blockRule struct {
 	mode       blockMode
 	outKey     string
-	labelField string // only used for modeListLabelAsField
+	labelField string // only set for labeled list rules (e.g. toolsets)
+}
+
+// expectedLabels returns the number of labels a block matching this rule
+// requires.
+func (r blockRule) expectedLabels() int {
+	if r.mode == modeMapByLabel || r.labelField != "" {
+		return 1
+	}
+	return 0
 }
 
 // blockRules describes how each known block name is rendered in the YAML
@@ -135,7 +134,7 @@ var blockRules = map[string]blockRule{
 	"shell": {mode: modeMapByLabel, outKey: "shell"},
 
 	// Toolsets are a list with the label encoded as the `type` field.
-	"toolset": {mode: modeListLabelAsField, outKey: "toolsets", labelField: "type"},
+	"toolset": {mode: modeList, outKey: "toolsets", labelField: "type"},
 
 	// Singletons.
 	"permissions":       {mode: modeSingleton, outKey: "permissions"},
@@ -213,7 +212,7 @@ func convertBody(body *hclsyntax.Body) (map[string]any, hcl.Diagnostics) {
 func mergeBlock(out map[string]any, block *hclsyntax.Block) hcl.Diagnostics {
 	rule := lookupRule(block.Type, len(block.Labels))
 
-	if d := checkLabels(block, rule.mode.expectedLabels()); d != nil {
+	if d := checkLabels(block, rule.expectedLabels()); d != nil {
 		return d
 	}
 
@@ -231,11 +230,9 @@ func mergeBlock(out map[string]any, block *hclsyntax.Block) hcl.Diagnostics {
 		out[rule.outKey] = body
 
 	case modeList:
-		list, _ := out[rule.outKey].([]any)
-		out[rule.outKey] = append(list, body)
-
-	case modeListLabelAsField:
-		body[rule.labelField] = block.Labels[0]
+		if rule.labelField != "" {
+			body[rule.labelField] = block.Labels[0]
+		}
 		list, _ := out[rule.outKey].([]any)
 		out[rule.outKey] = append(list, body)
 
