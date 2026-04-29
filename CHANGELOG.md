@@ -3,6 +3,73 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.54.0] - 2026-04-29
+
+This release introduces clickable terminal links, domain filtering for fetch operations, and enhanced toolset lifecycle management with configurable supervision profiles.
+
+## What's New
+
+- Makes markdown links and URLs clickable in the terminal using OSC 8 hyperlink escape sequences
+- Adds `allowed_domains` and `blocked_domains` filters to the fetch toolset for restricting network access
+- Adds `/toolsets` command and supervisor-aware status surface in the TUI
+- Introduces `redact_secrets` agent flag that scrubs credential patterns from tool calls and LLM messages
+- Adds per-toolset lifecycle configuration with profile presets for MCP and LSP servers
+- Introduces `/toolset-restart` slash command for hot-reload functionality
+
+## Improvements
+
+- Defers OAuth elicitation outside interactive context to prevent premature prompts
+- Reduces macOS keychain prompts by storing all MCP OAuth tokens in a single keychain item
+- Makes every dialog close on ctrl+c, with twice exiting the application
+- Filters LSP tools by server-advertised capabilities
+- Detects secrets embedded inside larger tokens, not just word-bounded patterns
+
+## Bug Fixes
+
+- Fixes MCP catalog reference in mcp-definitions.yaml from `docker:github` to `docker:github-official`
+- Fixes Slack token responses and surfaces server errors in MCP OAuth handling
+- Fixes config package names for v6 and v7 versions
+- Fixes strip transform reading wrong model in alloy/per-tool override mode
+- Suppresses spurious 'is now available' MCP toolset notice after OAuth completion
+
+## Technical Changes
+
+- Separates toolset notices from warnings in agent handling
+- Simplifies history package by replacing manual parsing with standard library functions
+- Refactors skills package into focused files without changing behavior
+- Extracts image-stripping into registered MessageTransform mechanism
+- Unifies MCP/LSP toolset supervision with typed errors and state-machine architecture
+- Isolates example loading in temporary directories for tests
+
+### Pull Requests
+
+- [#2465](https://github.com/docker/docker-agent/pull/2465) - fix(examples): correct MCP catalog ref in mcp-definitions.yaml
+- [#2498](https://github.com/docker/docker-agent/pull/2498) - feat(tui): make markdown links and URLs clickable in the terminal
+- [#2512](https://github.com/docker/docker-agent/pull/2512) - Make the slack remote MCP server work
+- [#2564](https://github.com/docker/docker-agent/pull/2564) - test: stop example tests from writing SQLite files into examples/
+- [#2565](https://github.com/docker/docker-agent/pull/2565) - docs: update CHANGELOG.md for v1.53.0
+- [#2566](https://github.com/docker/docker-agent/pull/2566) - Use the slices package to simplify slice operations
+- [#2567](https://github.com/docker/docker-agent/pull/2567) - Simplify the history package
+- [#2568](https://github.com/docker/docker-agent/pull/2568) - lint: add config-versioning robustness cops + fix v6/v7 package names
+- [#2569](https://github.com/docker/docker-agent/pull/2569) - docs: bring hooks reference up to date with new events
+- [#2570](https://github.com/docker/docker-agent/pull/2570) - Fix misleading UpdateMessage doc comment
+- [#2571](https://github.com/docker/docker-agent/pull/2571) - refactor(skills): split package into focused files
+- [#2572](https://github.com/docker/docker-agent/pull/2572) - feat(fetch): add allowed_domains and blocked_domains filters
+- [#2573](https://github.com/docker/docker-agent/pull/2573) - runtime: extract image-stripping into a registered MessageTransform
+- [#2574](https://github.com/docker/docker-agent/pull/2574) - defer oauth when elicitation bridge isn't wired up yet
+- [#2575](https://github.com/docker/docker-agent/pull/2575) - refactor(sessiontitle): simplify Generator without changing behavior
+- [#2576](https://github.com/docker/docker-agent/pull/2576) - stop hard-coding "root" as the default agent name
+- [#2577](https://github.com/docker/docker-agent/pull/2577) - Add redact_secrets builtin hook + before_llm_call transform
+- [#2578](https://github.com/docker/docker-agent/pull/2578) - Suppress spurious 'is now available' MCP toolset notice
+- [#2579](https://github.com/docker/docker-agent/pull/2579) - feat(lifecycle): unify MCP/LSP toolset supervision with configurable profiles + /toolsets UX
+- [#2580](https://github.com/docker/docker-agent/pull/2580) - reduce macOS keychain prompts for OAuth MCP servers
+- [#2581](https://github.com/docker/docker-agent/pull/2581) - docs: document redact_secrets agent flag
+- [#2582](https://github.com/docker/docker-agent/pull/2582) - detect secrets embedded inside larger tokens
+- [#2583](https://github.com/docker/docker-agent/pull/2583) - make every dialog close on ctrl+c, twice exits
+- [#2584](https://github.com/docker/docker-agent/pull/2584) - test(mcp): test buildRemoteDescription directly to skip keychain
+- [#2585](https://github.com/docker/docker-agent/pull/2585) - Disable test that prompts for a password
+
+
 ## [v1.53.0] - 2026-04-28
 
 This release adds OpenAI-compatible API server functionality, skill model overrides, and response caching, along with extensive refactoring to improve code organization and testability.
@@ -2326,3 +2393,5 @@ This release improves the terminal user interface with better error handling and
 [v1.52.0]: https://github.com/docker/docker-agent/releases/tag/v1.52.0
 
 [v1.53.0]: https://github.com/docker/docker-agent/releases/tag/v1.53.0
+
+[v1.54.0]: https://github.com/docker/docker-agent/releases/tag/v1.54.0
