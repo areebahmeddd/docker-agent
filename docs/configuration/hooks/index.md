@@ -43,6 +43,7 @@ docker-agent dispatches the following hook events:
 | `session_start`             | When a session begins or resumes                                                    | No         |
 | `user_prompt_submit`        | Once per user message, after submission and before the model runs                   | Yes        |
 | `turn_start`                | At the start of every agent turn (each model call)                                  | No         |
+| `turn_end`                  | At the end of every agent turn — fires no matter why the turn ended                 | No         |
 | `before_llm_call`           | Just before every model call (after `turn_start`)                                   | Yes        |
 | `after_llm_call`            | After every successful model call, before the response is recorded                  | No         |
 | `session_end`               | When a session terminates                                                           | No         |
@@ -225,6 +226,7 @@ In addition to the common fields, each event ships its own payload:
 | `session_start`             | `source` — one of `startup`, `resume`, `clear`, `compact`                                                     |
 | `user_prompt_submit`        | `prompt` — the text the user just submitted                                                                   |
 | `turn_start`                | _none_ (just the common fields)                                                                               |
+| `turn_end`                  | `agent_name`, `reason` — one of `normal`, `continue`, `steered`, `error`, `canceled`, `hook_blocked`, `loop_detected` |
 | `before_llm_call`           | _none_                                                                                                        |
 | `after_llm_call`            | `agent_name`, `stop_response`, `last_user_message`                                                            |
 | `session_end`               | `reason` — one of `clear`, `logout`, `prompt_input_exit`, `other`                                             |
@@ -494,6 +496,24 @@ Use `on_error` and `on_max_iterations` instead of `notification` when you want a
 ### Turn-Start: per-turn context
 
 `turn_start` fires at the start of every agent turn (each model call). Anything you contribute via `additional_context` (or plain stdout) is appended as a **transient** system message for that turn only — it is *not* persisted to the session. Use it for fast-moving signals like the date, current git state, or per-turn prompt files. The built-in hooks `add_date`, `add_prompt_files`, `add_git_status`, and `add_git_diff` all target this event.
+
+### Turn-End: per-turn finalizer
+
+`turn_end` is the symmetric counterpart of `turn_start`. It fires once per turn when the iteration finishes — no matter why. The runtime guarantees the dispatch on every exit path (a normal stop, an error, a hook-driven shutdown, the loop detector, even context cancellation), and it uses `context.WithoutCancel` internally so handlers run to completion on Ctrl+C.
+
+The `reason` field classifies the exit:
+
+| `reason`        | When |
+| --------------- | ---- |
+| `normal`        | Model finished cleanly with no follow-up |
+| `continue`      | More iterations to come (e.g. tool calls, follow-up message) |
+| `steered`       | Drained steered messages prompted a re-entry |
+| `error`         | Model call failed (`handleStreamError` exited the loop) |
+| `canceled`      | Context was cancelled (e.g. Ctrl+C) |
+| `hook_blocked`  | `before_llm_call` or `post_tool_use` denied the call |
+| `loop_detected` | The consecutive-tool-call loop detector terminated the turn |
+
+`turn_end` is observational — the result is ignored. Use it to time turns, accumulate per-turn metrics (token usage, tool counts), or notify external observability pipelines symmetrically with `turn_start`.
 
 ### Before/After-LLM-Call: budget guards and model auditing
 
