@@ -23,6 +23,8 @@ func allCops() []cop.Cop {
 		NewConfigLatestTagConsistency(),
 		NewConfigVersionsRegistered(),
 		NewTUIViewPurity(),
+		NewRuntimeEventRegistry(),
+		NewRuntimeSessionScoped(),
 	}
 }
 

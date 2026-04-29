@@ -62,6 +62,8 @@ func UserMessage(message, sessionID string, multiContent []chat.MessagePart, ses
 	}
 }
 
+func (e *UserMessageEvent) GetSessionID() string { return e.SessionID }
+
 // PartialToolCallEvent is sent when a tool call is first received (partial/complete)
 type PartialToolCallEvent struct {
 	AgentContext
@@ -155,6 +157,8 @@ func StreamStarted(sessionID, agentName string) Event {
 		AgentContext: newAgentContext(agentName),
 	}
 }
+
+func (e *StreamStartedEvent) GetSessionID() string { return e.SessionID }
 
 type AgentChoiceEvent struct {
 	AgentContext
@@ -336,6 +340,8 @@ func SessionTitle(sessionID, title string) Event {
 	}
 }
 
+func (e *SessionTitleEvent) GetSessionID() string { return e.SessionID }
+
 type SessionSummaryEvent struct {
 	AgentContext
 
@@ -355,6 +361,8 @@ func SessionSummary(sessionID, summary, agentName string, firstKeptEntry int) Ev
 	}
 }
 
+func (e *SessionSummaryEvent) GetSessionID() string { return e.SessionID }
+
 type SessionCompactionEvent struct {
 	AgentContext
 
@@ -372,6 +380,8 @@ func SessionCompaction(sessionID, status, agentName string) Event {
 	}
 }
 
+func (e *SessionCompactionEvent) GetSessionID() string { return e.SessionID }
+
 type StreamStoppedEvent struct {
 	AgentContext
 
@@ -386,6 +396,8 @@ func StreamStopped(sessionID, agentName string) Event {
 		AgentContext: newAgentContext(agentName),
 	}
 }
+
+func (e *StreamStoppedEvent) GetSessionID() string { return e.SessionID }
 
 // ElicitationRequestEvent is sent when an elicitation request is received from an MCP server
 type ElicitationRequestEvent struct {

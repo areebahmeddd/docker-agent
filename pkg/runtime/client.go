@@ -90,6 +90,9 @@ func NewClient(baseURL string, opts ...ClientOption) (*Client, error) {
 			"rag_indexing_started":   func() Event { return &RAGIndexingStartedEvent{} },
 			"rag_indexing_progress":  func() Event { return &RAGIndexingProgressEvent{} },
 			"rag_indexing_completed": func() Event { return &RAGIndexingCompletedEvent{} },
+			"message_added":          func() Event { return &MessageAddedEvent{} },
+			"model_fallback":         func() Event { return &ModelFallbackEvent{} },
+			"sub_session_completed":  func() Event { return &SubSessionCompletedEvent{} },
 		},
 	}
 
