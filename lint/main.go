@@ -12,27 +12,24 @@ import (
 	"github.com/dgageot/rubocop-go/runner"
 )
 
-// cops is the registry of project-specific cops, in declaration order.
+// allCops returns the project-specific cops, in declaration order.
 // To add a cop: implement cop.Cop and append it here.
-var cops = []cop.Cop{
-	&ConfigVersionImport{},
-	&ConfigPackageName{},
-	&ConfigVersionConstant{},
-	&LatestImportsPredecessor{},
+func allCops() []cop.Cop {
+	return []cop.Cop{
+		NewConfigVersionImport(),
+		NewConfigPackageName(),
+		NewConfigVersionConstant(),
+		NewLatestImportsPredecessor(),
+	}
 }
 
 func main() {
-	for _, c := range cops {
-		cop.Register(c)
-	}
-	fmt.Printf("Inspecting Go files with %d cop(s)\n", len(cops))
-
 	paths := os.Args[1:]
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
 
-	r := runner.New(cop.All(), config.DefaultConfig(), os.Stdout)
+	r := runner.New(allCops(), config.DefaultConfig(), os.Stdout)
 	offenseCount, err := r.Run(paths)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

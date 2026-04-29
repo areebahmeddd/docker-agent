@@ -1,16 +1,11 @@
 package main
 
 import (
-	"go/ast"
-	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
-
-	"github.com/dgageot/rubocop-go/cop"
 )
 
 // Helpers shared by the cops in this package. They centralise the parsing of
@@ -61,16 +56,6 @@ func versionFromImport(importPath string) (int, bool) {
 		return 0, false
 	}
 	return n, true
-}
-
-// importPath returns the unquoted import path of an ImportSpec.
-func importPath(imp *ast.ImportSpec) string {
-	return strings.Trim(imp.Path.Value, `"`)
-}
-
-// offense builds an Offense covering the source span of node n.
-func offense(c cop.Cop, fset *token.FileSet, n ast.Node, message string) cop.Offense {
-	return cop.NewOffense(c, fset, n.Pos(), n.End(), message)
 }
 
 // highestSiblingVersion returns the largest N such that pkg/config/vN/

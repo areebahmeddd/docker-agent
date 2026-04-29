@@ -145,7 +145,7 @@ require (
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
 	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/dgageot/rubocop-go v0.0.0-20260323134452-aecdd6345645
+	github.com/dgageot/rubocop-go v0.0.0-20260429095109-a9cea3bf3e72
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect

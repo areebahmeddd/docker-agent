@@ -1,11 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"go/ast"
-	"go/token"
-	"strings"
-
 	"github.com/dgageot/rubocop-go/cop"
 )
 
@@ -20,32 +15,35 @@ import (
 // is frozen into a numbered vN directory: the package clause is easy to
 // forget, and the broken state remains compilable as long as importers use
 // an explicit alias.
-type ConfigPackageName struct{}
-
-func (*ConfigPackageName) Name() string { return "Lint/ConfigPackageName" }
-func (*ConfigPackageName) Description() string {
-	return "Files under pkg/config/<dir>/ must declare package <dir>"
+type ConfigPackageName struct {
+	cop.Meta
 }
-func (*ConfigPackageName) Severity() cop.Severity { return cop.Error }
 
-func (c *ConfigPackageName) Check(fset *token.FileSet, file *ast.File) []cop.Offense {
-	filename := fset.Position(file.Package).Filename
-	dir := configDir(filename)
+// NewConfigPackageName returns a fully configured ConfigPackageName cop.
+func NewConfigPackageName() *ConfigPackageName {
+	return &ConfigPackageName{Meta: cop.Meta{
+		CopName:     "Lint/ConfigPackageName",
+		CopDesc:     "Files under pkg/config/<dir>/ must declare package <dir>",
+		CopSeverity: cop.Error,
+	}}
+}
+
+func (c *ConfigPackageName) Check(p *cop.Pass) {
+	dir := configDir(p.Filename())
 	if dir == "" {
-		return nil
+		return
 	}
 
-	got := file.Name.Name
+	got := p.PackageName()
 	switch got {
 	case dir:
-		return nil
+		return
 	case dir + "_test":
 		// Black-box test packages are a legitimate Go convention.
-		if strings.HasSuffix(filename, "_test.go") {
-			return nil
+		if p.IsTestFile() {
+			return
 		}
 	}
 
-	return []cop.Offense{offense(c, fset, file.Name,
-		fmt.Sprintf("file in pkg/config/%s/ must declare package %s, got %s", dir, dir, got))}
+	p.Report(p.File.Name, "file in pkg/config/%s/ must declare package %s, got %s", dir, dir, got)
 }

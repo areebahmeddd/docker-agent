@@ -1,11 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"go/ast"
-	"go/token"
-	"strings"
-
 	"github.com/dgageot/rubocop-go/cop"
 )
 
@@ -18,40 +13,41 @@ import (
 // This cop closes that gap so pkg/config/latest also obeys the chain
 // (latest imports the highest vN, never an older version), which is required
 // for the upgrade pipeline to reach the latest schema in a single hop.
-type LatestImportsPredecessor struct{}
-
-func (*LatestImportsPredecessor) Name() string { return "Lint/LatestImportsPredecessor" }
-func (*LatestImportsPredecessor) Description() string {
-	return "pkg/config/latest must only import its immediate predecessor (highest vN)"
+type LatestImportsPredecessor struct {
+	cop.Meta
 }
-func (*LatestImportsPredecessor) Severity() cop.Severity { return cop.Error }
 
-func (c *LatestImportsPredecessor) Check(fset *token.FileSet, file *ast.File) []cop.Offense {
-	if len(file.Imports) == 0 {
-		return nil
-	}
-	filename := fset.Position(file.Package).Filename
-	if configDir(filename) != "latest" {
-		return nil
+// NewLatestImportsPredecessor returns a fully configured LatestImportsPredecessor cop.
+func NewLatestImportsPredecessor() *LatestImportsPredecessor {
+	return &LatestImportsPredecessor{Meta: cop.Meta{
+		CopName:     "Lint/LatestImportsPredecessor",
+		CopDesc:     "pkg/config/latest must only import its immediate predecessor (highest vN)",
+		CopSeverity: cop.Error,
+	}}
+}
+
+func (c *LatestImportsPredecessor) Check(p *cop.Pass) {
+	if len(p.File.Imports) == 0 {
+		return
 	}
 	// Black-box test files (package latest_test) are external to the package
 	// and may import what they please.
-	if strings.HasSuffix(file.Name.Name, "_test") {
-		return nil
+	if p.IsBlackBoxTest() {
+		return
 	}
-	highest, ok := highestSiblingVersion(filename)
+	if configDir(p.Filename()) != "latest" {
+		return
+	}
+	highest, ok := highestSiblingVersion(p.Filename())
 	if !ok {
-		return nil
+		return
 	}
 
-	var offenses []cop.Offense
-	for _, imp := range file.Imports {
-		got, ok := versionFromImport(importPath(imp))
+	for _, imp := range p.File.Imports {
+		got, ok := versionFromImport(cop.ImportPath(imp))
 		if !ok || got == highest {
 			continue
 		}
-		offenses = append(offenses, offense(c, fset, imp.Path,
-			fmt.Sprintf("pkg/config/latest must import its predecessor v%d, not v%d", highest, got)))
+		p.Report(imp.Path, "pkg/config/latest must import its predecessor v%d, not v%d", highest, got)
 	}
-	return offenses
 }
