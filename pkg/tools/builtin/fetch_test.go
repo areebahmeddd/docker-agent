@@ -623,16 +623,16 @@ func TestMatchesDomain_EdgeCases(t *testing.T) {
 	}{
 		// Port handling (should be stripped by url.Hostname() before matchesDomain is called)
 		{"host with port should not match", "example.com:8080", "example.com", false},
-		
+
 		// IPv6 with zone ID (should be stripped by url.Hostname())
 		{"ipv6 with zone id should not match", "fe80::1%eth0", "fe80::1", false},
-		
+
 		// Empty CIDR prefix
 		{"empty after wildcard", "example.com", "*.", false},
-		
+
 		// Case sensitivity in IPv6
 		{"ipv6 case insensitive", "2001:DB8::1", "2001:db8::1", true},
-		
+
 		// Brackets in pattern (defensive)
 		{"brackets in pattern", "::1", "[::1]", true},
 		{"brackets in host", "[::1]", "::1", true},
