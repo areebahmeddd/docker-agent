@@ -96,7 +96,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			// Query a fresh auth token each time the client is used
 			authToken, _ := env.Get(ctx, environment.DockerDesktopTokenEnv)
 			if authToken == "" {
-				return anthropic.Client{}, errors.New("failed to get Docker Desktop token for Gateway")
+				return anthropic.Client{}, errors.New(base.NoDesktopTokenErrorMessage)
 			}
 
 			url, err := url.Parse(gateway)

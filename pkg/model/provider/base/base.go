@@ -6,6 +6,8 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
 
+const NoDesktopTokenErrorMessage = "failed to get Docker Desktop token for Gateway. Is Docker Desktop running and are you signed in?"
+
 // Config is a common base configuration shared by all provider clients.
 // It can be embedded in provider-specific Client structs to avoid code duplication.
 type Config struct {
