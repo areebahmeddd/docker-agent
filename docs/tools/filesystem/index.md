@@ -37,7 +37,7 @@ toolsets:
 
 | Property | Type | Default | Description |
 | --- | --- | --- | --- |
-| `ignore_vcs` | boolean | `false` | When `true`, ignores `.gitignore` patterns and includes all files |
+| `ignore_vcs` | boolean | `true` | When `true` (default), `.git` directories and `.gitignore` patterns are excluded from listings and searches. Set to `false` to include them. |
 | `post_edit` | array | `[]` | Commands to run after editing files matching a path pattern |
 | `post_edit[].path` | string | — | Glob pattern for files (e.g., `*.go`, `src/**/*.ts`) |
 | `post_edit[].cmd` | string | — | Command to run (use `${file}` for the edited file path) |

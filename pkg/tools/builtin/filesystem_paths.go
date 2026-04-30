@@ -57,9 +57,18 @@ func newPathRootSet(workingDir string, tokens []string) (*pathRootSet, error) {
 	for _, token := range tokens {
 		entry, err := newPathRoot(workingDir, token)
 		if err != nil {
+			// Release any roots opened so far before returning. The toolset
+			// constructor swallows the error and falls back to "no list",
+			// so leaving open file descriptors here would leak silently.
+			set.close()
 			return nil, err
 		}
 		if _, dup := seen[entry.real]; dup {
+			// Duplicate of an earlier entry: release the *os.Root we just
+			// opened to avoid leaking the file descriptor.
+			if entry.root != nil {
+				_ = entry.root.Close()
+			}
 			continue
 		}
 		seen[entry.real] = struct{}{}
@@ -68,19 +77,15 @@ func newPathRootSet(workingDir string, tokens []string) (*pathRootSet, error) {
 	return set, nil
 }
 
-// newPathRoot resolves a single token to a pathRoot. Errors only if the token
-// is empty or its home/working directory expansion fails — non-existent
-// directories are accepted (root is left nil and we fall back to the lexical
-// check) so that the agent can still operate when, e.g., "~/projects" hasn't
-// been created yet.
+// newPathRoot resolves a single token to a pathRoot. Errors when the token
+// is empty (before or after env-var expansion) or its home/working directory
+// expansion fails. Non-existent target directories are accepted (root is
+// left nil and we fall back to the lexical check) so that the agent can
+// still operate when, e.g., "~/projects" hasn't been created yet.
 func newPathRoot(workingDir, token string) (pathRoot, error) {
-	if strings.TrimSpace(token) == "" {
-		return pathRoot{}, errors.New("path entry must not be empty")
-	}
-
 	expanded, err := expandPathToken(workingDir, token)
 	if err != nil {
-		return pathRoot{}, fmt.Errorf("expanding %q: %w", token, err)
+		return pathRoot{}, fmt.Errorf("%s: %w", token, err)
 	}
 
 	abs, err := filepath.Abs(expanded)
@@ -88,11 +93,9 @@ func newPathRoot(workingDir, token string) (pathRoot, error) {
 		return pathRoot{}, fmt.Errorf("resolving %q: %w", token, err)
 	}
 
-	realPath, err := filepath.EvalSymlinks(abs)
+	realPath, err := resolveRealPath(abs)
 	if err != nil {
-		// The directory may not exist yet; fall back to the cleaned absolute
-		// path and skip opening an [*os.Root].
-		realPath = filepath.Clean(abs)
+		return pathRoot{}, fmt.Errorf("resolving %q: %w", token, err)
 	}
 
 	entry := pathRoot{raw: token, real: realPath}
@@ -109,11 +112,24 @@ func newPathRoot(workingDir, token string) (pathRoot, error) {
 
 // expandPathToken resolves "." / "~" / "$VAR" tokens and joins relative paths
 // with workingDir. It does not resolve symlinks or canonicalise the result.
+//
+// Returns an error when the token is empty before OR after environment
+// variable expansion. The post-expansion check matters because
+// [os.ExpandEnv] silently substitutes undefined variables with the empty
+// string — without rejection, an unset "$NOPE" entry would resolve to the
+// working directory and silently widen an allow-list (or close a deny-list)
+// in surprising ways.
 func expandPathToken(workingDir, token string) (string, error) {
 	// Trim spaces but keep internal whitespace untouched (some macOS paths
 	// contain spaces, e.g. "~/Library/Application Support").
-	token = strings.TrimSpace(token)
-	token = os.ExpandEnv(token)
+	original := strings.TrimSpace(token)
+	if original == "" {
+		return "", errors.New("path entry must not be empty")
+	}
+	token = os.ExpandEnv(original)
+	if strings.TrimSpace(token) == "" {
+		return "", fmt.Errorf("path entry %q expands to an empty string (undefined environment variable?)", original)
+	}
 
 	switch {
 	case token == ".":

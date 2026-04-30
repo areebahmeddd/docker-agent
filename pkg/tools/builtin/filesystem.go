@@ -524,6 +524,24 @@ func (t *FilesystemTool) resolvePath(path string) string {
 //
 // The deny-list takes precedence over the allow-list: a path that matches
 // both is rejected.
+//
+// SECURITY NOTE: there is a small TOCTOU window between this check and the
+// subsequent os.* call. A concurrent process running as the same user could
+// in principle replace a directory with a symlink between the two and cause
+// the I/O to escape the allowed area. This is acceptable because:
+//
+//   - The intended threat model is the LLM itself — not another local
+//     process. The LLM exercises the toolset only through the exposed
+//     handlers (read/write/list/etc.) and has no symlink-creation primitive,
+//     so it cannot win this race from inside the agent.
+//   - The toolset still defends against the static cases that matter: pre-
+//     existing symlinks, ".." traversals, absolute paths outside the allow-
+//     list. Those are checked here AND verified through [*os.Root].Lstat
+//     when an [*os.Root] is available.
+//
+// Callers wanting full TOCTOU safety should perform their I/O through the
+// [*os.Root] handles owned by [pathRootSet] rather than via os.* on the
+// returned path.
 func (t *FilesystemTool) resolveAndCheckPath(path string) (string, error) {
 	resolved := t.resolvePath(path)
 	if t.allowList == nil && t.denyList == nil {

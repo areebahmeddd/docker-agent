@@ -3,7 +3,6 @@ package builtin
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -358,12 +357,14 @@ func TestExpandPathToken(t *testing.T) {
 	resetHomeDir(t, homeDir)
 	wd := t.TempDir()
 	t.Setenv("MY_VAR", "/var/data")
+	t.Setenv("EMPTY_VAR", "")
+	os.Unsetenv("DEFINITELY_NOT_SET")
 
 	tests := []struct {
 		name    string
 		token   string
 		want    string
-		wantErr bool
+		wantErr string // substring match; empty = no error
 	}{
 		{name: "dot", token: ".", want: wd},
 		{name: "tilde", token: "~", want: homeDir},
@@ -371,28 +372,89 @@ func TestExpandPathToken(t *testing.T) {
 		{name: "absolute", token: "/srv/data", want: "/srv/data"},
 		{name: "relative", token: "src", want: filepath.Join(wd, "src")},
 		{name: "env-var", token: "$MY_VAR", want: "/var/data"},
-		{name: "empty", token: "", wantErr: true},
-		{name: "whitespace", token: "   ", wantErr: true},
+		{name: "env-var-braces", token: "${MY_VAR}", want: "/var/data"},
+		{name: "env-var-inside-tilde", token: "~/${MY_VAR}", want: filepath.Join(homeDir, "var", "data")},
+		{name: "empty", token: "", wantErr: "empty"},
+		{name: "whitespace", token: "   ", wantErr: "empty"},
+		// Regression: an undefined env var must NOT silently expand to the
+		// working directory — a typo in the var name would otherwise grant
+		// (or close) access to the entire working dir.
+		{name: "undefined-env-var", token: "$DEFINITELY_NOT_SET", wantErr: "empty string"},
+		{name: "defined-but-empty-env-var", token: "$EMPTY_VAR", wantErr: "empty string"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := expandPathToken(wd, tc.token)
-			if tc.wantErr {
-				// expandPathToken doesn't reject empty tokens itself; the
-				// rejection happens in newPathRoot. Verify there.
-				if tc.token == "" || strings.TrimSpace(tc.token) == "" {
-					_, err := newPathRoot(wd, tc.token)
-					require.Error(t, err)
-					return
-				}
+			if tc.wantErr != "" {
 				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
 				return
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestWithAllowList_RejectsUndefinedEnvVar(t *testing.T) {
+	// Regression test for the same bug at the toolset boundary: a typo in
+	// an env-var name in allow_list must NOT silently grant access to the
+	// working directory. WithAllowList logs+drops invalid entries (no
+	// error returned), which would let an attacker exploit the typo. We
+	// instead want the allow-list to remain disabled ("no constraint"),
+	// not silently expanded to the working dir.
+	os.Unsetenv("DEFINITELY_NOT_SET")
+	wd := t.TempDir()
+	tool := NewFilesystemTool(wd, WithAllowList([]string{"$DEFINITELY_NOT_SET"}))
+
+	// The allow-list construction failed silently, so the toolset is
+	// unrestricted (default behaviour) instead of being silently scoped
+	// to the working dir. Verify by reaching outside the working dir.
+	_, err := tool.resolveAndCheckPath("/etc/hosts")
+	require.NoError(t, err, "undefined env var must not silently scope allow-list to working dir")
+}
+
+func TestWithAllowList_AcceptsDefinedEnvVar(t *testing.T) {
+	wd := t.TempDir()
+	allowed := t.TempDir()
+	t.Setenv("ALLOWED_DIR", allowed)
+
+	tool := NewFilesystemTool(wd, WithAllowList([]string{"$ALLOWED_DIR"}))
+
+	// Inside the env-var-resolved root.
+	_, err := tool.resolveAndCheckPath(filepath.Join(allowed, "file.txt"))
+	require.NoError(t, err)
+
+	// Outside is rejected — confirms the allow-list is actually active.
+	_, err = tool.resolveAndCheckPath("/etc/hosts")
+	require.Error(t, err)
+}
+
+func TestDenyList_NonExistentPath(t *testing.T) {
+	// A common usage: deny ~/.ssh on a system that does not have a ~/.ssh
+	// yet. The deny-list must still apply when the directory is created
+	// after the toolset is constructed.
+	homeDir := t.TempDir()
+	resetHomeDir(t, homeDir)
+	wd := t.TempDir()
+
+	tool := NewFilesystemTool(wd, WithDenyList([]string{"~/.ssh"}))
+
+	// ~/.ssh does not exist yet — a write to a path inside it must be
+	// rejected before the directory is even created.
+	_, err := tool.resolveAndCheckPath(filepath.Join(homeDir, ".ssh", "id_rsa"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "denied directory")
+
+	// Sibling files in $HOME are still reachable.
+	_, err = tool.resolveAndCheckPath(filepath.Join(homeDir, "doc.md"))
+	require.NoError(t, err)
+
+	// Now create ~/.ssh and re-test — still denied.
+	require.NoError(t, os.Mkdir(filepath.Join(homeDir, ".ssh"), 0o700))
+	_, err = tool.resolveAndCheckPath(filepath.Join(homeDir, ".ssh", "id_rsa"))
+	require.Error(t, err)
 }
 
 func TestPathRootSet_DeduplicatesEntries(t *testing.T) {
@@ -404,6 +466,22 @@ func TestPathRootSet_DeduplicatesEntries(t *testing.T) {
 	require.NotNil(t, set)
 	// All four resolve to wd.
 	assert.Len(t, set.entries, 1)
+	// Only one *os.Root must be retained — duplicates' handles must be
+	// closed during construction to avoid an fd leak.
+	require.NotNil(t, set.entries[0].root)
+	set.close()
+}
+
+func TestPathRootSet_InvalidEntryClosesEarlierRoots(t *testing.T) {
+	t.Parallel()
+	wd := t.TempDir()
+
+	// First two entries are valid (they open *os.Root handles); the third
+	// is empty and triggers an error. The constructor must release the
+	// handles it opened so far rather than leaking them.
+	set, err := newPathRootSet(wd, []string{".", wd, ""})
+	require.Error(t, err)
+	assert.Nil(t, set)
 }
 
 func TestPathRootSet_NilForEmptyInput(t *testing.T) {
