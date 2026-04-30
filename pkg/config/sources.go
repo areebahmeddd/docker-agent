@@ -267,7 +267,7 @@ func (a urlSource) Read(ctx context.Context) ([]byte, error) {
 
 	client := httpclient.NewHTTPClient(ctx)
 	if !a.unsafe {
-		client = ssrfSafeHTTPClient(ctx)
+		client = ssrfSafeHTTPClient()
 	}
 
 	resp, err := client.Do(req)
@@ -396,7 +396,11 @@ func validateAgentURL(rawURL string) error {
 // to non-public IP ranges (loopback, private, link-local, multicast,
 // unspecified). The check happens after DNS resolution and before the TCP
 // handshake, so DNS rebinding to a private IP is also blocked.
-func ssrfSafeHTTPClient(_ context.Context) *http.Client {
+//
+// Redirects are re-validated through CheckRedirect so that an https://
+// origin cannot transparently downgrade to http:// or to a different scheme.
+// SSRF protection on the redirect target is provided by the same dialer.
+func ssrfSafeHTTPClient() *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -414,7 +418,22 @@ func ssrfSafeHTTPClient(_ context.Context) *http.Client {
 			ResponseHeaderTimeout: 30 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		},
+		CheckRedirect: ssrfCheckRedirect,
 	}
+}
+
+// ssrfCheckRedirect is the http.Client CheckRedirect hook used by
+// ssrfSafeHTTPClient. It rejects redirects to non-https URLs (defeating
+// TLS downgrade) and bounds the redirect chain. SSRF on the redirect
+// target itself is enforced by the dialer's Control hook.
+func ssrfCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect to non-https URL %q", req.URL.Redacted())
+	}
+	return nil
 }
 
 // ssrfDialControl is invoked by net.Dialer after DNS resolution but before the
