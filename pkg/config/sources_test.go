@@ -329,12 +329,12 @@ func TestURLSource_Read_RejectsLocalAddresses(t *testing.T) {
 	// though the TLS handshake will never complete, because the dial is
 	// aborted before any bytes are sent.
 	tests := []string{
-		"https://127.0.0.1/agent.yaml",            // loopback
-		"https://[::1]/agent.yaml",                // IPv6 loopback
-		"https://10.0.0.1/agent.yaml",             // RFC1918
-		"https://192.168.1.1/agent.yaml",          // RFC1918
-		"https://169.254.169.254/agent.yaml",      // AWS/GCP/Azure metadata
-		"https://0.0.0.0/agent.yaml",              // unspecified
+		"https://127.0.0.1/agent.yaml",       // loopback
+		"https://[::1]/agent.yaml",           // IPv6 loopback
+		"https://10.0.0.1/agent.yaml",        // RFC1918
+		"https://192.168.1.1/agent.yaml",     // RFC1918
+		"https://169.254.169.254/agent.yaml", // AWS/GCP/Azure metadata
+		"https://0.0.0.0/agent.yaml",         // unspecified
 	}
 	for _, rawURL := range tests {
 		t.Run(rawURL, func(t *testing.T) {
@@ -396,7 +396,7 @@ func TestSSRFCheckRedirect(t *testing.T) {
 	tests := []struct {
 		name    string
 		target  string
-		via     int // length of the via slice
+		via     int    // length of the via slice
 		wantErr string // empty means no error
 	}{
 		{"https redirect allowed", "https://example.com/agent.yaml", 1, ""},
@@ -441,13 +441,13 @@ func TestURLSource_Read_RejectsHTTPRedirect(t *testing.T) {
 	// and assert that the production fetch path errors out for an https
 	// origin pointing at a non-trusted CA. Either way, the request must
 	// not silently follow to http://.
-	url := httpsSrv.URL + "/agent.yaml"
+	agentURL := httpsSrv.URL + "/agent.yaml"
 	urlCacheDir := getURLCacheDir()
-	urlHash := hashURL(url)
+	urlHash := hashURL(agentURL)
 	_ = os.Remove(filepath.Join(urlCacheDir, urlHash))
 	_ = os.Remove(filepath.Join(urlCacheDir, urlHash+".etag"))
 
-	_, err := NewURLSource(url, nil).Read(t.Context())
+	_, err := NewURLSource(agentURL, nil).Read(t.Context())
 	require.Error(t, err)
 }
 

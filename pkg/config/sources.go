@@ -429,7 +429,7 @@ func ssrfCheckRedirect(req *http.Request, via []*http.Request) error {
 // ssrfDialControl is invoked by net.Dialer after DNS resolution but before the
 // TCP handshake. It rejects addresses that are not safe to fetch from over
 // the public internet.
-func ssrfDialControl(_ string, address string, _ syscall.RawConn) error {
+func ssrfDialControl(_, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("parsing dial address %q: %w", address, err)
