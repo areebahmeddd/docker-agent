@@ -22,6 +22,18 @@ import (
 	"github.com/docker/docker-agent/pkg/remote"
 )
 
+// newURLSourceForTest constructs a urlSource that bypasses the HTTPS-only and
+// SSRF dial-time checks. It is defined here, in a _test.go file, so it is
+// not compiled into release binaries. Tests use it because httptest.NewServer
+// binds to 127.0.0.1 over plain HTTP.
+func newURLSourceForTest(rawURL string, envProvider environment.Provider) Source {
+	return &urlSource{
+		url:         rawURL,
+		envProvider: envProvider,
+		unsafe:      true,
+	}
+}
+
 func TestOCISource_DigestReference_ServesFromCache(t *testing.T) {
 	t.Parallel()
 

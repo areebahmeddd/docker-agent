@@ -196,8 +196,9 @@ type urlSource struct {
 	url         string
 	envProvider environment.Provider
 	// unsafe disables the HTTPS-only and SSRF dial-time checks. It is set
-	// only by the test-only constructor newURLSourceForTest, which exists
-	// because tests use httptest.NewServer (plain HTTP, 127.0.0.1).
+	// only by the test-only constructor newURLSourceForTest (defined in
+	// sources_test.go), which exists because tests use httptest.NewServer
+	// (plain HTTP, 127.0.0.1).
 	unsafe bool
 }
 
@@ -207,17 +208,6 @@ func NewURLSource(rawURL string, envProvider environment.Provider) Source {
 	return &urlSource{
 		url:         rawURL,
 		envProvider: envProvider,
-	}
-}
-
-// newURLSourceForTest constructs a urlSource that bypasses the HTTPS-only and
-// SSRF dial-time checks. It must only be used by tests that fetch from
-// httptest.NewServer (plain HTTP, 127.0.0.1).
-func newURLSourceForTest(rawURL string, envProvider environment.Provider) Source {
-	return &urlSource{
-		url:         rawURL,
-		envProvider: envProvider,
-		unsafe:      true,
 	}
 }
 
