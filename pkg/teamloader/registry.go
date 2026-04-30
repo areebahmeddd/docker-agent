@@ -269,6 +269,15 @@ func createFilesystemTool(_ context.Context, toolset latest.Toolset, _ string, r
 	}
 	opts = append(opts, builtin.WithIgnoreVCS(ignoreVCS))
 
+	// Handle allow/deny lists for filesystem operations.
+	// An empty / nil list preserves the default behaviour (no restriction).
+	if len(toolset.AllowList) > 0 {
+		opts = append(opts, builtin.WithAllowList(toolset.AllowList))
+	}
+	if len(toolset.DenyList) > 0 {
+		opts = append(opts, builtin.WithDenyList(toolset.DenyList))
+	}
+
 	// Handle post-edit commands
 	if len(toolset.PostEdit) > 0 {
 		postEditConfigs := make([]builtin.PostEditConfig, len(toolset.PostEdit))

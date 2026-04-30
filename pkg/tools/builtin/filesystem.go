@@ -45,6 +45,15 @@ type FilesystemTool struct {
 	ignoreVCS        bool
 	repoMatcher      *fsx.VCSMatcher
 	repoMatcherOnce  sync.Once
+
+	// allowList, when non-nil, restricts every filesystem operation to paths
+	// that resolve under one of the listed roots. nil means "no allow-list";
+	// the toolset accepts any path the OS will let it touch.
+	allowList *pathRootSet
+	// denyList, when non-nil, rejects every filesystem operation on paths
+	// that resolve under one of the listed roots, even when the path also
+	// matches the allow-list. nil means "no deny-list".
+	denyList *pathRootSet
 }
 
 // Verify interface compliance
@@ -70,6 +79,47 @@ func WithIgnoreVCS(ignoreVCS bool) FileSystemOpt {
 	}
 }
 
+// WithAllowList restricts every filesystem operation to paths that resolve
+// under one of the supplied roots. Each entry may be:
+//   - "." — the agent's working directory
+//   - "~" or "~/..." — the user's home directory
+//   - "$VAR" / "${VAR}" — an environment variable
+//   - any absolute or relative path (relative paths are anchored at the
+//     working directory)
+//
+// Symlinks are resolved before the containment check, so a symlink inside an
+// allowed root cannot be used to escape it. An empty or nil slice disables
+// the allow-list and preserves the default behaviour (any path is allowed).
+//
+// Invalid entries (e.g. an empty string) are logged and the allow-list is
+// silently dropped, mirroring how WithIgnoreVCS handles construction errors.
+func WithAllowList(roots []string) FileSystemOpt {
+	return func(t *FilesystemTool) {
+		set, err := newPathRootSet(t.workingDir, roots)
+		if err != nil {
+			slog.Warn("filesystem allow-list: invalid entry; ignoring allow-list", "error", err)
+			return
+		}
+		t.allowList = set
+	}
+}
+
+// WithDenyList forbids every filesystem operation on paths that resolve under
+// one of the supplied roots. Tokens follow the same expansion rules as
+// [WithAllowList]. The deny-list takes precedence over the allow-list: a
+// path that matches both is rejected. An empty or nil slice disables the
+// deny-list.
+func WithDenyList(roots []string) FileSystemOpt {
+	return func(t *FilesystemTool) {
+		set, err := newPathRootSet(t.workingDir, roots)
+		if err != nil {
+			slog.Warn("filesystem deny-list: invalid entry; ignoring deny-list", "error", err)
+			return
+		}
+		t.denyList = set
+	}
+}
+
 func NewFilesystemTool(workingDir string, opts ...FileSystemOpt) *FilesystemTool {
 	t := &FilesystemTool{
 		workingDir: workingDir,
@@ -83,12 +133,20 @@ func NewFilesystemTool(workingDir string, opts ...FileSystemOpt) *FilesystemTool
 }
 
 func (t *FilesystemTool) Instructions() string {
-	return `## Filesystem Tools
+	var b strings.Builder
+	b.WriteString(`## Filesystem Tools
 
 - Relative paths resolve from the working directory; absolute paths and ".." work as expected
 - Prefer read_multiple_files over sequential read_file calls
 - Use search_files_content to locate code or text across files
-- Use exclude patterns in searches and max_depth in directory_tree to limit output`
+- Use exclude patterns in searches and max_depth in directory_tree to limit output`)
+	if d := t.allowList.describe(); d != "" {
+		fmt.Fprintf(&b, "\n- These tools are restricted to paths under: %s. Any other path is rejected without touching the filesystem.", d)
+	}
+	if d := t.denyList.describe(); d != "" {
+		fmt.Fprintf(&b, "\n- These tools must not access paths under: %s. Such paths are rejected without touching the filesystem.", d)
+	}
+	return b.String()
 }
 
 type DirectoryTreeArgs struct {
@@ -439,12 +497,49 @@ func (t *FilesystemTool) executePostEditCommands(ctx context.Context, filePath s
 // resolvePath resolves a path relative to the working directory.
 // Relative paths (including ".") are joined with the working directory.
 // Absolute paths and paths starting with ".." are used as-is.
+//
+// resolvePath does NOT enforce the allow- or deny-lists; callers should use
+// [resolveAndCheckPath] when those checks are required (i.e. for any path
+// that originates from a tool argument).
 func (t *FilesystemTool) resolvePath(path string) string {
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path)
 	}
 
 	return filepath.Clean(filepath.Join(t.workingDir, path))
+}
+
+// resolveAndCheckPath is the canonical entry point used by every filesystem
+// handler that operates on a user-supplied path. It resolves the path against
+// the working directory and validates the result against the allow- and
+// deny-lists. The returned string is the on-disk path the handler should pass
+// to the os.* call.
+//
+// When neither list is configured the function is functionally equivalent to
+// [resolvePath]. When a list is configured, symlinks are resolved before the
+// containment check so that a symlink inside an allowed directory cannot leak
+// access outside it. Paths that don't exist yet (e.g. for write_file or
+// create_directory) are checked against their nearest existing ancestor so
+// the caller can still create them.
+//
+// The deny-list takes precedence over the allow-list: a path that matches
+// both is rejected.
+func (t *FilesystemTool) resolveAndCheckPath(path string) (string, error) {
+	resolved := t.resolvePath(path)
+	if t.allowList == nil && t.denyList == nil {
+		return resolved, nil
+	}
+	realPath, err := resolveRealPath(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolving %q: %w", path, err)
+	}
+	if t.denyList != nil && t.denyList.contains(realPath) {
+		return "", fmt.Errorf("path %q is inside a denied directory (%s)", path, t.denyList.describe())
+	}
+	if t.allowList != nil && !t.allowList.contains(realPath) {
+		return "", fmt.Errorf("path %q is outside the allowed directories (%s)", path, t.allowList.describe())
+	}
+	return resolved, nil
 }
 
 // initGitignoreMatcher initializes the gitignore matcher for the working directory.
@@ -492,7 +587,10 @@ func (t *FilesystemTool) shouldIgnorePath(path string) bool {
 // Handler implementations
 
 func (t *FilesystemTool) handleDirectoryTree(ctx context.Context, args DirectoryTreeArgs) (*tools.ToolCallResult, error) {
-	resolvedPath := t.resolvePath(args.Path)
+	resolvedPath, err := t.resolveAndCheckPath(args.Path)
+	if err != nil {
+		return tools.ResultError(err.Error()), nil
+	}
 
 	tree, err := fsx.DirectoryTree(ctx, resolvedPath, allowAllPaths, t.shouldIgnorePath, maxFiles)
 	if err != nil {
@@ -554,7 +652,10 @@ func (t *FilesystemTool) editFileHandler() tools.ToolHandler {
 }
 
 func (t *FilesystemTool) handleEditFile(ctx context.Context, args EditFileArgs) (*tools.ToolCallResult, error) {
-	resolvedPath := t.resolvePath(args.Path)
+	resolvedPath, err := t.resolveAndCheckPath(args.Path)
+	if err != nil {
+		return tools.ResultError(err.Error()), nil
+	}
 
 	content, err := os.ReadFile(resolvedPath)
 	if err != nil {
@@ -589,7 +690,10 @@ func (t *FilesystemTool) handleEditFile(ctx context.Context, args EditFileArgs) 
 }
 
 func (t *FilesystemTool) handleListDirectory(_ context.Context, args ListDirectoryArgs) (*tools.ToolCallResult, error) {
-	resolvedPath := t.resolvePath(args.Path)
+	resolvedPath, err := t.resolveAndCheckPath(args.Path)
+	if err != nil {
+		return tools.ResultError(err.Error()), nil
+	}
 
 	entries, err := os.ReadDir(resolvedPath)
 	if err != nil {
@@ -627,7 +731,14 @@ func (t *FilesystemTool) handleListDirectory(_ context.Context, args ListDirecto
 }
 
 func (t *FilesystemTool) handleReadFile(_ context.Context, args ReadFileArgs) (*tools.ToolCallResult, error) {
-	resolvedPath := t.resolvePath(args.Path)
+	resolvedPath, err := t.resolveAndCheckPath(args.Path)
+	if err != nil {
+		return &tools.ToolCallResult{
+			Output:  err.Error(),
+			IsError: true,
+			Meta:    ReadFileMeta{Path: args.Path, Error: err.Error()},
+		}, nil
+	}
 
 	// Check if the file exists before any type detection.
 	info, err := os.Stat(resolvedPath)
@@ -741,7 +852,17 @@ func (t *FilesystemTool) handleReadMultipleFiles(ctx context.Context, args ReadM
 
 		entry := ReadFileMeta{Path: path}
 
-		resolvedPath := t.resolvePath(path)
+		resolvedPath, err := t.resolveAndCheckPath(path)
+		if err != nil {
+			errMsg := err.Error()
+			contents = append(contents, PathContent{
+				Path:    path,
+				Content: errMsg,
+			})
+			entry.Error = errMsg
+			meta.Files = append(meta.Files, entry)
+			continue
+		}
 
 		content, err := os.ReadFile(resolvedPath)
 		if err != nil {
@@ -790,7 +911,10 @@ func (t *FilesystemTool) handleReadMultipleFiles(ctx context.Context, args ReadM
 }
 
 func (t *FilesystemTool) handleSearchFilesContent(_ context.Context, args SearchFilesContentArgs) (*tools.ToolCallResult, error) {
-	resolvedPath := t.resolvePath(args.Path)
+	resolvedPath, err := t.resolveAndCheckPath(args.Path)
+	if err != nil {
+		return tools.ResultError(err.Error()), nil
+	}
 
 	var regex *regexp.Regexp
 	if args.IsRegex {
@@ -804,7 +928,7 @@ func (t *FilesystemTool) handleSearchFilesContent(_ context.Context, args Search
 	var results []string
 	filesWithMatches := make(map[string]struct{})
 
-	err := filepath.WalkDir(resolvedPath, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(resolvedPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -899,7 +1023,10 @@ func (t *FilesystemTool) handleSearchFilesContent(_ context.Context, args Search
 }
 
 func (t *FilesystemTool) handleWriteFile(ctx context.Context, args WriteFileArgs) (*tools.ToolCallResult, error) {
-	resolvedPath := t.resolvePath(args.Path)
+	resolvedPath, err := t.resolveAndCheckPath(args.Path)
+	if err != nil {
+		return tools.ResultError(err.Error()), nil
+	}
 
 	// Create parent directory structure if it doesn't exist
 	dir := filepath.Dir(resolvedPath)
@@ -921,7 +1048,10 @@ func (t *FilesystemTool) handleWriteFile(ctx context.Context, args WriteFileArgs
 func (t *FilesystemTool) handleCreateDirectory(_ context.Context, args CreateDirectoryArgs) (*tools.ToolCallResult, error) {
 	var results []string
 	for _, path := range args.Paths {
-		resolvedPath := t.resolvePath(path)
+		resolvedPath, err := t.resolveAndCheckPath(path)
+		if err != nil {
+			return tools.ResultError(err.Error()), nil
+		}
 		if err := os.MkdirAll(resolvedPath, 0o755); err != nil {
 			return tools.ResultError(fmt.Sprintf("Error creating directory %s: %s", path, err)), nil
 		}
@@ -934,7 +1064,10 @@ func (t *FilesystemTool) handleCreateDirectory(_ context.Context, args CreateDir
 func (t *FilesystemTool) handleRemoveDirectory(_ context.Context, args RemoveDirectoryArgs) (*tools.ToolCallResult, error) {
 	var results []string
 	for _, path := range args.Paths {
-		resolvedPath := t.resolvePath(path)
+		resolvedPath, err := t.resolveAndCheckPath(path)
+		if err != nil {
+			return tools.ResultError(err.Error()), nil
+		}
 
 		if err := rmdir(resolvedPath); err != nil {
 			return tools.ResultError(fmt.Sprintf("Error removing directory %s: %s", path, err)), nil

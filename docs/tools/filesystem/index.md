@@ -41,6 +41,46 @@ toolsets:
 | `post_edit` | array | `[]` | Commands to run after editing files matching a path pattern |
 | `post_edit[].path` | string | — | Glob pattern for files (e.g., `*.go`, `src/**/*.ts`) |
 | `post_edit[].cmd` | string | — | Command to run (use `${file}` for the edited file path) |
+| `allow_list` | array | `[]` | Directories the tools may access. Empty = unrestricted (default). |
+| `deny_list` | array | `[]` | Directories the tools must not access. Takes precedence over `allow_list`. |
+
+### Path access control
+
+By default the filesystem tools are unrestricted: relative paths resolve
+from the working directory, but absolute paths and `..` traversals can
+reach anywhere the agent process can. Configure `allow_list` and/or
+`deny_list` to sandbox the toolset.
+
+Entries in either list are expanded as follows:
+
+- `"."` — the agent's working directory
+- `"~"` or `"~/..."` — the user's home directory
+- `"$VAR"` / `"${VAR}"` — environment variable expansion
+- absolute paths — used as-is
+- relative paths — anchored at the working directory
+
+Symlinks are resolved before the containment check, so a symlink inside an
+allowed root cannot be used to escape it. When an `allow_list` is set,
+each entry is opened as a Go [`*os.Root`](https://pkg.go.dev/os#Root) so
+that the kernel's rooted-lookup semantics also reject `..` and symlink
+escapes at I/O time, not just at resolve time.
+
+```yaml
+toolsets:
+  - type: filesystem
+    # Restrict every operation to the working directory and the user's
+    # home folder, then carve credentials out of the home folder.
+    allow_list:
+      - "."
+      - "~"
+    deny_list:
+      - "~/.ssh"
+      - "~/.aws"
+```
+
+When the path supplied by the agent is rejected, the tool returns a
+structured error rather than performing any filesystem I/O. This makes the
+restriction visible to the model so it can adjust its plan.
 
 ### Post-Edit Hooks
 

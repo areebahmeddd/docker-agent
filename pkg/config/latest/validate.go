@@ -73,6 +73,18 @@ func (t *Toolset) validate() error {
 	if t.IgnoreVCS != nil && t.Type != "filesystem" {
 		return errors.New("ignore_vcs can only be used with type 'filesystem'")
 	}
+	if len(t.AllowList) > 0 && t.Type != "filesystem" {
+		return errors.New("allow_list can only be used with type 'filesystem'")
+	}
+	if len(t.DenyList) > 0 && t.Type != "filesystem" {
+		return errors.New("deny_list can only be used with type 'filesystem'")
+	}
+	if err := validatePathRootEntries("allow_list", t.AllowList); err != nil {
+		return err
+	}
+	if err := validatePathRootEntries("deny_list", t.DenyList); err != nil {
+		return err
+	}
 	if len(t.Env) > 0 && (t.Type != "shell" && t.Type != "script" && t.Type != "mcp" && t.Type != "lsp") {
 		return errors.New("env can only be used with type 'shell', 'script', 'mcp' or 'lsp'")
 	}
@@ -212,6 +224,19 @@ func (t *Toolset) validate() error {
 		// no additional validation needed
 	}
 
+	return nil
+}
+
+// validatePathRootEntries rejects empty / whitespace-only entries in a
+// filesystem allow- or deny-list. An empty entry would be a foot-gun: it
+// would resolve to the working directory and silently widen (or close) the
+// matched set in surprising ways.
+func validatePathRootEntries(field string, entries []string) error {
+	for i, e := range entries {
+		if strings.TrimSpace(e) == "" {
+			return fmt.Errorf("%s[%d] must not be empty", field, i)
+		}
+	}
 	return nil
 }
 
