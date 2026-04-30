@@ -102,10 +102,13 @@ func newTransport(ctx context.Context) http.RoundTripper {
 	// Get the base transport with Desktop proxy support from remote package
 	rt := remote.NewTransport(ctx)
 
-	// If it's an http.Transport, disable compression for SSE streaming compatibility
-	if transport, ok := rt.(*http.Transport); ok {
-		transport.DisableCompression = true
-		return transport
+	// Disable compression for SSE streaming compatibility
+	// Handle both direct *http.Transport and the fallback transport wrapper
+	switch t := rt.(type) {
+	case *http.Transport:
+		t.DisableCompression = true
+	case interface{ DisableCompression() }:
+		t.DisableCompression()
 	}
 
 	return rt
