@@ -548,7 +548,9 @@ var rules = sync.OnceValue(func() []rule {
 		},
 		{
 			// jfrog-artifactory-api-key. Distinct from access tokens;
-			// the `AKCp` prefix is documented and the body is 73 chars.
+			// the `AKCp` prefix is documented and the body is between
+			// 69 and 73 alphanumeric characters depending on when the
+			// key was issued.
 			expression: `AKCp[A-Za-z0-9]{69,73}`,
 			keywords:   []string{"AKCp"},
 		},
