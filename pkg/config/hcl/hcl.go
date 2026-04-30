@@ -39,6 +39,11 @@ func LooksLikeHCL(data []byte) bool {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
 			continue
 		}
+		// A YAML mapping key (e.g. `agent "root":`) ends with a colon and
+		// must not be confused with an HCL block opener.
+		if strings.HasSuffix(trimmed, ":") {
+			return false
+		}
 		for _, kw := range topLevelHCLKeywords {
 			if strings.HasPrefix(trimmed, kw+" \"") || strings.HasPrefix(trimmed, kw+" {") {
 				return true
@@ -209,7 +214,9 @@ func convertBody(body *hclsyntax.Body) (map[string]any, hcl.Diagnostics) {
 	for name, attr := range body.Attributes {
 		val, attrDiags := convertExpr(attr.Expr)
 		diags = append(diags, attrDiags...)
-		out[name] = val
+		if !attrDiags.HasErrors() {
+			out[name] = val
+		}
 	}
 
 	for _, block := range body.Blocks {

@@ -1,6 +1,7 @@
 package hcl
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -114,9 +115,9 @@ agent "reviewer" {
 	require.NoError(t, err)
 	got := string(out)
 
-	rootIdx := indexOf(got, "root:")
-	plannerIdx := indexOf(got, "planner:")
-	reviewerIdx := indexOf(got, "reviewer:")
+	rootIdx := strings.Index(got, "root:")
+	plannerIdx := strings.Index(got, "planner:")
+	reviewerIdx := strings.Index(got, "reviewer:")
 
 	require.NotEqual(t, -1, rootIdx)
 	require.NotEqual(t, -1, plannerIdx)
@@ -231,6 +232,7 @@ func TestLooksLikeHCL(t *testing.T) {
 		{"empty", "", false},
 		{"yaml", "agents:\n  root:\n    instruction: hi\n", false},
 		{"yaml with comment", "# a comment\nagents:\n  root: {}\n", false},
+		{"yaml quoted key", "agent \"root\":\n  instruction: hi\n", false},
 		{"hcl with shebang", "#!/usr/bin/env docker agent run\n\nagent \"root\" {\n  model = \"auto\"\n}\n", true},
 		{"hcl permissions block", "permissions {\n  allow = [\"a\"]\n}\n", true},
 		{"hcl with line comment", "// a comment\nagent \"root\" {}\n", true},
@@ -243,16 +245,4 @@ func TestLooksLikeHCL(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
-}
-
-// indexOf returns the byte offset of the first occurrence of substr in s,
-// or -1 if substr is not present. It avoids importing strings into the
-// test file just for this helper.
-func indexOf(s, substr string) int {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }
