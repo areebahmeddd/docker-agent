@@ -36,6 +36,9 @@ agents:
     toolsets:
       - type: fetch
         blocked_domains:
-          - 169.254.169.254     # cloud instance metadata
-          - 100.100.100.200     # alibaba/oracle metadata
+          - 169.254.169.254          # cloud instance metadata (literal IP)
+          - 169.254.0.0/16           # whole link-local range (CIDR)
+          - 10.0.0.0/8               # RFC1918 private network
+          - 100.100.100.200          # alibaba/oracle metadata
           - metadata.google.internal
+          - "*.internal.example.com"  # any subdomain (wildcard glob)

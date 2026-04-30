@@ -40,7 +40,9 @@ Domain patterns in `allowed_domains` and `blocked_domains` use the following rul
 
 - **Bare domain** — `example.com` matches the host `example.com` _and_ any subdomain such as `docs.example.com`. It does **not** match unrelated hosts that share a suffix (e.g. `badexample.com`).
 - **Leading dot** — `.example.com` matches **only** strict subdomains (`docs.example.com`, `a.b.example.com`), not the apex `example.com`.
+- **Wildcard glob** — `*.example.com` is an alias for the leading-dot form; the apex is excluded. The `*` is only valid as a leading `*.` token (entries like `foo.*`, `*.*.example.com`, or a bare `*` are rejected at config-load time).
 - **IP literal** — IP addresses are matched exactly (`169.254.169.254`).
+- **CIDR range** — `169.254.0.0/16`, `10.0.0.0/8`, `::1/128`, `fc00::/7`. Matches when the URL's host parses as an IP inside the network. Hostname hosts never match a CIDR pattern. Malformed CIDRs are rejected at config-load time.
 - **Trailing dots** in FQDN-form URLs (`http://example.com./`) are stripped before matching, so they cannot bypass a deny-list entry.
 
 The lists are mutually exclusive: a single fetch toolset may set either `allowed_domains` or `blocked_domains`, but not both.
@@ -78,8 +80,11 @@ toolsets:
 toolsets:
   - type: fetch
     blocked_domains:
-      - 169.254.169.254       # cloud metadata endpoint
-      - internal.example.com  # internal corporate hostnames
+      - 169.254.169.254       # cloud metadata endpoint (literal IP)
+      - 169.254.0.0/16        # entire link-local range (CIDR)
+      - 10.0.0.0/8            # RFC1918 private range
+      - "*.internal.example.com"  # any subdomain (wildcard)
+      - internal.example.com  # internal corporate hostname
 ```
 
 ## Tool Interface

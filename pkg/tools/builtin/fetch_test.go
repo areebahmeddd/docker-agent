@@ -439,6 +439,26 @@ func TestMatchesDomain(t *testing.T) {
 		{"trailing dot host matches subdomain pattern", "docs.example.com.", "example.com", true},
 		{"trailing dot pattern matches apex host", "example.com", "example.com.", true},
 		{"trailing dot host matches strict-subdomain pattern", "docs.example.com.", ".example.com", true},
+
+		// Wildcard glob form: alias for the leading-dot strict-subdomain match.
+		{"wildcard matches subdomain", "docs.example.com", "*.example.com", true},
+		{"wildcard matches deep subdomain", "a.b.example.com", "*.example.com", true},
+		{"wildcard does NOT match apex", "example.com", "*.example.com", false},
+		{"wildcard does NOT match unrelated suffix", "badexample.com", "*.example.com", false},
+		{"wildcard with trailing dot host", "docs.example.com.", "*.example.com", true},
+		{"interior wildcard never matches (defense in depth)", "foo.example.com", "foo.*", false},
+
+		// CIDR form.
+		{"ipv4 inside /16", "169.254.169.254", "169.254.0.0/16", true},
+		{"ipv4 outside /16", "10.0.0.1", "169.254.0.0/16", false},
+		{"ipv4 /32 exact", "169.254.169.254", "169.254.169.254/32", true},
+		{"ipv4 /32 mismatch", "169.254.169.255", "169.254.169.254/32", false},
+		{"private /8", "10.1.2.3", "10.0.0.0/8", true},
+		{"hostname does not match cidr", "example.com", "10.0.0.0/8", false},
+		{"ipv6 loopback", "::1", "::1/128", true},
+		{"ipv6 ula", "fc00::1234", "fc00::/7", true},
+		{"ipv6 outside ula", "2001:db8::1", "fc00::/7", false},
+		{"malformed cidr never matches", "169.254.169.254", "10.0.0.0/33", false},
 	}
 
 	for _, tc := range tests {
