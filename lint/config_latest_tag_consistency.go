@@ -3,7 +3,6 @@ package main
 import (
 	"go/ast"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/dgageot/rubocop-go/cop"
@@ -47,7 +46,8 @@ func NewConfigLatestTagConsistency() *ConfigLatestTagConsistency {
 }
 
 func (c *ConfigLatestTagConsistency) Check(p *cop.Pass) {
-	if configDir(p.Filename()) != "latest" {
+	dir, _ := p.PathSegment("pkg/config")
+	if dir != "latest" {
 		return
 	}
 	// Black-box test files don't ship struct definitions for the wire format.
@@ -55,25 +55,18 @@ func (c *ConfigLatestTagConsistency) Check(p *cop.Pass) {
 		return
 	}
 
-	ast.Inspect(p.File, func(n ast.Node) bool {
-		field, ok := n.(*ast.Field)
-		if !ok || field.Tag == nil {
-			return true
+	p.ForEachStructField(func(_ *ast.TypeSpec, field *ast.Field, tag reflect.StructTag) {
+		if field.Tag == nil {
+			return
 		}
-		raw, err := strconv.Unquote(field.Tag.Value)
-		if err != nil {
-			return true
-		}
-		tag := reflect.StructTag(raw)
-
 		jsonTag, hasJSON := tag.Lookup("json")
 		yamlTag, hasYAML := tag.Lookup("yaml")
 		if !hasJSON || !hasYAML {
-			return true
+			return
 		}
 		// Embedded fields use ",inline" on both sides; nothing to compare.
 		if isInline(jsonTag) || isInline(yamlTag) {
-			return true
+			return
 		}
 
 		jsonOmit, jsonMod := jsonOmitModifier(jsonTag)
@@ -85,7 +78,6 @@ func (c *ConfigLatestTagConsistency) Check(p *cop.Pass) {
 				modifierLabel(jsonOmit, jsonMod), modifierLabel(yamlOmit, "omitempty"),
 				fieldNames(field))
 		}
-		return true
 	})
 }
 

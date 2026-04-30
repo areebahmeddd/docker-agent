@@ -2,9 +2,7 @@ package main
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -50,14 +48,17 @@ func NewRuntimeEventRegistry() *RuntimeEventRegistry {
 }
 
 func (c *RuntimeEventRegistry) Check(p *cop.Pass) {
-	if !isRuntimeClientGo(p.Filename()) {
+	if !p.FileMatches("pkg/runtime/client.go") {
 		return
 	}
 
 	// Sibling event.go is the source of truth for the set of emitted events.
-	eventGo := filepath.Join(filepath.Dir(p.Filename()), "event.go")
-	emitted, err := emittedEventTypes(eventGo)
-	if err != nil || len(emitted) == 0 {
+	eventFile, err := p.ParseSibling("event.go")
+	if err != nil {
+		return
+	}
+	emitted := emittedEventTypes(eventFile)
+	if len(emitted) == 0 {
 		return
 	}
 
@@ -88,26 +89,13 @@ func (c *RuntimeEventRegistry) Check(p *cop.Pass) {
 		"pkg/runtime/client.go is missing registry entries for: %s", strings.Join(missing, ", "))
 }
 
-// isRuntimeClientGo reports whether filename is the canonical
-// pkg/runtime/client.go that owns the event-decoder registry.
-func isRuntimeClientGo(filename string) bool {
-	slash := filepath.ToSlash(filename)
-	return strings.HasSuffix(slash, "/pkg/runtime/client.go") || slash == "pkg/runtime/client.go"
-}
-
 // emittedEventTypes returns a map of EventTypeName -> wire-format Type
-// string for every &XxxEvent{Type: "yyy"} composite literal in the file
-// at path (typically pkg/runtime/event.go). Constructors that don't
-// initialise the Type field are skipped — a separate cop could enforce
-// that they always do.
-func emittedEventTypes(path string) (map[string]string, error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, nil, 0)
-	if err != nil {
-		return nil, err
-	}
+// string for every &XxxEvent{Type: "yyy"} composite literal in the given
+// file (typically pkg/runtime/event.go). Constructors that don't initialise
+// the Type field are skipped.
+func emittedEventTypes(file *ast.File) map[string]string {
 	emitted := map[string]string{}
-	ast.Inspect(f, func(n ast.Node) bool {
+	ast.Inspect(file, func(n ast.Node) bool {
 		cl, ok := n.(*ast.CompositeLit)
 		if !ok {
 			return true
@@ -137,7 +125,7 @@ func emittedEventTypes(path string) (map[string]string, error) {
 		}
 		return true
 	})
-	return emitted, nil
+	return emitted
 }
 
 // registryEntries finds the registry map literal in pkg/runtime/client.go and

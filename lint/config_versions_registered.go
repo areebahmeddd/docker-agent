@@ -42,16 +42,15 @@ func NewConfigVersionsRegistered() *ConfigVersionsRegistered {
 }
 
 func (c *ConfigVersionsRegistered) Check(p *cop.Pass) {
-	filename := p.Filename()
-	if !isVersionsGo(filename) {
+	if !p.FileMatches("pkg/config/versions.go") {
 		return
 	}
 
-	want, err := versionPackagesOnDisk(filepath.Dir(filename))
+	want, err := versionPackagesOnDisk(filepath.Dir(p.Filename()))
 	if err != nil || len(want) == 0 {
 		return
 	}
-	got := registeredPackages(p)
+	got := p.SelectorReceivers("Register")
 
 	var missing []string
 	for _, name := range want {
@@ -68,13 +67,6 @@ func (c *ConfigVersionsRegistered) Check(p *cop.Pass) {
 	// at the registry rather than at the package clause.
 	p.Report(registryAnchor(p),
 		"pkg/config/versions.go is missing Register call(s) for: %s", strings.Join(missing, ", "))
-}
-
-// isVersionsGo reports whether filename is the canonical
-// pkg/config/versions.go used by the dispatch table.
-func isVersionsGo(filename string) bool {
-	slash := filepath.ToSlash(filename)
-	return strings.HasSuffix(slash, "/pkg/config/versions.go") || slash == "pkg/config/versions.go"
 }
 
 // versionPackagesOnDisk lists the package directories under pkg/config/ that
@@ -100,25 +92,6 @@ func versionPackagesOnDisk(dir string) ([]string, error) {
 	}
 	slices.Sort(names)
 	return names, nil
-}
-
-// registeredPackages returns the set of package selectors that appear as
-// `<pkg>.Register(...)` call expressions anywhere in the file. The cop only
-// cares about whether a name is mentioned, not how many times.
-func registeredPackages(p *cop.Pass) map[string]bool {
-	got := map[string]bool{}
-	p.ForEachCall(func(call *ast.CallExpr) {
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "Register" {
-			return
-		}
-		ident, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return
-		}
-		got[ident.Name] = true
-	})
-	return got
 }
 
 // registryAnchor picks the AST node used to position the offense. Preferring

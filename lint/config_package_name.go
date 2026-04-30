@@ -29,8 +29,8 @@ func NewConfigPackageName() *ConfigPackageName {
 }
 
 func (c *ConfigPackageName) Check(p *cop.Pass) {
-	dir := configDir(p.Filename())
-	if dir == "" {
+	dir, ok := p.PathSegment("pkg/config")
+	if !ok {
 		return
 	}
 

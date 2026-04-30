@@ -2,7 +2,6 @@ package main
 
 import (
 	"go/ast"
-	"path/filepath"
 	"strings"
 
 	"github.com/dgageot/rubocop-go/cop"
@@ -42,7 +41,7 @@ func NewRuntimeSessionScoped() *RuntimeSessionScoped {
 }
 
 func (c *RuntimeSessionScoped) Check(p *cop.Pass) {
-	if !isRuntimeEventGo(p.Filename()) {
+	if !p.FileMatches("pkg/runtime/event.go") {
 		return
 	}
 
@@ -62,42 +61,23 @@ func (c *RuntimeSessionScoped) Check(p *cop.Pass) {
 	}
 }
 
-// isRuntimeEventGo reports whether filename is the canonical
-// pkg/runtime/event.go that defines all runtime event types.
-func isRuntimeEventGo(filename string) bool {
-	slash := filepath.ToSlash(filename)
-	return strings.HasSuffix(slash, "/pkg/runtime/event.go") || slash == "pkg/runtime/event.go"
-}
-
 // eventStructsWithSessionID maps EventTypeName -> its declaring *ast.TypeSpec
 // for every top-level struct type whose name ends in "Event" and that
-// declares (or transitively re-declares via its own field — embedded fields
-// are out of scope here) a SessionID field.
+// declares a SessionID field. Embedded fields are out of scope.
 func eventStructsWithSessionID(p *cop.Pass) map[string]*ast.TypeSpec {
 	out := map[string]*ast.TypeSpec{}
-	for _, decl := range p.File.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok {
-			continue
+	p.ForEachStruct(func(ts *ast.TypeSpec, st *ast.StructType) {
+		if !strings.HasSuffix(ts.Name.Name, "Event") || st.Fields == nil {
+			return
 		}
-		for _, spec := range gd.Specs {
-			ts, ok := spec.(*ast.TypeSpec)
-			if !ok || !strings.HasSuffix(ts.Name.Name, "Event") {
-				continue
-			}
-			st, ok := ts.Type.(*ast.StructType)
-			if !ok || st.Fields == nil {
-				continue
-			}
-			for _, fld := range st.Fields.List {
-				for _, name := range fld.Names {
-					if name.Name == "SessionID" {
-						out[ts.Name.Name] = ts
-					}
+		for _, fld := range st.Fields.List {
+			for _, name := range fld.Names {
+				if name.Name == "SessionID" {
+					out[ts.Name.Name] = ts
 				}
 			}
 		}
-	}
+	})
 	return out
 }
 
@@ -107,18 +87,12 @@ func eventStructsWithSessionID(p *cop.Pass) map[string]*ast.TypeSpec {
 func pointerReceiversWithMethod(p *cop.Pass, method string) map[string]bool {
 	with := map[string]bool{}
 	p.ForEachFunc(func(fn *ast.FuncDecl) {
-		if fn.Name.Name != method || fn.Recv == nil || len(fn.Recv.List) != 1 {
+		if fn.Name.Name != method {
 			return
 		}
-		star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
-		if !ok {
-			return
+		if r, ok := cop.Receiver(fn); ok && r.IsPointer {
+			with[r.TypeName] = true
 		}
-		id, ok := star.X.(*ast.Ident)
-		if !ok {
-			return
-		}
-		with[id.Name] = true
 	})
 	return with
 }

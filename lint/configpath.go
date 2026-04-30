@@ -12,21 +12,6 @@ import (
 // pkg/config/<dir>/ paths and pkg/config/vN import paths, so each cop can
 // focus on its rule rather than on regular expressions.
 
-// configDirRe matches files under pkg/config/<dir>/. The captured group is
-// the directory name immediately under pkg/config/. It accepts both
-// absolute and relative paths.
-var configDirRe = regexp.MustCompile(`(?:^|/)pkg/config/([^/]+)/[^/]+\.go$`)
-
-// configDir returns the directory name immediately under pkg/config/ for
-// filename, or "" if filename is not under pkg/config/<dir>/.
-func configDir(filename string) string {
-	m := configDirRe.FindStringSubmatch(filepath.ToSlash(filename))
-	if m == nil {
-		return ""
-	}
-	return m[1]
-}
-
 // versionFromDir parses a "vN" directory name and returns N. Returns false
 // for any other name (latest, types, vendor, ...).
 func versionFromDir(dir string) (int, bool) {

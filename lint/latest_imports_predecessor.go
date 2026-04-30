@@ -35,7 +35,7 @@ func (c *LatestImportsPredecessor) Check(p *cop.Pass) {
 	if p.IsBlackBoxTest() {
 		return
 	}
-	if configDir(p.Filename()) != "latest" {
+	if dir, _ := p.PathSegment("pkg/config"); dir != "latest" {
 		return
 	}
 	highest, ok := highestSiblingVersion(p.Filename())

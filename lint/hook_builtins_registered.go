@@ -2,10 +2,6 @@ package main
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -58,19 +54,25 @@ func NewHookBuiltinsRegistered() *HookBuiltinsRegistered {
 }
 
 func (c *HookBuiltinsRegistered) Check(p *cop.Pass) {
-	if !isHookBuiltinsRegisterFile(p.Filename()) {
+	if !p.FileMatches("pkg/hooks/builtins/builtins.go") {
 		return
 	}
 
-	declared, err := builtinNameConstants(filepath.Dir(p.Filename()))
+	declared, err := exportedBuiltinNames(p)
 	if err != nil || len(declared) == 0 {
 		return
 	}
 
-	registered, anchor := registerBuiltinIdents(p)
-	if anchor == nil {
-		return
-	}
+	registered := p.IdentSetFromCalls("RegisterBuiltin", 0)
+
+	// Anchor on the first RegisterBuiltin call, falling back to the package
+	// clause if the function was reshaped beyond recognition.
+	var anchor ast.Node = p.File.Name
+	p.ForEachMethodCall("RegisterBuiltin", func(call *ast.CallExpr) {
+		if anchor == p.File.Name {
+			anchor = call
+		}
+	})
 
 	var missing []string
 	for _, name := range declared {
@@ -87,98 +89,27 @@ func (c *HookBuiltinsRegistered) Check(p *cop.Pass) {
 		strings.Join(missing, ", "))
 }
 
-// isHookBuiltinsRegisterFile reports whether filename is the canonical
-// pkg/hooks/builtins/builtins.go that owns the Register() entry point.
-func isHookBuiltinsRegisterFile(filename string) bool {
-	slash := filepath.ToSlash(filename)
-	return strings.HasSuffix(slash, "/pkg/hooks/builtins/builtins.go") ||
-		slash == "pkg/hooks/builtins/builtins.go"
-}
-
-// builtinNameConstants returns the identifier of every `const Name = "..."`
-// declaration in dir whose value is a string literal — but only from
-// per-builtin files. builtins.go itself and any _test.go files are
-// excluded so the cop doesn't flag them or pick up unrelated test
-// constants.
-func builtinNameConstants(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
+// exportedBuiltinNames returns the identifiers of every exported `const Name = "..."`
+// declaration in pkg/hooks/builtins/, excluding builtins.go itself and any
+// test files (which is not where new builtins land).
+func exportedBuiltinNames(p *cop.Pass) ([]string, error) {
+	files, err := p.ParseDir(".", cop.ParseDirOptions{
+		SkipTests: true,
+		SkipFiles: []string{"builtins.go"},
+	})
 	if err != nil {
 		return nil, err
 	}
-	fset := token.NewFileSet()
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
+	seen := map[string]struct{}{}
+	for _, f := range files {
+		for name := range cop.StringConstsIn(f, ast.IsExported) {
+			seen[name] = struct{}{}
 		}
-		fname := e.Name()
-		if !strings.HasSuffix(fname, ".go") || strings.HasSuffix(fname, "_test.go") {
-			continue
-		}
-		if fname == "builtins.go" {
-			continue
-		}
-		f, err := parser.ParseFile(fset, filepath.Join(dir, fname), nil, 0)
-		if err != nil {
-			continue
-		}
-		for _, decl := range f.Decls {
-			gd, ok := decl.(*ast.GenDecl)
-			if !ok || gd.Tok != token.CONST {
-				continue
-			}
-			for _, spec := range gd.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok {
-					continue
-				}
-				for i, n := range vs.Names {
-					if i >= len(vs.Values) {
-						continue
-					}
-					lit, ok := vs.Values[i].(*ast.BasicLit)
-					if !ok || lit.Kind != token.STRING {
-						continue
-					}
-					if !ast.IsExported(n.Name) {
-						continue
-					}
-					names = append(names, n.Name)
-				}
-			}
-		}
+	}
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
 	}
 	slices.Sort(names)
-	names = slices.Compact(names)
 	return names, nil
-}
-
-// registerBuiltinIdents collects the set of identifiers that appear as the
-// first positional argument of a `RegisterBuiltin(<name>, …)` call anywhere
-// in the inspected file. It also returns the call expression that the cop
-// uses to anchor diagnostics; nil means no Register() body was found and
-// the cop should bail out.
-func registerBuiltinIdents(p *cop.Pass) (map[string]bool, ast.Node) {
-	registered := map[string]bool{}
-	var anchor ast.Node
-	p.ForEachCall(func(call *ast.CallExpr) {
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "RegisterBuiltin" || len(call.Args) == 0 {
-			return
-		}
-		if anchor == nil {
-			anchor = call
-		}
-		id, ok := call.Args[0].(*ast.Ident)
-		if !ok {
-			return
-		}
-		registered[id.Name] = true
-	})
-	if anchor == nil {
-		// Fall back to the file's package clause so the diagnostic still
-		// surfaces if Register() was reshaped beyond recognition.
-		anchor = p.File.Name
-	}
-	return registered, anchor
 }

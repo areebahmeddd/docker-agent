@@ -34,8 +34,8 @@ func (c *ConfigVersionImport) Check(p *cop.Pass) {
 		return
 	}
 
-	dir := configDir(p.Filename())
-	if dir == "" {
+	dir, ok := p.PathSegment("pkg/config")
+	if !ok {
 		return
 	}
 	dirVersion, isVersioned := versionFromDir(dir)
