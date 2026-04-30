@@ -498,6 +498,73 @@ var rules = sync.OnceValue(func() []rule {
 			expression: `(?i)(dckr_pat_[-0-9a-zA-Z]{27})`,
 			keywords:   []string{"dckr_pat"},
 		},
+
+		// --- Patterns added on top of the upstream Trivy / mcp-gateway
+		// catalogue. Each one targets a credential format whose prefix
+		// is unique enough to keep the keyword pre-filter cheap and the
+		// regex's false-positive rate low.
+
+		{
+			// openai-api-key. Every modern OpenAI key (project keys
+			// `sk-proj-…`, service-account keys `sk-svcacct-…`, admin
+			// keys `sk-admin-…`, and the original `sk-…` keys reissued
+			// after May 2024) embeds the literal substring "T3BlbkFJ"
+			// (base64 for "OpenAI") between two long alphanumeric runs.
+			// That marker keeps both the keyword filter and the regex
+			// extremely specific.
+			expression: `sk-[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}`,
+			keywords:   []string{"T3BlbkFJ"},
+		},
+		{
+			// anthropic-api-key. Claude keys follow
+			// `sk-ant-(api|sid)NN-<base64url>` and are ~108 chars long;
+			// the trailing "AA" is the standard base64 padding.
+			expression: `sk-ant-(api|sid)\d{2}-[A-Za-z0-9_-]{93}AA`,
+			keywords:   []string{"sk-ant-"},
+		},
+		{
+			// google-api-key. Used by Maps, Cloud, Firebase, Gemini and
+			// most other Google REST APIs. The `AIza` prefix is fixed.
+			expression: `AIza[0-9A-Za-z_-]{35}`,
+			keywords:   []string{"AIza"},
+		},
+		{
+			// google-oauth-client-secret. Issued in the Google Cloud
+			// Console for OAuth 2.0 clients; always 35 chars total.
+			expression: `GOCSPX-[A-Za-z0-9_-]{28}`,
+			keywords:   []string{"GOCSPX-"},
+		},
+		{
+			// digitalocean-pat. v1 personal-access tokens are 71 chars
+			// total: `dop_v1_` + 64 lowercase hex.
+			expression: `dop_v1_[a-f0-9]{64}`,
+			keywords:   []string{"dop_v1_"},
+		},
+		{
+			// stripe-webhook-signing-secret. Used to verify incoming
+			// webhook payloads; leakage lets attackers forge events.
+			expression: `whsec_[A-Za-z0-9]{32,}`,
+			keywords:   []string{"whsec_"},
+		},
+		{
+			// jfrog-artifactory-api-key. Distinct from access tokens;
+			// the `AKCp` prefix is documented and the body is 73 chars.
+			expression: `AKCp[A-Za-z0-9]{69,73}`,
+			keywords:   []string{"AKCp"},
+		},
+		{
+			// tencent-cloud-secret-id. Tencent's analogue of an AWS
+			// access-key-id, used by the COS / CVM / etc. APIs.
+			expression: `AKID[A-Za-z0-9]{32}`,
+			keywords:   []string{"AKID"},
+		},
+		{
+			// sentry-user-auth-token. The `sntrys_` prefix is followed
+			// by a base64url-encoded JWT-style payload that always
+			// starts with `eyJ` (the base64 of `{"`).
+			expression: `sntrys_eyJ[A-Za-z0-9+/=_-]{40,}`,
+			keywords:   []string{"sntrys_"},
+		},
 	}
 })
 

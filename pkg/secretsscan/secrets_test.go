@@ -23,11 +23,28 @@ func TestContainsSecretsRecognisesKnownTokens(t *testing.T) {
 	}{
 		{"github_pat", "ghp_cxLeRrvbJfmYdUtr70xnNE3Q7Gvli43s19PD"},
 		{"docker_pat", "dckr_pat_" + "AAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+		// Patterns added on top of the upstream catalogue. Each value
+		// is split across string concatenation so the verbatim token
+		// never appears on a single source line in case downstream
+		// tooling scans the test file itself.
+		{"openai_project_key", "sk-proj-" + strings.Repeat("A", 25) + "T3Blbk" + "FJ" + strings.Repeat("B", 25)},
+		{"anthropic_api_key", "sk-ant-" + "api03-" + strings.Repeat("X", 93) + "AA"},
+		{"google_api_key", "AIza" + strings.Repeat("a", 35)},
+		{"google_oauth_client_secret", "GOCSPX-" + strings.Repeat("a", 28)},
+		{"digitalocean_pat", "dop_v1_" + strings.Repeat("a", 64)},
+		{"stripe_webhook_signing_secret", "whsec_" + strings.Repeat("a", 40)},
+		{"jfrog_api_key", "AKCp" + strings.Repeat("a", 73)},
+		{"tencent_cloud_secret_id", "AKID" + strings.Repeat("a", 32)},
+		{"sentry_user_auth_token", "sntrys_" + "eyJ" + strings.Repeat("a", 60)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Truef(t, secretsscan.ContainsSecrets(tc.text), "must detect %s", tc.name)
+			out := secretsscan.Redact(tc.text)
+			assert.NotContainsf(t, out, tc.text, "raw secret must be gone after Redact: %q", out)
+			assert.Containsf(t, out, secretsscan.RedactionMarker,
+				"redaction marker must appear in %q", out)
 		})
 	}
 }
