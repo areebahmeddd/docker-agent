@@ -330,6 +330,16 @@ func matchesDomain(host, pattern string) bool {
 			// url.Hostname() already strips IPv6 brackets, but be defensive.
 			ipStr := strings.TrimSuffix(strings.Trim(host, "[]"), ".")
 			if ip := net.ParseIP(ipStr); ip != nil {
+				// Normalize IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) to their
+				// IPv4 form before checking CIDR membership. Without this, an
+				// attacker can bypass an IPv4 deny-list like "169.254.0.0/16" by
+				// using the IPv6-mapped form "::ffff:169.254.169.254".
+				//
+				// net.IP.To4() returns nil for "true" IPv6 addresses and the
+				// 4-byte IPv4 form for IPv4 or IPv4-mapped-IPv6.
+				if ipv4 := ip.To4(); ipv4 != nil {
+					return ipNet.Contains(ipv4)
+				}
 				return ipNet.Contains(ip)
 			}
 			return false
@@ -337,6 +347,24 @@ func matchesDomain(host, pattern string) bool {
 		// Malformed CIDRs are rejected at config-load time; if one slips
 		// through (e.g. via the programmatic API), fall through to the
 		// string matcher below, which will never match a host.
+	}
+
+	// Normalize IPv4-mapped IPv6 addresses to their IPv4 form for string
+	// comparison. This ensures that "::ffff:169.254.169.254" matches a
+	// literal pattern "169.254.169.254" (and vice versa).
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			host = ipv4.String()
+		} else {
+			host = ip.String()
+		}
+	}
+	if ip := net.ParseIP(strings.Trim(pattern, "[]")); ip != nil {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			pattern = ipv4.String()
+		} else {
+			pattern = ip.String()
+		}
 	}
 
 	host = strings.TrimSuffix(strings.ToLower(host), ".")

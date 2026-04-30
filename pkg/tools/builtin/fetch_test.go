@@ -459,6 +459,13 @@ func TestMatchesDomain(t *testing.T) {
 		{"ipv6 ula", "fc00::1234", "fc00::/7", true},
 		{"ipv6 outside ula", "2001:db8::1", "fc00::/7", false},
 		{"malformed cidr never matches", "169.254.169.254", "10.0.0.0/33", false},
+
+		// IPv4-mapped IPv6 bypass prevention (SSRF defense).
+		{"ipv4-mapped ipv6 matches ipv4 cidr", "::ffff:169.254.169.254", "169.254.0.0/16", true},
+		{"ipv4-mapped ipv6 matches ipv4 /32", "::ffff:10.0.0.1", "10.0.0.1/32", true},
+		{"ipv4-mapped ipv6 outside ipv4 cidr", "::ffff:10.0.0.1", "169.254.0.0/16", false},
+		{"ipv4-mapped ipv6 matches ipv4 literal", "::ffff:169.254.169.254", "169.254.169.254", true},
+		{"ipv4 literal matches ipv4-mapped ipv6 cidr (edge case)", "169.254.169.254", "::ffff:169.254.0.0/112", true},
 	}
 
 	for _, tc := range tests {
