@@ -52,7 +52,7 @@ When a list is configured, every redirect target is re-checked against the same 
 <div class="callout callout-warning" markdown="1">
 <div class="callout-title">⚠️ Limitations
 </div>
-  <p>Matching is purely string-based on the URL host. It does <strong>not</strong> perform DNS resolution and does <strong>not</strong> normalise alternative IP encodings (decimal <code>2852039166</code>, hex <code>0xa9.0xfe.0xa9.0xfe</code>, octal, IPv4-mapped IPv6, etc.). If you need to deny access to a specific IP, also list its alternative encodings, or block at the network layer.</p>
+  <p>Matching is purely string-based on the URL host. It does <strong>not</strong> perform DNS resolution and does <strong>not</strong> normalise alternative IP encodings (decimal <code>2852039166</code>, hex <code>0xa9.0xfe.0xa9.0xfe</code>, octal, etc. IPv4-mapped IPv6 addresses ARE normalized to their IPv4 form). If you need to deny access to a specific IP, also list its alternative encodings, or block at the network layer.</p>
 </div>
 
 ### Custom Timeout
