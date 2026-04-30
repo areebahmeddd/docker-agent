@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -228,6 +229,12 @@ type LocalRuntime struct {
 	// WithMaxOverflowCompactions to exercise both the "compaction
 	// succeeded" and "compaction exhausted" branches.
 	maxOverflowCompactions int
+
+	// pauseMu guards pauseCh.
+	pauseMu sync.Mutex
+	// pauseCh is non-nil and open while /pause has paused the run loop;
+	// nil otherwise. See TogglePause and waitIfPaused.
+	pauseCh chan struct{}
 }
 
 type Opt func(*LocalRuntime)

@@ -196,6 +196,17 @@ func builtInSessionCommands() []Item {
 			},
 		},
 		{
+			ID:           "session.pause",
+			Label:        "Pause",
+			SlashCommand: "/pause",
+			Description:  "Pause/resume the runtime loop after the current request",
+			Category:     "Session",
+			Immediate:    true,
+			Execute: func(string) tea.Cmd {
+				return core.CmdHandler(messages.TogglePauseMsg{})
+			},
+		},
+		{
 			ID:           "session.permissions",
 			Label:        "Permissions",
 			SlashCommand: "/permissions",
