@@ -25,7 +25,11 @@ import (
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
-	"github.com/docker/docker-agent/pkg/tools/builtin"
+	"github.com/docker/docker-agent/pkg/tools/builtin/deferred"
+	"github.com/docker/docker-agent/pkg/tools/builtin/handoff"
+	"github.com/docker/docker-agent/pkg/tools/builtin/lsp"
+	skillstool "github.com/docker/docker-agent/pkg/tools/builtin/skills"
+	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
 	"github.com/docker/docker-agent/pkg/tools/codemode"
 )
 
@@ -217,7 +221,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 			loadedSkills := skills.Load(agentConfig.Skills.Sources)
 			loadedSkills = filterSkillsByName(loadedSkills, agentConfig.Skills.Include)
 			if len(loadedSkills) > 0 {
-				agentTools = append(agentTools, builtin.NewSkillsToolset(loadedSkills, runConfig.WorkingDir))
+				agentTools = append(agentTools, skillstool.NewSkillsToolset(loadedSkills, runConfig.WorkingDir))
 			}
 		}
 
@@ -401,10 +405,10 @@ func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir stri
 	var (
 		toolSets    []tools.ToolSet
 		warnings    []string
-		lspBackends []builtin.LSPBackend
+		lspBackends []lsp.Backend
 	)
 
-	deferredToolset := builtin.NewDeferredToolset()
+	deferredToolset := deferred.NewDeferredToolset()
 
 	for i := range a.Toolsets {
 		toolset := a.Toolsets[i]
@@ -436,10 +440,10 @@ func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir stri
 
 		// Collect LSP backends for multiplexing when there are multiple.
 		// Instead of adding them individually (which causes duplicate tool names),
-		// they are combined into a single LSPMultiplexer after the loop.
+		// they are combined into a single Multiplexer after the loop.
 		if toolset.Type == "lsp" {
-			if lspTool, ok := tool.(*builtin.LSPTool); ok {
-				lspBackends = append(lspBackends, builtin.LSPBackend{LSP: lspTool, Toolset: wrapped})
+			if lspTool, ok := tool.(*lsp.Tool); ok {
+				lspBackends = append(lspBackends, lsp.Backend{LSP: lspTool, Toolset: wrapped})
 				continue
 			}
 			slog.Warn("Toolset configured as type 'lsp' but registry returned unexpected type; treating as regular toolset",
@@ -452,7 +456,7 @@ func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir stri
 	// Merge LSP backends: if there are multiple, combine them into a single
 	// multiplexer so the LLM sees one set of lsp_* tools instead of duplicates.
 	if len(lspBackends) > 1 {
-		toolSets = append(toolSets, builtin.NewLSPMultiplexer(lspBackends))
+		toolSets = append(toolSets, lsp.NewLSPMultiplexer(lspBackends))
 	} else if len(lspBackends) == 1 {
 		toolSets = append(toolSets, lspBackends[0].Toolset)
 	}
@@ -462,10 +466,10 @@ func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir stri
 	}
 
 	if len(a.SubAgents) > 0 {
-		toolSets = append(toolSets, builtin.NewTransferTaskTool())
+		toolSets = append(toolSets, transfertask.NewTransferTaskTool())
 	}
 	if len(a.Handoffs) > 0 {
-		toolSets = append(toolSets, builtin.NewHandoffTool())
+		toolSets = append(toolSets, handoff.NewHandoffTool())
 	}
 
 	// Wrap all tools in a single Code Mode toolset.
