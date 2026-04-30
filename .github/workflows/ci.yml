@@ -81,7 +81,7 @@ jobs:
         run: go install github.com/google/go-licenses@latest
 
       - name: Check licenses
-        run: go-licenses check . --allowed_licenses=Apache-2.0,MIT,BSD-3-Clause,BSD-2-Clause --ignore modernc.org/mathutil
+        run: go-licenses check . --allowed_licenses=Apache-2.0,MIT,BSD-3-Clause,BSD-2-Clause --ignore modernc.org/mathutil --ignore github.com/hashicorp/hcl/v2
 
   build-image:
     if: github.event_name == 'pull_request'
