@@ -148,6 +148,31 @@ func TestSchemaMatchesGoTypes(t *testing.T) {
 	}
 }
 
+// TestHCLBlockRulesCoverSchemaMaps verifies that every top-level property in
+// agent-schema.json shaped like a keyed map (an object with
+// additionalProperties) has a matching modeMapByLabel rule registered in the
+// HCL converter. Without this, adding a new top-level section to the schema
+// would silently produce awkward HCL ergonomics (e.g. tool "x" {} mapping to
+// tool.x instead of tools.x).
+func TestHCLBlockRulesCoverSchemaMaps(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(schemaFile)
+	require.NoError(t, err)
+
+	var root jsonSchema
+	require.NoError(t, json.Unmarshal(data, &root))
+
+	covered := hclconv.LabelKeyedMapOutKeys()
+	for name, prop := range root.Properties {
+		if prop.AdditionalProperties == nil {
+			continue
+		}
+		assert.True(t, covered[name],
+			"top-level schema map %q has no matching modeMapByLabel rule in pkg/config/hcl", name)
+	}
+}
+
 // jsonSchema mirrors the subset of JSON Schema we need for comparison.
 type jsonSchema struct {
 	Properties           map[string]jsonSchema `json:"properties,omitempty"`

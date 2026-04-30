@@ -182,6 +182,20 @@ func lookupRule(name string, labels int) blockRule {
 	return blockRule{mode: modeSingleton, outKey: name}
 }
 
+// LabelKeyedMapOutKeys returns the set of YAML keys produced by HCL block
+// rules that map a labeled block into a label-keyed map (e.g. agent "x" {}
+// becomes agents.x). It is exported so tests can verify the HCL conventions
+// stay in sync with top-level keyed maps in the JSON schema.
+func LabelKeyedMapOutKeys() map[string]bool {
+	out := make(map[string]bool, len(blockRules))
+	for _, r := range blockRules {
+		if r.mode == modeMapByLabel {
+			out[r.outKey] = true
+		}
+	}
+	return out
+}
+
 // convertBody walks an HCL body, converting attributes into Go values and
 // blocks into nested map / list / yaml.MapSlice structures according to the
 // block rules.
