@@ -46,7 +46,7 @@ $ docker agent run [config] [message...] [flags]
 | `--working-dir <path>`                  | Set the working directory for the session (applies to tools and relative paths)                                                           |
 | `--env-from-file <path>`                | Load environment variables from file (repeatable)                                                                                         |
 | `--code-mode-tools`                     | Provide a single tool to call other tools via JavaScript (forces code-mode tools globally)                                                |
-| `--models-gateway <addr>`               | Route model traffic through a gateway. Also reads `DOCKER_AGENT_MODELS_GATEWAY` env var.                                                  |
+| `--models-gateway <addr>`               | Route model traffic through a gateway. Also reads `DOCKER_AGENT_MODELS_GATEWAY` (legacy `CAGENT_MODELS_GATEWAY`) env var.                  |
 | `--hook-pre-tool-use <cmd>`             | Add a pre-tool-use hook command (repeatable). See [Hooks]({{ '/configuration/hooks/' | relative_url }}).                                  |
 | `--hook-post-tool-use <cmd>`            | Add a post-tool-use hook command (repeatable)                                                                                             |
 | `--hook-session-start <cmd>`            | Add a session-start hook command (repeatable)                                                                                             |
@@ -281,6 +281,7 @@ $ docker agent run yolo-coder
 
 - `--yolo` — Auto-approve all tool calls when running the alias
 - `--model &lt;ref&gt;` — Override the model for the alias
+- `--hide-tool-results` — Hide tool call results in the TUI when running the alias
 
 When listing aliases, options are shown in brackets:
 

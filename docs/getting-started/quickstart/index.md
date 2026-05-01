@@ -40,7 +40,7 @@ Use the `docker agent new` command to scaffold a config file through prompts:
 $ docker agent new
 
 # Or specify options directly
-$ docker agent new --model openai/gpt-4o
+$ docker agent new --model openai/gpt-5-mini
 
 # Override iteration limits
 $ docker agent new --model dmr/ai/gemma3-qat:12B --max-iterations 15
@@ -59,7 +59,7 @@ Create an `agent.yaml` by hand for full control. Here's a minimal example:
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     description: A helpful coding assistant
     instruction: |
       You are an expert software developer. Help users write
@@ -72,7 +72,7 @@ agents:
 
 This gives your agent:
 
-- **Claude Sonnet 4** as the underlying model
+- **Claude Sonnet 4.5** as the underlying model
 - **Filesystem access** to read and write files
 - **Shell access** to run commands
 - **Think tool** for step-by-step reasoning
@@ -116,7 +116,7 @@ Give your agent persistent memory and web search:
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     description: Research assistant with memory
     instruction: |
       You are a research assistant. Search the web for information,

@@ -14,12 +14,12 @@ _docker-agent supports multiple AI model providers. Choose the right one for you
   <a class="card" href="{{ '/providers/openai/' | relative_url }}">
     <div class="card-icon">🟢</div>
     <h3>OpenAI</h3>
-    <p>GPT-4o, GPT-5, GPT-5-mini. The most widely used AI models.</p>
+    <p>GPT-5, GPT-5-mini, GPT-4o. The most widely used AI models.</p>
   </a>
   <a class="card" href="{{ '/providers/anthropic/' | relative_url }}">
     <div class="card-icon">🟠</div>
     <h3>Anthropic</h3>
-    <p>Claude Sonnet 4, Claude Sonnet 4.5. Excellent for coding and analysis.</p>
+    <p>Claude Sonnet 4.5, Claude Opus 4.7. Excellent for coding and analysis.</p>
   </a>
   <a class="card" href="{{ '/providers/google/' | relative_url }}">
     <div class="card-icon">🔵</div>
@@ -90,11 +90,11 @@ Different agents can use different providers in the same configuration:
 models:
   claude:
     provider: anthropic
-    model: claude-sonnet-4-0
+    model: claude-sonnet-4-5
     max_tokens: 64000
   gpt:
     provider: openai
-    model: gpt-4o
+    model: gpt-5-mini
   local:
     provider: dmr
     model: ai/qwen3
@@ -104,7 +104,7 @@ agents:
     model: claude # coordinator uses Claude
     sub_agents: [coder, helper]
   coder:
-    model: gpt # coder uses GPT-4o
+    model: gpt # coder uses GPT-5-mini
   helper:
     model: local # helper runs locally for free
 ```

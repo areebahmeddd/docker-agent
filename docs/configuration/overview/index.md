@@ -26,7 +26,7 @@ metadata:
 models:
   claude:
     provider: anthropic
-    model: claude-sonnet-4-0
+    model: claude-sonnet-4-5
     max_tokens: 64000
 
 # 4. Agents — define AI agents with their behavior
@@ -74,7 +74,7 @@ The simplest possible configuration — a single agent with an inline model:
 ```yaml
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: A helpful assistant
     instruction: You are a helpful assistant.
 ```
@@ -87,7 +87,7 @@ Models can be referenced inline or defined in the `models` section:
   <div class="card" style="cursor:default;">
     <h3>Inline</h3>
     <p>Quick and simple. Use <code>provider/model</code> syntax directly.</p>
-    <pre style="margin-top:12px"><code class="language-yaml">model: openai/gpt-4o</code></pre>
+    <pre style="margin-top:12px"><code class="language-yaml">model: openai/gpt-5-mini</code></pre>
   </div>
   <div class="card" style="cursor:default;">
     <h3>Named</h3>
@@ -145,14 +145,19 @@ Models can be referenced inline or defined in the `models` section:
 
 API keys and secrets are read from environment variables — never stored in config files. See [Managing Secrets]({{ '/guides/secrets/' | relative_url }}) for all the ways to provide credentials (env files, Docker Compose secrets, macOS Keychain, `pass`):
 
-| Variable            | Provider      |
-| ------------------- | ------------- |
-| `OPENAI_API_KEY`    | OpenAI        |
-| `ANTHROPIC_API_KEY` | Anthropic     |
-| `GOOGLE_API_KEY`    | Google Gemini |
-| `MISTRAL_API_KEY`   | Mistral       |
-| `XAI_API_KEY`       | xAI           |
-| `NEBIUS_API_KEY`    | Nebius        |
+| Variable                   | Provider                                            |
+| -------------------------- | --------------------------------------------------- |
+| `OPENAI_API_KEY`           | OpenAI                                              |
+| `ANTHROPIC_API_KEY`        | Anthropic                                           |
+| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Google Gemini                              |
+| `MISTRAL_API_KEY`          | Mistral                                             |
+| `XAI_API_KEY`              | xAI                                                 |
+| `NEBIUS_API_KEY`           | Nebius                                              |
+| `MINIMAX_API_KEY`          | MiniMax                                             |
+| `REQUESTY_API_KEY`         | Requesty                                            |
+| `GITHUB_TOKEN`             | GitHub Copilot (PAT with `copilot` scope)           |
+| `AZURE_API_KEY`            | Azure OpenAI (override with `token_key`)            |
+| `AWS_BEARER_TOKEN_BEDROCK` | AWS Bedrock (or the standard AWS credentials chain) |
 
 **Tool Auto-Installation:**
 
@@ -161,10 +166,25 @@ API keys and secrets are read from environment variables — never stored in con
 | `DOCKER_AGENT_AUTO_INSTALL` | Set to `false` to disable automatic tool installation           |
 | `DOCKER_AGENT_TOOLS_DIR`    | Override the base directory for installed tools (default: `~/.cagent/tools/`) |
 
+**Runtime overrides:**
+
+| Variable                            | Description                                                                                          |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `DOCKER_AGENT_DEFAULT_MODEL`        | Default model used when none is specified, in `provider/model` form (e.g. `openai/gpt-5-mini`).      |
+| `DOCKER_AGENT_MODELS_GATEWAY`       | Route model traffic through a gateway. Equivalent to the `--models-gateway` flag.                    |
+| `DOCKER_AGENT_HIDE_TELEMETRY_BANNER`| Set to `1` to suppress the first-run telemetry notice.                                               |
+
+<div class="callout callout-info" markdown="1">
+<div class="callout-title">ℹ️ Legacy <code>CAGENT_*</code> aliases
+</div>
+  <p>The same variables are also accepted with the legacy <code>CAGENT_</code> prefix (e.g. <code>CAGENT_DEFAULT_MODEL</code>, <code>CAGENT_MODELS_GATEWAY</code>, <code>CAGENT_HIDE_TELEMETRY_BANNER</code>) for backward compatibility. Prefer the <code>DOCKER_AGENT_*</code> form in new setups.</p>
+
+</div>
+
 <div class="callout callout-warning" markdown="1">
 <div class="callout-title">⚠️ Important
 </div>
-  <p>Model references are case-sensitive: <code>openai/gpt-4o</code> is not the same as <code>openai/GPT-4o</code>.</p>
+  <p>Model references are case-sensitive: <code>openai/gpt-5-mini</code> is not the same as <code>openai/GPT-5-mini</code>.</p>
 
 </div>
 
@@ -195,7 +215,7 @@ version: 8
 
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     # ...
 ```
 
@@ -241,7 +261,7 @@ mcps:
 
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     toolsets:
       - type: mcp
         ref: github        # reuse the definition above

@@ -16,7 +16,7 @@ Error message: `context_length_exceeded` or similar.
 
 - Use `/compact` in the TUI to summarize and reduce conversation history
 - Set `num_history_items` in agent config to limit messages sent to the model
-- Switch to a model with larger context (e.g., Claude 200K, Gemini 2M)
+- Switch to a model with larger context (Claude Sonnet 4.5 supports 1M tokens, Gemini up to 2M)
 - Break large tasks into smaller conversations
 
 ### Max Iterations Reached
@@ -40,9 +40,9 @@ Configure fallback behavior in your agent config:
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     fallback:
-      models: [openai/gpt-4o, openai/gpt-4o-mini]
+      models: [openai/gpt-5-mini, openai/gpt-4o-mini]
       retries: 2 # retries per model for 5xx errors
       cooldown: 1m # how long to stick with fallback after 429
 ```
@@ -98,9 +98,8 @@ $ env | grep API_KEY
 
 Model names must match the provider's naming exactly. Common mistakes:
 
-- Using `gpt-4` instead of `gpt-4o`
-- Using a deprecated model name
-- Model references are case-sensitive: `openai/gpt-4o` ≠ `openai/GPT-4o`
+- Using a deprecated model name (e.g. `gpt-4` instead of `gpt-5-mini` or `gpt-4o`)
+- Model references are case-sensitive: `openai/gpt-5-mini` ≠ `openai/GPT-5-mini`
 
 ### Network connectivity
 
@@ -150,7 +149,7 @@ docker-agent validates config at startup and reports errors with line numbers. C
 ### Missing references
 
 - Local agents in `sub_agents` must be defined in the `agents` section (external OCI references like `agentcatalog/pirate` are resolved from registries automatically)
-- Named model references must exist in the `models` section (or use inline format like `openai/gpt-4o`)
+- Named model references must exist in the `models` section (or use inline format like `openai/gpt-5-mini`)
 - RAG source names referenced by agents must be defined in the `rag` section
 
 ### Toolset validation

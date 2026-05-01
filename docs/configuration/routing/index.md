@@ -28,25 +28,25 @@ models:
   smart_router:
     # Fallback model when no routing rule matches
     provider: openai
-    model: gpt-4o-mini
+    model: gpt-5-mini
 
     # Routing rules
     routing:
-      - model: anthropic/claude-sonnet-4-0
+      - model: anthropic/claude-sonnet-4-5
         examples:
           - "Write a detailed technical document"
           - "Help me architect this system"
           - "Review this code for security issues"
           - "Explain this complex algorithm"
 
-      - model: openai/gpt-4o
+      - model: openai/gpt-5
         examples:
           - "Generate some creative ideas"
           - "Write a story about"
           - "Help me brainstorm"
           - "Come up with names for"
 
-      - model: openai/gpt-4o-mini
+      - model: openai/gpt-5-mini
         examples:
           - "What time is it"
           - "Convert this to JSON"
@@ -100,9 +100,9 @@ Route simple queries to cheaper models:
 models:
   cost_optimizer:
     provider: openai
-    model: gpt-4o-mini # Cheap fallback
+    model: gpt-5-mini # Cheap fallback
     routing:
-      - model: anthropic/claude-sonnet-4-0
+      - model: anthropic/claude-sonnet-4-5
         examples:
           - "Complex analysis"
           - "Detailed research"
@@ -117,15 +117,15 @@ Route coding tasks to code-specialized models:
 models:
   task_router:
     provider: openai
-    model: gpt-4o # General fallback
+    model: gpt-5-mini # General fallback
     routing:
-      - model: anthropic/claude-sonnet-4-0
+      - model: anthropic/claude-sonnet-4-5
         examples:
           - "Write code"
           - "Debug this function"
           - "Review my implementation"
           - "Fix this bug"
-      - model: openai/gpt-4o
+      - model: openai/gpt-5
         examples:
           - "Write a blog post"
           - "Help me with writing"
@@ -140,9 +140,9 @@ Distribute load across equivalent models from different providers:
 models:
   load_balancer:
     provider: openai
-    model: gpt-4o
+    model: gpt-5-mini
     routing:
-      - model: anthropic/claude-sonnet-4-0
+      - model: anthropic/claude-sonnet-4-5
         examples:
           - "First request pattern"
           - "Another request type"
@@ -163,8 +163,8 @@ $ docker agent run config.yaml --debug
 Look for log entries like:
 
 ```text
-"Rule-based router selected model" router=smart_router selected_model=anthropic/claude-sonnet-4-0
-"Route matched" model=anthropic/claude-sonnet-4-0 score=2.45
+"Rule-based router selected model" router=smart_router selected_model=anthropic/claude-sonnet-4-5
+"Route matched" model=anthropic/claude-sonnet-4-5 score=2.45
 ```
 
 <div class="callout callout-warning" markdown="1">
