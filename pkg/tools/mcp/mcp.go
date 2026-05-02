@@ -591,6 +591,19 @@ func processMCPContent(toolResult *mcp.CallToolResult) *tools.ToolCallResult {
 			} else {
 				text.WriteString(c.URI)
 			}
+		case *mcp.EmbeddedResource:
+			if c.Resource == nil {
+				continue
+			}
+			if c.Resource.Text != "" {
+				text.WriteString(c.Resource.Text)
+				continue
+			}
+			if len(c.Resource.Blob) > 0 {
+				// Binary blobs can't be inlined as text; surface a marker the model can reason about.
+				fmt.Fprintf(&text, "[embedded resource %s (%s, %d bytes)]",
+					c.Resource.URI, c.Resource.MIMEType, len(c.Resource.Blob))
+			}
 		}
 	}
 

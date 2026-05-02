@@ -245,6 +245,51 @@ func TestProcessMCPContent(t *testing.T) {
 			wantOutput: "[doc](file:///path(1%29/doc.txt)",
 		},
 
+		// --- embedded resources ---
+		{
+			name: "embedded text resource",
+			input: callToolResult(&mcp.EmbeddedResource{
+				Resource: &mcp.ResourceContents{
+					URI:      "file:///notes.txt",
+					MIMEType: "text/plain",
+					Text:     "hello world",
+				},
+			}),
+			wantOutput: "hello world",
+		},
+		{
+			name: "text ack and embedded text resource concatenate",
+			input: callToolResult(
+				&mcp.TextContent{Text: "downloaded "},
+				&mcp.EmbeddedResource{
+					Resource: &mcp.ResourceContents{
+						URI:      "file:///notes.txt",
+						MIMEType: "text/plain",
+						Text:     "hello world",
+					},
+				},
+			),
+			wantOutput: "downloaded hello world",
+		},
+		{
+			name: "embedded blob resource emits a marker",
+			input: callToolResult(&mcp.EmbeddedResource{
+				Resource: &mcp.ResourceContents{
+					URI:      "file:///image.png",
+					MIMEType: "image/png",
+					Blob:     []byte("PNGBYTES"),
+				},
+			}),
+			wantOutput: "[embedded resource file:///image.png (image/png, 8 bytes)]",
+		},
+		{
+			name: "embedded resource with nil contents is no-op",
+			input: callToolResult(&mcp.EmbeddedResource{
+				Resource: nil,
+			}),
+			wantOutput: "no output",
+		},
+
 		// --- structured content ---
 		{
 			name:           "structured content passed through",
