@@ -142,12 +142,22 @@ func (t *ScriptShellTool) execute(ctx context.Context, toolConfig *latest.Script
 
 	cmd := exec.CommandContext(ctx, shell, append(argsPrefix, toolConfig.Cmd)...)
 	cmd.Dir = toolConfig.WorkingDir
-	cmd.Env = t.env
+	// Per-call clone: appending onto t.env would mutate the shared
+	// backing array under concurrent calls. Expand nil to os.Environ()
+	// so a nil t.env still inherits the parent env (a non-nil empty
+	// slice would strip it).
+	base := t.env
+	if base == nil {
+		base = os.Environ()
+	}
+	envCopy := make([]string, len(base), len(base)+len(params))
+	copy(envCopy, base)
 	for key, value := range params {
 		if value != nil {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%v", key, value))
+			envCopy = append(envCopy, fmt.Sprintf("%s=%v", key, value))
 		}
 	}
+	cmd.Env = envCopy
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
