@@ -656,6 +656,7 @@ You can add hooks from the command line without modifying the agent's YAML file.
 | `--hook-session-start`  | Run a command when a session starts     |
 | `--hook-session-end`    | Run a command when a session ends       |
 | `--hook-on-user-input`  | Run a command when waiting for input    |
+| `--hook-stop`           | Run a command when the model finishes responding |
 
 All flags are repeatable — pass multiple to register multiple hooks.
 

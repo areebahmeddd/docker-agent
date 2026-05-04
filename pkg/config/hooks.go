@@ -10,13 +10,14 @@ import (
 // HooksFromCLI builds a HooksConfig from CLI flag values.
 // Each string is treated as a shell command to run.
 // Empty strings are silently skipped.
-func HooksFromCLI(preToolUse, postToolUse, sessionStart, sessionEnd, onUserInput []string) *latest.HooksConfig {
+func HooksFromCLI(preToolUse, postToolUse, sessionStart, sessionEnd, onUserInput, stop []string) *latest.HooksConfig {
 	hooks := &latest.HooksConfig{
 		PreToolUse:   matcherFromCommands(preToolUse),
 		PostToolUse:  matcherFromCommands(postToolUse),
 		SessionStart: defsFromCommands(sessionStart),
 		SessionEnd:   defsFromCommands(sessionEnd),
 		OnUserInput:  defsFromCommands(onUserInput),
+		Stop:         defsFromCommands(stop),
 	}
 
 	if hooks.IsEmpty() {
@@ -86,5 +87,6 @@ func (runConfig *RuntimeConfig) CLIHooks() *latest.HooksConfig {
 		runConfig.HookSessionStart,
 		runConfig.HookSessionEnd,
 		runConfig.HookOnUserInput,
+		runConfig.HookStop,
 	)
 }

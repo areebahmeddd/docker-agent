@@ -52,6 +52,7 @@ $ docker agent run [config] [message...] [flags]
 | `--hook-session-start <cmd>`            | Add a session-start hook command (repeatable)                                                                                             |
 | `--hook-session-end <cmd>`              | Add a session-end hook command (repeatable)                                                                                               |
 | `--hook-on-user-input <cmd>`            | Add an on-user-input hook command (repeatable)                                                                                            |
+| `--hook-stop <cmd>`                     | Add a stop hook command, fired when the model finishes responding (repeatable)                                                            |
 | `--fake <path>`                         | Replay AI responses from a cassette file (for testing). Mutually exclusive with `--record`.                                               |
 | `--record [path]`                       | Record AI API interactions to a cassette file (auto-generates filename if no path given)                                                  |
 | `-d, --debug`                           | Enable debug logging                                                                                                                      |

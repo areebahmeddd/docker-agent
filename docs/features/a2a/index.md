@@ -47,6 +47,7 @@ $ docker agent serve a2a agentcatalog/pirate
 | `--hook-session-start <cmd>`      | (none)           | Add a session-start hook (repeatable).                                                                               |
 | `--hook-session-end <cmd>`        | (none)           | Add a session-end hook (repeatable).                                                                                 |
 | `--hook-on-user-input <cmd>`      | (none)           | Add an on-user-input hook (repeatable).                                                                              |
+| `--hook-stop <cmd>`               | (none)           | Add a stop hook, fired when the model finishes responding (repeatable).                                              |
 
 ## Features
 
