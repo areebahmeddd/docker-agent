@@ -68,9 +68,6 @@ var (
 	_ io.Closer          = (*FilesystemTool)(nil)
 )
 
-// allowAllPaths is a no-op path filter that permits every path.
-func allowAllPaths(_ string) error { return nil }
-
 type FileSystemOpt func(*FilesystemTool)
 
 func WithPostEditCommands(postEditCommands []PostEditConfig) FileSystemOpt {
@@ -564,7 +561,7 @@ func (t *FilesystemTool) resolvePath(path string) string {
 // returned path.
 func (t *FilesystemTool) resolveAndCheckPath(path string) (string, error) {
 	if t.sandboxBroken {
-		return "", fmt.Errorf("filesystem toolset is disabled due to invalid allow/deny list configuration")
+		return "", errors.New("filesystem toolset is disabled due to invalid allow/deny list configuration")
 	}
 
 	resolved := t.resolvePath(path)
