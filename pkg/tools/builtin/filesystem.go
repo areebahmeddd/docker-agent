@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -46,6 +47,10 @@ type FilesystemTool struct {
 	repoMatcher      *fsx.VCSMatcher
 	repoMatcherOnce  sync.Once
 
+	// sandboxBroken is set when allow/deny list construction fails.
+	// When true, all filesystem operations are rejected (fail-closed).
+	sandboxBroken bool
+
 	// allowList, when non-nil, restricts every filesystem operation to paths
 	// that resolve under one of the listed roots. nil means "no allow-list";
 	// the toolset accepts any path the OS will let it touch.
@@ -60,6 +65,7 @@ type FilesystemTool struct {
 var (
 	_ tools.ToolSet      = (*FilesystemTool)(nil)
 	_ tools.Instructable = (*FilesystemTool)(nil)
+	_ io.Closer          = (*FilesystemTool)(nil)
 )
 
 // allowAllPaths is a no-op path filter that permits every path.
@@ -97,7 +103,8 @@ func WithAllowList(roots []string) FileSystemOpt {
 	return func(t *FilesystemTool) {
 		set, err := newPathRootSet(t.workingDir, roots)
 		if err != nil {
-			slog.Warn("filesystem allow-list: invalid entry; ignoring allow-list", "error", err)
+			slog.Error("filesystem allow-list: invalid entry; disabling toolset", "error", err)
+			t.sandboxBroken = true
 			return
 		}
 		t.allowList = set
@@ -113,7 +120,8 @@ func WithDenyList(roots []string) FileSystemOpt {
 	return func(t *FilesystemTool) {
 		set, err := newPathRootSet(t.workingDir, roots)
 		if err != nil {
-			slog.Warn("filesystem deny-list: invalid entry; ignoring deny-list", "error", err)
+			slog.Error("filesystem deny-list: invalid entry; disabling toolset", "error", err)
+			t.sandboxBroken = true
 			return
 		}
 		t.denyList = set
@@ -130,6 +138,18 @@ func NewFilesystemTool(workingDir string, opts ...FileSystemOpt) *FilesystemTool
 	}
 
 	return t
+}
+
+// Close releases any *os.Root file descriptors held by the allow/deny lists.
+// It is safe to call Close multiple times.
+func (t *FilesystemTool) Close() error {
+	if t.allowList != nil {
+		t.allowList.close()
+	}
+	if t.denyList != nil {
+		t.denyList.close()
+	}
+	return nil
 }
 
 func (t *FilesystemTool) Instructions() string {
@@ -543,6 +563,10 @@ func (t *FilesystemTool) resolvePath(path string) string {
 // [*os.Root] handles owned by [pathRootSet] rather than via os.* on the
 // returned path.
 func (t *FilesystemTool) resolveAndCheckPath(path string) (string, error) {
+	if t.sandboxBroken {
+		return "", fmt.Errorf("filesystem toolset is disabled due to invalid allow/deny list configuration")
+	}
+
 	resolved := t.resolvePath(path)
 	if t.allowList == nil && t.denyList == nil {
 		return resolved, nil
@@ -610,7 +634,14 @@ func (t *FilesystemTool) handleDirectoryTree(ctx context.Context, args Directory
 		return tools.ResultError(err.Error()), nil
 	}
 
-	tree, err := fsx.DirectoryTree(ctx, resolvedPath, allowAllPaths, t.shouldIgnorePath, maxFiles)
+	// Create a path checker that enforces allow/deny lists for every child path.
+	// This prevents symlinked directories from being traversed outside the sandbox.
+	pathChecker := func(childPath string) error {
+		_, err := t.resolveAndCheckPath(childPath)
+		return err
+	}
+
+	tree, err := fsx.DirectoryTree(ctx, resolvedPath, pathChecker, t.shouldIgnorePath, maxFiles)
 	if err != nil {
 		return tools.ResultError(fmt.Sprintf("Error building directory tree: %s", err)), nil
 	}
@@ -976,6 +1007,13 @@ func (t *FilesystemTool) handleSearchFilesContent(_ context.Context, args Search
 
 		// Only process files, not directories
 		if d.IsDir() {
+			return nil
+		}
+
+		// Check this file against allow/deny lists before reading.
+		// This prevents symlinks inside the allowed root from escaping the sandbox.
+		if _, checkErr := t.resolveAndCheckPath(path); checkErr != nil {
+			// Skip files outside the sandbox silently (don't fail the whole search).
 			return nil
 		}
 

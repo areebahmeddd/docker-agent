@@ -398,21 +398,23 @@ func TestExpandPathToken(t *testing.T) {
 }
 
 func TestWithAllowList_RejectsUndefinedEnvVar(t *testing.T) {
-	// Regression test for the same bug at the toolset boundary: a typo in
-	// an env-var name in allow_list must NOT silently grant access to the
-	// working directory. WithAllowList logs+drops invalid entries (no
-	// error returned), which would let an attacker exploit the typo. We
-	// instead want the allow-list to remain disabled ("no constraint"),
-	// not silently expanded to the working dir.
+	// Regression test: a typo in an env-var name in allow_list must NOT
+	// silently grant access to the working directory. The toolset must
+	// fail-closed: reject all operations when list construction fails.
 	os.Unsetenv("DEFINITELY_NOT_SET")
 	wd := t.TempDir()
 	tool := NewFilesystemTool(wd, WithAllowList([]string{"$DEFINITELY_NOT_SET"}))
 
-	// The allow-list construction failed silently, so the toolset is
-	// unrestricted (default behaviour) instead of being silently scoped
-	// to the working dir. Verify by reaching outside the working dir.
+	// The allow-list construction failed, so the toolset is disabled
+	// (fail-closed). All operations must be rejected.
 	_, err := tool.resolveAndCheckPath("/etc/hosts")
-	require.NoError(t, err, "undefined env var must not silently scope allow-list to working dir")
+	require.Error(t, err, "undefined env var must cause toolset to fail-closed")
+	assert.Contains(t, err.Error(), "disabled due to invalid")
+
+	// Also verify working dir access is rejected (not silently allowed).
+	_, err = tool.resolveAndCheckPath("file.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disabled due to invalid")
 }
 
 func TestWithAllowList_AcceptsDefinedEnvVar(t *testing.T) {
