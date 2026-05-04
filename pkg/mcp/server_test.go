@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -115,4 +116,17 @@ func TestAgentToolAnnotations(t *testing.T) {
 			assert.Equal(t, tt.wantOpenWorld, got.OpenWorldHint, "OpenWorldHint")
 		})
 	}
+}
+
+func TestCreateMCPServer_ToolNameRejectsMultipleAgents(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "DUMMY")
+
+	runConfig := &config.RuntimeConfig{}
+	runConfig.MCPToolName = "my-alias"
+
+	_, _, err := createMCPServer(t.Context(), "testdata/multi.yaml", "", runConfig)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--tool-name")
+	assert.Contains(t, err.Error(), "exactly one agent")
 }
