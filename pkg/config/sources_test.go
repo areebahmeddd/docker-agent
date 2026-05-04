@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +21,18 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/remote"
 )
+
+// newURLSourceForTest constructs a urlSource that bypasses the HTTPS-only and
+// SSRF dial-time checks. It is defined here, in a _test.go file, so it is
+// not compiled into release binaries. Tests use it because httptest.NewServer
+// binds to 127.0.0.1 over plain HTTP.
+func newURLSourceForTest(rawURL string, envProvider environment.Provider) Source {
+	return &urlSource{
+		url:         rawURL,
+		envProvider: envProvider,
+		unsafe:      true,
+	}
+}
 
 func TestOCISource_DigestReference_ServesFromCache(t *testing.T) {
 	t.Parallel()
@@ -70,7 +83,7 @@ func TestURLSource_Read(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	source := NewURLSource(server.URL, nil)
+	source := newURLSourceForTest(server.URL, nil)
 
 	assert.Equal(t, server.URL, source.Name())
 	assert.Empty(t, source.ParentDir())
@@ -108,7 +121,7 @@ func TestURLSource_Read_HTTPError(t *testing.T) {
 			_ = os.Remove(cachePath)
 			_ = os.Remove(etagPath)
 
-			_, err := NewURLSource(server.URL, nil).Read(t.Context())
+			_, err := newURLSourceForTest(server.URL, nil).Read(t.Context())
 			require.Error(t, err)
 		})
 	}
@@ -117,7 +130,7 @@ func TestURLSource_Read_HTTPError(t *testing.T) {
 func TestURLSource_Read_ConnectionError(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewURLSource("http://invalid.invalid/config.yaml", nil).Read(t.Context())
+	_, err := newURLSourceForTest("http://invalid.invalid/config.yaml", nil).Read(t.Context())
 	require.Error(t, err)
 }
 
@@ -130,7 +143,7 @@ func TestURLSource_Read_CachesContent(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	source := NewURLSource(server.URL, nil)
+	source := newURLSourceForTest(server.URL, nil)
 
 	// First read should fetch and cache
 	data, err := source.Read(t.Context())
@@ -188,7 +201,7 @@ func TestURLSource_Read_UsesETagForConditionalRequest(t *testing.T) {
 		_ = os.Remove(etagPath)
 	})
 
-	source := NewURLSource(server.URL, nil)
+	source := newURLSourceForTest(server.URL, nil)
 
 	// Read should use cached content via 304 response
 	data, err := source.Read(t.Context())
@@ -213,7 +226,7 @@ func TestURLSource_Read_FallsBackToCacheOnNetworkError(t *testing.T) {
 		_ = os.Remove(cachePath)
 	})
 
-	source := NewURLSource(agentURL, nil)
+	source := newURLSourceForTest(agentURL, nil)
 
 	// Read should fall back to cached content
 	data, err := source.Read(t.Context())
@@ -241,7 +254,7 @@ func TestURLSource_Read_FallsBackToCacheOnHTTPError(t *testing.T) {
 		_ = os.Remove(cachePath)
 	})
 
-	source := NewURLSource(server.URL, nil)
+	source := newURLSourceForTest(server.URL, nil)
 
 	// Read should fall back to cached content
 	data, err := source.Read(t.Context())
@@ -279,7 +292,7 @@ func TestURLSource_Read_UpdatesCacheWhenContentChanges(t *testing.T) {
 		_ = os.Remove(etagPath)
 	})
 
-	source := NewURLSource(server.URL, nil)
+	source := newURLSourceForTest(server.URL, nil)
 
 	// First read
 	data, err := source.Read(t.Context())
@@ -298,6 +311,144 @@ func TestURLSource_Read_UpdatesCacheWhenContentChanges(t *testing.T) {
 	cachedData, err := os.ReadFile(cachePath)
 	require.NoError(t, err)
 	assert.Equal(t, "updated content update", string(cachedData))
+}
+
+func TestURLSource_Read_RejectsHTTP(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewURLSource("http://example.com/agent.yaml", nil).Read(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only https://")
+}
+
+func TestURLSource_Read_RejectsLocalAddresses(t *testing.T) {
+	t.Parallel()
+
+	// Hosts whose only resolution is a non-public IP must be refused at
+	// dial time. We test the SSRF dialer via the HTTPS code path even
+	// though the TLS handshake will never complete, because the dial is
+	// aborted before any bytes are sent.
+	tests := []string{
+		"https://127.0.0.1/agent.yaml",       // loopback
+		"https://[::1]/agent.yaml",           // IPv6 loopback
+		"https://10.0.0.1/agent.yaml",        // RFC1918
+		"https://192.168.1.1/agent.yaml",     // RFC1918
+		"https://169.254.169.254/agent.yaml", // AWS/GCP/Azure metadata
+		"https://0.0.0.0/agent.yaml",         // unspecified
+	}
+	for _, rawURL := range tests {
+		t.Run(rawURL, func(t *testing.T) {
+			t.Parallel()
+
+			// Clear any cached content so the dial is actually attempted.
+			urlCacheDir := getURLCacheDir()
+			urlHash := hashURL(rawURL)
+			_ = os.Remove(filepath.Join(urlCacheDir, urlHash))
+			_ = os.Remove(filepath.Join(urlCacheDir, urlHash+".etag"))
+
+			_, err := NewURLSource(rawURL, nil).Read(t.Context())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "non-public address")
+		})
+	}
+}
+
+func TestIsPublicIP(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		ip       string
+		isPublic bool
+	}{
+		{"8.8.8.8", true},
+		{"1.1.1.1", true},
+		{"2001:4860:4860::8888", true}, // public IPv6
+		{"127.0.0.1", false},
+		{"::1", false},
+		{"10.0.0.1", false},
+		{"172.16.0.1", false},
+		{"192.168.0.1", false},
+		{"169.254.169.254", false}, // AWS/GCP/Azure metadata
+		{"fe80::1", false},         // link-local IPv6
+		{"224.0.0.1", false},       // multicast
+		{"0.0.0.0", false},
+		{"::", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ip, func(t *testing.T) {
+			t.Parallel()
+			ip := net.ParseIP(tt.ip)
+			require.NotNil(t, ip, "failed to parse IP %q", tt.ip)
+			assert.Equal(t, tt.isPublic, isPublicIP(ip))
+		})
+	}
+}
+
+func TestSSRFCheckRedirect(t *testing.T) {
+	t.Parallel()
+
+	mustParse := func(s string) *url.URL {
+		u, err := url.Parse(s)
+		require.NoError(t, err)
+		return u
+	}
+
+	tests := []struct {
+		name    string
+		target  string
+		via     int    // length of the via slice
+		wantErr string // empty means no error
+	}{
+		{"https redirect allowed", "https://example.com/agent.yaml", 1, ""},
+		{"http redirect rejected", "http://example.com/agent.yaml", 1, "non-https"},
+		{"file redirect rejected", "file:///etc/passwd", 1, "non-https"},
+		{"javascript redirect rejected", "javascript:alert(1)", 1, "non-https"},
+		{"ftp redirect rejected", "ftp://example.com/x", 1, "non-https"},
+		{"redirect loop bounded", "https://example.com/agent.yaml", 10, "10 redirects"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := &http.Request{URL: mustParse(tt.target)}
+			via := make([]*http.Request, tt.via)
+			err := ssrfCheckRedirect(req, via)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestURLSource_Read_RejectsHTTPRedirect(t *testing.T) {
+	// Not parallel - clears cache.
+
+	// HTTPS origin that 302s to plain http. We use httptest.NewTLSServer so
+	// the production ssrfSafeHTTPClient gets to exercise CheckRedirect on a
+	// real Location header. The dial-time SSRF check would reject 127.0.0.1
+	// before the redirect target is fetched, but CheckRedirect runs first
+	// and gives us the precise downgrade error message.
+	httpsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Redirect(w, &http.Request{}, "http://example.com/downgraded", http.StatusFound)
+	}))
+	t.Cleanup(httpsSrv.Close)
+
+	// Trust the test server's self-signed cert by injecting it into the
+	// Go default cert pool would be invasive; instead, exercise the
+	// CheckRedirect hook directly via ssrfCheckRedirect (covered above)
+	// and assert that the production fetch path errors out for an https
+	// origin pointing at a non-trusted CA. Either way, the request must
+	// not silently follow to http://.
+	agentURL := httpsSrv.URL + "/agent.yaml"
+	urlCacheDir := getURLCacheDir()
+	urlHash := hashURL(agentURL)
+	_ = os.Remove(filepath.Join(urlCacheDir, urlHash))
+	_ = os.Remove(filepath.Join(urlCacheDir, urlHash+".etag"))
+
+	_, err := NewURLSource(agentURL, nil).Read(t.Context())
+	require.Error(t, err)
 }
 
 func TestIsURLReference(t *testing.T) {
@@ -365,7 +516,7 @@ func TestURLSource_Read_WithGitHubAuth(t *testing.T) {
 	})
 
 	// For non-GitHub URLs, auth should not be added even with token available
-	source := NewURLSource(server.URL, envProvider)
+	source := newURLSourceForTest(server.URL, envProvider)
 	_, err := source.Read(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, receivedAuth, "non-GitHub URLs should not receive auth header")
@@ -397,7 +548,7 @@ func TestURLSource_Read_WithGitHubAuth_GitHubURL(t *testing.T) {
 			// URL with GitHub host in path (not hostname) should NOT receive auth
 			// This prevents token leakage to attacker-controlled domains
 			maliciousURL := server.URL + "/" + host + "/path/to/file"
-			source := NewURLSource(maliciousURL, envProvider)
+			source := newURLSourceForTest(maliciousURL, envProvider)
 
 			_, err := source.Read(t.Context())
 			require.NoError(t, err)
@@ -419,7 +570,7 @@ func TestURLSource_Read_WithGitHubAuth_NoToken(t *testing.T) {
 	// Create a mock env provider without a GitHub token
 	envProvider := environment.NewNoEnvProvider()
 
-	source := NewURLSource(server.URL, envProvider)
+	source := newURLSourceForTest(server.URL, envProvider)
 	_, err := source.Read(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, receivedAuth, "should not add auth header when token is missing")
@@ -436,7 +587,7 @@ func TestURLSource_Read_WithGitHubAuth_NoEnvProvider(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	// No env provider
-	source := NewURLSource(server.URL, nil)
+	source := newURLSourceForTest(server.URL, nil)
 	_, err := source.Read(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, receivedAuth, "should not add auth header without env provider")

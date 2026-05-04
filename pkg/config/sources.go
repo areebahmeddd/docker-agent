@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/docker/docker-agent/pkg/content"
 	"github.com/docker/docker-agent/pkg/environment"
@@ -192,6 +195,11 @@ func hasLocalArtifact(store *content.Store, storeKey string) bool {
 type urlSource struct {
 	url         string
 	envProvider environment.Provider
+	// unsafe disables the HTTPS-only and SSRF dial-time checks. It is set
+	// only by the test-only constructor newURLSourceForTest (defined in
+	// sources_test.go), which exists because tests use httptest.NewServer
+	// (plain HTTP, 127.0.0.1).
+	unsafe bool
 }
 
 // NewURLSource creates a new URL source. If envProvider is non-nil, it will be used
@@ -217,6 +225,12 @@ func getURLCacheDir() string {
 }
 
 func (a urlSource) Read(ctx context.Context) ([]byte, error) {
+	if !a.unsafe {
+		if err := validateAgentURL(a.url); err != nil {
+			return nil, err
+		}
+	}
+
 	cacheDir := getURLCacheDir()
 	urlHash := hashURL(a.url)
 	cachePath := filepath.Join(cacheDir, urlHash)
@@ -241,7 +255,12 @@ func (a urlSource) Read(ctx context.Context) ([]byte, error) {
 	// Add GitHub token authorization for GitHub URLs
 	a.addGitHubAuth(ctx, req)
 
-	resp, err := httpclient.NewHTTPClient(ctx).Do(req)
+	client := httpclient.NewHTTPClient(ctx)
+	if !a.unsafe {
+		client = ssrfSafeHTTPClient()
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		// Network error - try to use cached version
 		if cachedData, cacheErr := os.ReadFile(cachePath); cacheErr == nil {
@@ -343,4 +362,97 @@ func hashURL(rawURL string) string {
 // IsURLReference checks if the input is a valid HTTP/HTTPS URL.
 func IsURLReference(input string) bool {
 	return strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://")
+}
+
+// validateAgentURL enforces that an agent URL uses HTTPS. SSRF protection
+// (rejecting connections to loopback / private / link-local addresses) is
+// done at dial time by ssrfSafeHTTPClient so that DNS rebinding cannot be
+// used to bypass it.
+func validateAgentURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", rawURL, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("refusing to load agent from %q: only https:// URLs are allowed (got scheme %q)", rawURL, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("invalid URL %q: missing host", rawURL)
+	}
+	return nil
+}
+
+// ssrfSafeHTTPClient returns an http.Client whose dialer rejects connections
+// to non-public IP ranges (loopback, private, link-local, multicast,
+// unspecified). The check happens after DNS resolution and before the TCP
+// handshake, so DNS rebinding to a private IP is also blocked.
+//
+// Redirects are re-validated through CheckRedirect so that an https://
+// origin cannot transparently downgrade to http:// or to a different scheme.
+// SSRF protection on the redirect target is provided by the same dialer.
+func ssrfSafeHTTPClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control:   ssrfDialControl,
+	}
+	return &http.Client{
+		Timeout: 60 * time.Second,
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           dialer.DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+		CheckRedirect: ssrfCheckRedirect,
+	}
+}
+
+// ssrfCheckRedirect is the http.Client CheckRedirect hook used by
+// ssrfSafeHTTPClient. It rejects redirects to non-https URLs (defeating
+// TLS downgrade) and bounds the redirect chain. SSRF on the redirect
+// target itself is enforced by the dialer's Control hook.
+func ssrfCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect to non-https URL %q", req.URL.Redacted())
+	}
+	return nil
+}
+
+// ssrfDialControl is invoked by net.Dialer after DNS resolution but before the
+// TCP handshake. It rejects addresses that are not safe to fetch from over
+// the public internet.
+func ssrfDialControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("parsing dial address %q: %w", address, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("refusing to dial %q: not a valid IP", host)
+	}
+	if !isPublicIP(ip) {
+		return fmt.Errorf("refusing to dial non-public address %s", ip)
+	}
+	return nil
+}
+
+// isPublicIP reports whether ip is a routable public address. It rejects
+// loopback (127/8, ::1), RFC1918 private ranges, link-local (incl. the
+// 169.254.169.254 cloud metadata endpoint), multicast and the unspecified
+// address (0.0.0.0, ::).
+func isPublicIP(ip net.IP) bool {
+	return !ip.IsLoopback() &&
+		!ip.IsPrivate() &&
+		!ip.IsLinkLocalUnicast() &&
+		!ip.IsLinkLocalMulticast() &&
+		!ip.IsMulticast() &&
+		!ip.IsUnspecified()
 }

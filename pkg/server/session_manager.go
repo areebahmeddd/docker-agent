@@ -401,11 +401,11 @@ func (sm *SessionManager) generateTitle(ctx context.Context, sess *session.Sessi
 }
 
 func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.Session, agentFilename, currentAgent string, rc *config.RuntimeConfig) (runtime.Runtime, *sessiontitle.Generator, error) {
-	rt, exists := sm.runtimeSessions.Load(sess.ID)
-	if exists && rt.runtime != nil {
-		return rt.runtime, rt.titleGen, nil
-	}
-
+	// Caller (RunSession) holds sm.mux and has already verified that no
+	// active runtime exists for this session. This function is purely a
+	// constructor: it must not touch sm.runtimeSessions, otherwise it would
+	// briefly publish a half-initialised activeRuntimes (e.g. without the
+	// cancel func) that other goroutines could observe.
 	t, err := sm.loadTeam(ctx, agentFilename, rc)
 	if err != nil {
 		return nil, nil, err
@@ -432,12 +432,6 @@ func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.S
 	}
 
 	titleGen := sessiontitle.New(agt.Model(), agt.FallbackModels()...)
-
-	sm.runtimeSessions.Store(sess.ID, &activeRuntimes{
-		runtime:  run,
-		session:  sess,
-		titleGen: titleGen,
-	})
 
 	slog.Debug("Runtime created for session", "session_id", sess.ID)
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"time"
 
@@ -92,6 +93,7 @@ func (f *apiFlags) runAPICommand(cmd *cobra.Command, args []string) (commandErr 
 	defer lnCleanup()
 
 	out.Println("Listening on", ln.Addr().String())
+	warnIfNotLoopback(out, ln.Addr())
 
 	slog.Debug("Starting server", "agents", agentsPath, "addr", ln.Addr().String())
 
@@ -122,4 +124,23 @@ func (f *apiFlags) runAPICommand(cmd *cobra.Command, args []string) (commandErr 
 	}
 
 	return s.Serve(ctx, ln)
+}
+
+// warnIfNotLoopback prints a security warning when the API server is bound to
+// an address other than loopback. The default --listen value is 127.0.0.1, so
+// reaching this code path means the operator was explicit about exposing the
+// API; we just remind them that the API has no authentication.
+func warnIfNotLoopback(out *cli.Printer, addr net.Addr) {
+	tcpAddr, ok := addr.(*net.TCPAddr)
+	if !ok {
+		// Unix sockets and named pipes rely on filesystem permissions.
+		return
+	}
+	if tcpAddr.IP.IsLoopback() {
+		return
+	}
+	out.Println("WARNING: API server is listening on a non-loopback address.")
+	out.Println("         The API has no authentication; anyone able to reach")
+	out.Println("         this address can run agents and access all sessions.")
+	slog.Warn("API server bound to non-loopback address", "addr", tcpAddr.String())
 }
