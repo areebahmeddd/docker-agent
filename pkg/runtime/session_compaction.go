@@ -106,15 +106,12 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	// We snapshot before applying the result because the apply step
 	// resets sess.OutputTokens to 0 and replaces sess.InputTokens with
 	// the new summary's estimated size.
-	preInputTokens := sess.InputTokens
-	preOutputTokens := sess.OutputTokens
+	preInputTokens, preOutputTokens := sess.Usage()
 
 	// Apply the summary to the session. This is intrinsically
 	// runtime-private: it mutates session-internal state and persists
 	// through the runtime's session store.
-	sess.InputTokens = result.InputTokens
-	sess.OutputTokens = 0
-	sess.Messages = append(sess.Messages, session.Item{
+	sess.ApplyCompaction(result.InputTokens, 0, session.Item{
 		Summary:        result.Summary,
 		FirstKeptEntry: result.FirstKeptEntry,
 		Cost:           result.Cost,

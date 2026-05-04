@@ -197,9 +197,11 @@ func (s *InMemorySessionStore) UpdateSession(_ context.Context, session *Session
 		return ErrEmptyID
 	}
 
-	// Build a new session with the same metadata but a fresh mutex.
-	// Messages are stored separately via AddMessage.
+	// Snapshot the input session under its mu so the field copy
+	// doesn't race with concurrent writers (e.g. the runtime stream
+	// goroutine updating token counts via SetUsage).
 	// MAINTENANCE: when adding new persisted fields to Session, add them here too.
+	session.mu.RLock()
 	newSession := &Session{
 		ID:                  session.ID,
 		Title:               session.Title,
@@ -214,12 +216,13 @@ func (s *InMemorySessionStore) UpdateSession(_ context.Context, session *Session
 		InputTokens:         session.InputTokens,
 		OutputTokens:        session.OutputTokens,
 		Cost:                session.Cost,
-		Permissions:         session.Permissions,
-		AgentModelOverrides: session.AgentModelOverrides,
-		CustomModelsUsed:    session.CustomModelsUsed,
-		AttachedFiles:       session.AttachedFilesSnapshot(),
+		Permissions:         clonePermissionsConfig(session.Permissions),
+		AgentModelOverrides: cloneStringMap(session.AgentModelOverrides),
+		CustomModelsUsed:    cloneStringSlice(session.CustomModelsUsed),
+		AttachedFiles:       slices.Clone(session.AttachedFiles),
 		ParentID:            session.ParentID,
 	}
+	session.mu.RUnlock()
 
 	// Preserve existing messages if session already exists
 	if existing, exists := s.sessions.Load(session.ID); exists {
@@ -257,9 +260,13 @@ func (s *InMemorySessionStore) AddMessage(_ context.Context, sessionID string, m
 	if !exists {
 		return 0, ErrNotFound
 	}
+	// Deep-copy before mutating ID. The caller's pointer may be held
+	// concurrently by another goroutine (snapshotItems → cloneMessage),
+	// and writing msg.ID directly races with those reads.
+	stored := cloneMessage(msg)
 	s.messageID++
-	msg.ID = s.messageID
-	session.AddMessage(msg)
+	stored.ID = s.messageID
+	session.AddMessage(stored)
 	return s.messageID, nil
 }
 

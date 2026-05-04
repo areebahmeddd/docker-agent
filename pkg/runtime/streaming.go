@@ -65,14 +65,14 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 		}
 		usageRecorded = true
 
-		sess.InputTokens = messageUsage.InputTokens + messageUsage.CachedInputTokens + messageUsage.CacheWriteTokens
-		sess.OutputTokens = messageUsage.OutputTokens
+		input := messageUsage.InputTokens + messageUsage.CachedInputTokens + messageUsage.CacheWriteTokens
+		sess.SetUsage(input, messageUsage.OutputTokens)
 
 		modelName := "unknown"
 		if m != nil {
 			modelName = m.Name
 		}
-		tel.RecordTokenUsage(ctx, modelName, sess.InputTokens, sess.OutputTokens, sess.TotalCost())
+		tel.RecordTokenUsage(ctx, modelName, input, messageUsage.OutputTokens, sess.TotalCost())
 	}
 
 	for {
