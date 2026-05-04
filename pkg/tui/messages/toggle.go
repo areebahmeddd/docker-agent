@@ -5,6 +5,11 @@ type (
 	// ToggleYoloMsg toggles YOLO mode (auto-approve tools).
 	ToggleYoloMsg struct{}
 
+	// TogglePauseMsg toggles whether the runtime loop is paused at
+	// iteration boundaries. The pause takes effect as soon as the
+	// in-flight LLM request and its tool calls complete.
+	TogglePauseMsg struct{}
+
 	// ToggleHideToolResultsMsg toggles hiding of tool results.
 	ToggleHideToolResultsMsg struct{}
 

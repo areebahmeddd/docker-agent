@@ -565,6 +565,18 @@ func (a *App) Resume(req runtime.ResumeRequest) {
 	a.runtime.Resume(context.Background(), req)
 }
 
+// TogglePause toggles whether the runtime loop is paused at iteration
+// boundaries. The second return value is false if the underlying runtime
+// doesn't support pausing (e.g. remote runtimes), in which case the first
+// return value is meaningless.
+func (a *App) TogglePause() (paused, supported bool) {
+	rt, ok := a.runtime.(interface{ TogglePause() bool })
+	if !ok {
+		return false, false
+	}
+	return rt.TogglePause(), true
+}
+
 // ResumeElicitation resumes an elicitation request with the given action and content
 func (a *App) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any) error {
 	return a.runtime.ResumeElicitation(ctx, action, content)

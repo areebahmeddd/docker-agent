@@ -310,6 +310,21 @@ func (m *appModel) handleToggleYolo() (tea.Model, tea.Cmd) {
 	return m.forwardChat(messages.SessionToggleChangedMsg{})
 }
 
+// handleTogglePause toggles whether the runtime loop is paused at iteration
+// boundaries. The pause kicks in once the in-flight LLM request and its tool
+// calls finish; running /pause again resumes the loop.
+func (m *appModel) handleTogglePause() (tea.Model, tea.Cmd) {
+	paused, supported := m.application.TogglePause()
+	switch {
+	case !supported:
+		return m, notification.InfoCmd("Pause is not supported with remote runtimes")
+	case paused:
+		return m, notification.InfoCmd("Runtime paused — /pause again to resume")
+	default:
+		return m, notification.SuccessCmd("Runtime resumed")
+	}
+}
+
 func (m *appModel) handleToggleHideToolResults() (tea.Model, tea.Cmd) {
 	return m.forwardChat(messages.ToggleHideToolResultsMsg{})
 }

@@ -275,6 +275,12 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	var prevAgentName string
 
 	for {
+		// Pause the loop here if /pause has been toggled on. Any in-flight
+		// LLM request and its tool calls have already completed.
+		if err := r.waitIfPaused(ctx); err != nil {
+			return
+		}
+
 		a = r.resolveSessionAgent(sess)
 
 		// Clear per-tool model override on agent switch so it doesn't

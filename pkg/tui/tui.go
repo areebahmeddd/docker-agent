@@ -774,6 +774,9 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.ToggleYoloMsg:
 		return m.handleToggleYolo()
 
+	case messages.TogglePauseMsg:
+		return m.handleTogglePause()
+
 	case messages.ToggleHideToolResultsMsg:
 		return m.handleToggleHideToolResults()
 
