@@ -35,6 +35,7 @@ func addRuntimeConfigFlags(cmd *cobra.Command, runConfig *config.RuntimeConfig) 
 	cmd.PersistentFlags().StringArrayVar(&runConfig.HookSessionStart, "hook-session-start", nil, "Add a session-start hook command (repeatable)")
 	cmd.PersistentFlags().StringArrayVar(&runConfig.HookSessionEnd, "hook-session-end", nil, "Add a session-end hook command (repeatable)")
 	cmd.PersistentFlags().StringArrayVar(&runConfig.HookOnUserInput, "hook-on-user-input", nil, "Add an on-user-input hook command (repeatable)")
+	cmd.PersistentFlags().StringArrayVar(&runConfig.HookStop, "hook-stop", nil, "Add a stop hook command, fired when the model finishes responding (repeatable)")
 }
 
 func setupWorkingDirectory(workingDir string) error {

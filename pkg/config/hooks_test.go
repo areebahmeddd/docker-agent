@@ -10,18 +10,18 @@ import (
 )
 
 func TestHooksFromCLI_Empty(t *testing.T) {
-	hooks := HooksFromCLI(nil, nil, nil, nil, nil)
+	hooks := HooksFromCLI(nil, nil, nil, nil, nil, nil)
 	assert.Nil(t, hooks)
 }
 
 func TestHooksFromCLI_SkipsEmptyCommands(t *testing.T) {
 	// All empty/whitespace-only commands should be filtered out
-	hooks := HooksFromCLI([]string{""}, []string{"  "}, []string{""}, []string{"  \t"}, nil)
+	hooks := HooksFromCLI([]string{""}, []string{"  "}, []string{""}, []string{"  \t"}, nil, []string{"  "})
 	assert.Nil(t, hooks)
 }
 
 func TestHooksFromCLI_MixedEmptyAndValid(t *testing.T) {
-	hooks := HooksFromCLI([]string{"", "echo pre", "  "}, nil, []string{"echo start", ""}, nil, nil)
+	hooks := HooksFromCLI([]string{"", "echo pre", "  "}, nil, []string{"echo start", ""}, nil, nil, nil)
 	require.NotNil(t, hooks)
 
 	require.Len(t, hooks.PreToolUse, 1)
@@ -33,7 +33,7 @@ func TestHooksFromCLI_MixedEmptyAndValid(t *testing.T) {
 }
 
 func TestHooksFromCLI_PreToolUse(t *testing.T) {
-	hooks := HooksFromCLI([]string{"echo pre1", "echo pre2"}, nil, nil, nil, nil)
+	hooks := HooksFromCLI([]string{"echo pre1", "echo pre2"}, nil, nil, nil, nil, nil)
 	require.NotNil(t, hooks)
 
 	require.Len(t, hooks.PreToolUse, 1)
@@ -52,6 +52,7 @@ func TestHooksFromCLI_AllTypes(t *testing.T) {
 		[]string{"start-cmd"},
 		[]string{"end-cmd"},
 		[]string{"input-cmd"},
+		[]string{"stop-cmd"},
 	)
 	require.NotNil(t, hooks)
 
@@ -60,12 +61,14 @@ func TestHooksFromCLI_AllTypes(t *testing.T) {
 	assert.Len(t, hooks.SessionStart, 1)
 	assert.Len(t, hooks.SessionEnd, 1)
 	assert.Len(t, hooks.OnUserInput, 1)
+	assert.Len(t, hooks.Stop, 1)
 
 	assert.Equal(t, "pre-cmd", hooks.PreToolUse[0].Hooks[0].Command)
 	assert.Equal(t, "post-cmd", hooks.PostToolUse[0].Hooks[0].Command)
 	assert.Equal(t, "start-cmd", hooks.SessionStart[0].Command)
 	assert.Equal(t, "end-cmd", hooks.SessionEnd[0].Command)
 	assert.Equal(t, "input-cmd", hooks.OnUserInput[0].Command)
+	assert.Equal(t, "stop-cmd", hooks.Stop[0].Command)
 }
 
 func TestMergeHooks_BothNil(t *testing.T) {
@@ -153,6 +156,7 @@ func TestRuntimeConfig_Clone_CopiesHooks(t *testing.T) {
 	rc.HookSessionStart = []string{"start"}
 	rc.HookSessionEnd = []string{"end"}
 	rc.HookOnUserInput = []string{"input"}
+	rc.HookStop = []string{"stop"}
 
 	clone := rc.Clone()
 	assert.Equal(t, rc.HookPreToolUse, clone.HookPreToolUse)
@@ -160,6 +164,7 @@ func TestRuntimeConfig_Clone_CopiesHooks(t *testing.T) {
 	assert.Equal(t, rc.HookSessionStart, clone.HookSessionStart)
 	assert.Equal(t, rc.HookSessionEnd, clone.HookSessionEnd)
 	assert.Equal(t, rc.HookOnUserInput, clone.HookOnUserInput)
+	assert.Equal(t, rc.HookStop, clone.HookStop)
 
 	// Mutating clone should not affect original
 	clone.HookPreToolUse[0] = "changed"

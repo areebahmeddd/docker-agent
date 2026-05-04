@@ -33,6 +33,7 @@ type Config struct {
 	HookSessionStart []string
 	HookSessionEnd   []string
 	HookOnUserInput  []string
+	HookStop         []string
 }
 
 func (runConfig *RuntimeConfig) Clone() *RuntimeConfig {
@@ -48,6 +49,7 @@ func (runConfig *RuntimeConfig) Clone() *RuntimeConfig {
 	clone.HookSessionStart = slices.Clone(runConfig.HookSessionStart)
 	clone.HookSessionEnd = slices.Clone(runConfig.HookSessionEnd)
 	clone.HookOnUserInput = slices.Clone(runConfig.HookOnUserInput)
+	clone.HookStop = slices.Clone(runConfig.HookStop)
 	return clone
 }
 
