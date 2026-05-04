@@ -127,7 +127,7 @@ func resolveDirectory(dirPath string, envProvider environment.Provider) (Sources
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if ext != ".yaml" && ext != ".yml" {
+		if ext != ".yaml" && ext != ".yml" && ext != ".hcl" {
 			continue
 		}
 		a := filepath.Join(dirPath, entry.Name())
@@ -200,8 +200,8 @@ func IsOCIReference(input string) bool {
 // isLocalFile checks if the input is a local file
 func isLocalFile(input string) bool {
 	ext := strings.ToLower(filepath.Ext(input))
-	// Check for YAML file extensions or file descriptors
-	if ext == ".yaml" || ext == ".yml" || strings.HasPrefix(input, "/dev/fd/") {
+	// Check for known config file extensions or file descriptors
+	if ext == ".yaml" || ext == ".yml" || ext == ".hcl" || strings.HasPrefix(input, "/dev/fd/") {
 		return true
 	}
 	// Check if it exists as a file on disk

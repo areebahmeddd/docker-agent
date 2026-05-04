@@ -52,10 +52,10 @@ func ExtraWorkspace(wd, agentRef string) string {
 }
 
 // looksLikeLocalFile reports whether path looks like a local agent file
-// (has a YAML extension or exists on disk).
+// (has a known config extension or exists on disk).
 func looksLikeLocalFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	if ext == ".yaml" || ext == ".yml" {
+	if ext == ".yaml" || ext == ".yml" || ext == ".hcl" {
 		return true
 	}
 	info, err := os.Stat(path)
