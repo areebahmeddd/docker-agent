@@ -401,6 +401,36 @@ func (s *Session) AddMessage(msg *Message) {
 	s.mu.Unlock()
 }
 
+// SetUsage records cumulative input/output token counts under s.mu.
+// The runtime stream goroutine and the persistence observer race on
+// these fields without it.
+func (s *Session) SetUsage(input, output int64) {
+	s.mu.Lock()
+	s.InputTokens = input
+	s.OutputTokens = output
+	s.mu.Unlock()
+}
+
+// Usage returns a consistent snapshot of the cumulative input/output
+// token counts.
+func (s *Session) Usage() (input, output int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.InputTokens, s.OutputTokens
+}
+
+// ApplyCompaction atomically resets the session's cumulative token
+// counts and appends a summary item under s.mu so concurrent readers
+// (e.g. the persistence observer's UpdateSession snapshot) cannot
+// observe the new tokens without the matching summary item.
+func (s *Session) ApplyCompaction(inputTokens, outputTokens int64, item Item) {
+	s.mu.Lock()
+	s.InputTokens = inputTokens
+	s.OutputTokens = outputTokens
+	s.Messages = append(s.Messages, item)
+	s.mu.Unlock()
+}
+
 // AddSubSession adds a sub-session to the session
 func (s *Session) AddSubSession(subSession *Session) {
 	s.mu.Lock()
