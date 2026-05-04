@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace"
@@ -3263,4 +3264,45 @@ func TestPostToolHookEmitsLifecycleEvents(t *testing.T) {
 	assert.Equal(t, sess.ID, finished.SessionID)
 	assert.True(t, finished.Allowed)
 	assert.Empty(t, finished.Error)
+}
+
+func TestElicitationHandler_NonInteractive(t *testing.T) {
+	t.Parallel()
+
+	prov := &mockProvider{id: "test/mock-model", stream: newStreamBuilder().AddContent("ok").AddStopWithUsage(1, 1).Build()}
+	root := agent.New("root", "test", agent.WithModel(prov))
+	tm := team.New(team.WithAgents(root))
+
+	rt, err := NewLocalRuntime(tm, WithNonInteractive(true))
+	require.NoError(t, err)
+
+	params := &mcp.ElicitParams{
+		Message: "Authorize OAuth?",
+	}
+
+	result, err := rt.elicitationHandler(t.Context(), params)
+
+	require.NoError(t, err)
+	assert.Equal(t, tools.ElicitationActionDecline, result.Action, "non-interactive runtime should decline elicitation")
+}
+
+func TestElicitationHandler_Interactive_NoChannel(t *testing.T) {
+	t.Parallel()
+
+	prov := &mockProvider{id: "test/mock-model", stream: newStreamBuilder().AddContent("ok").AddStopWithUsage(1, 1).Build()}
+	root := agent.New("root", "test", agent.WithModel(prov))
+	tm := team.New(team.WithAgents(root))
+
+	// Default runtime (interactive mode) with no events channel set
+	rt, err := NewLocalRuntime(tm)
+	require.NoError(t, err)
+
+	params := &mcp.ElicitParams{
+		Message: "Authorize OAuth?",
+	}
+
+	_, err = rt.elicitationHandler(t.Context(), params)
+
+	require.Error(t, err, "interactive runtime with no events channel should error")
+	assert.ErrorIs(t, err, errNoElicitationChannel)
 }

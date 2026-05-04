@@ -146,6 +146,7 @@ type LocalRuntime struct {
 	modelsStore          ModelStore
 	sessionCompaction    bool
 	managedOAuth         bool
+	nonInteractive       bool
 	startupInfoEmitted   bool                   // Track if startup info has been emitted to avoid unnecessary duplication
 	elicitationRequestCh chan ElicitationResult // Channel for receiving elicitation responses
 	elicitation          elicitationBridge      // Owns the per-stream events channel for outbound elicitation requests
@@ -248,6 +249,21 @@ func WithCurrentAgent(agentName string) Opt {
 func WithManagedOAuth(managed bool) Opt {
 	return func(r *LocalRuntime) {
 		r.managedOAuth = managed
+	}
+}
+
+// WithNonInteractive marks the runtime as headless (e.g., MCP serve mode).
+// When set, blocking operations like elicitation requests are automatically
+// declined instead of waiting for user interaction that will never come.
+//
+// Note: this complements session.WithNonInteractive, which controls per-session
+// loop behavior (e.g., auto-stop on max iterations). Both should be set for
+// fully headless operation - the runtime flag prevents elicitation hangs, while
+// the session flag adjusts iteration behavior. In MCP serve mode, both are set
+// by the server code in pkg/mcp/server.go.
+func WithNonInteractive(nonInteractive bool) Opt {
+	return func(r *LocalRuntime) {
+		r.nonInteractive = nonInteractive
 	}
 }
 

@@ -170,6 +170,7 @@ func CreateToolHandler(t *team.Team, agentName string) func(context.Context, *mc
 
 		rt, err := runtime.New(t,
 			runtime.WithCurrentAgent(agentName),
+			runtime.WithNonInteractive(true),
 			runtime.WithTracer(otel.Tracer("cagent")),
 		)
 		if err != nil {
