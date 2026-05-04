@@ -327,6 +327,106 @@ agents:
 `,
 			wantErr: "blocked_domains[0] must not be empty",
 		},
+		{
+			name: "fetch with wildcard subdomain pattern",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        allowed_domains:
+          - "*.example.com"
+`,
+			wantErr: "",
+		},
+		{
+			name: "fetch with ipv4 CIDR pattern",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        blocked_domains:
+          - 169.254.0.0/16
+          - 10.0.0.0/8
+`,
+			wantErr: "",
+		},
+		{
+			name: "fetch with ipv6 CIDR pattern",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        blocked_domains:
+          - "fc00::/7"
+          - "::1/128"
+`,
+			wantErr: "",
+		},
+		{
+			name: "malformed CIDR is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        blocked_domains:
+          - 10.0.0.0/33
+`,
+			wantErr: "not a valid CIDR",
+		},
+		{
+			name: "interior wildcard is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        allowed_domains:
+          - "foo.*"
+`,
+			wantErr: "'*' is only allowed as a leading '*.' wildcard",
+		},
+		{
+			name: "double wildcard is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        allowed_domains:
+          - "*.*.example.com"
+`,
+			wantErr: "'*' is only allowed as a leading '*.' wildcard",
+		},
+		{
+			name: "bare star is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        allowed_domains:
+          - "*"
+`,
+			wantErr: "'*' is only allowed as a leading '*.' wildcard",
+		},
 	}
 
 	for _, tt := range tests {

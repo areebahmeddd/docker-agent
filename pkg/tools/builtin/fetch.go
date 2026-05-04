@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -296,18 +297,85 @@ func (h *fetchHandler) checkDomainAllowed(u *url.URL) error {
 
 // matchesDomain reports whether host matches pattern (case-insensitive).
 //
-// A bare pattern ("example.com") matches the host exactly or any subdomain
-// ("docs.example.com"); it does NOT match unrelated hosts that share a suffix
-// ("badexample.com"). A pattern with a leading dot (".example.com") matches
-// strict subdomains only — the apex "example.com" is excluded.
+// Supported pattern shapes:
+//
+//   - **Bare domain** ("example.com") matches the host exactly _or_ any
+//     subdomain ("docs.example.com"); it does NOT match unrelated hosts that
+//     share a suffix ("badexample.com").
+//   - **Leading dot** (".example.com") matches strict subdomains only — the
+//     apex "example.com" is excluded.
+//   - **Wildcard glob** ("*.example.com") is an alias for the leading-dot
+//     form: it matches strict subdomains only. No other use of "*" is
+//     supported (e.g. "foo.*", "*foo*" are rejected by validation and would
+//     never match here).
+//   - **CIDR** ("10.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7")
+//     matches when the host parses as an IP address inside the network.
+//     Hostname hosts never match a CIDR pattern.
 //
 // Trailing dots used in FQDN form ("example.com.") are stripped from both
 // host and pattern before matching, so a URL like http://example.com./ cannot
 // be used to bypass a deny-list entry for example.com.
 func matchesDomain(host, pattern string) bool {
-	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
-	pattern = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(pattern)), ".")
-	if host == "" || pattern == "" || pattern == "." {
+	host = strings.TrimSpace(host)
+	pattern = strings.TrimSpace(pattern)
+	if host == "" || pattern == "" {
+		return false
+	}
+
+	// CIDR pattern: the host must parse as an IP address inside the network.
+	// CIDRs always contain '/', so we can detect them cheaply before any other
+	// normalisation. Hostname-style hosts never match a CIDR pattern.
+	if strings.Contains(pattern, "/") {
+		if _, ipNet, err := net.ParseCIDR(pattern); err == nil {
+			// url.Hostname() already strips IPv6 brackets, but be defensive.
+			ipStr := strings.TrimSuffix(strings.Trim(host, "[]"), ".")
+			if ip := net.ParseIP(ipStr); ip != nil {
+				// Normalize IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) to their
+				// IPv4 form before checking CIDR membership. Without this, an
+				// attacker can bypass an IPv4 deny-list like "169.254.0.0/16" by
+				// using the IPv6-mapped form "::ffff:169.254.169.254".
+				//
+				// net.IP.To4() returns nil for "true" IPv6 addresses and the
+				// 4-byte IPv4 form for IPv4 or IPv4-mapped-IPv6.
+				if ipv4 := ip.To4(); ipv4 != nil {
+					return ipNet.Contains(ipv4)
+				}
+				return ipNet.Contains(ip)
+			}
+			return false
+		}
+		// Malformed CIDRs are rejected at config-load time; if one slips
+		// through (e.g. via the programmatic API), fall through to the
+		// string matcher below, which will never match a host.
+	}
+
+	// Normalize IPv4-mapped IPv6 addresses to their IPv4 form for string
+	// comparison. This ensures that "::ffff:169.254.169.254" matches a
+	// literal pattern "169.254.169.254" (and vice versa).
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			host = ipv4.String()
+		} else {
+			host = ip.String()
+		}
+	}
+	if ip := net.ParseIP(strings.Trim(pattern, "[]")); ip != nil {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			pattern = ipv4.String()
+		} else {
+			pattern = ip.String()
+		}
+	}
+
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	pattern = strings.TrimSuffix(strings.ToLower(pattern), ".")
+
+	// Wildcard glob "*.example.com" is an alias for ".example.com".
+	if rest, ok := strings.CutPrefix(pattern, "*."); ok {
+		pattern = "." + rest
+	}
+
+	if pattern == "" || pattern == "." {
 		return false
 	}
 	if strings.HasPrefix(pattern, ".") {

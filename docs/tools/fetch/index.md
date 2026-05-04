@@ -40,7 +40,9 @@ Domain patterns in `allowed_domains` and `blocked_domains` use the following rul
 
 - **Bare domain** — `example.com` matches the host `example.com` _and_ any subdomain such as `docs.example.com`. It does **not** match unrelated hosts that share a suffix (e.g. `badexample.com`).
 - **Leading dot** — `.example.com` matches **only** strict subdomains (`docs.example.com`, `a.b.example.com`), not the apex `example.com`.
+- **Wildcard glob** — `*.example.com` is an alias for the leading-dot form; the apex is excluded. The `*` is only valid as a leading `*.` token (entries like `foo.*`, `*.*.example.com`, or a bare `*` are rejected at config-load time).
 - **IP literal** — IP addresses are matched exactly (`169.254.169.254`).
+- **CIDR range** — `169.254.0.0/16`, `10.0.0.0/8`, `::1/128`, `fc00::/7`. Matches when the URL's host parses as an IP inside the network. Hostname hosts never match a CIDR pattern. Malformed CIDRs are rejected at config-load time.
 - **Trailing dots** in FQDN-form URLs (`http://example.com./`) are stripped before matching, so they cannot bypass a deny-list entry.
 
 The lists are mutually exclusive: a single fetch toolset may set either `allowed_domains` or `blocked_domains`, but not both.
@@ -50,7 +52,7 @@ When a list is configured, every redirect target is re-checked against the same 
 <div class="callout callout-warning" markdown="1">
 <div class="callout-title">⚠️ Limitations
 </div>
-  <p>Matching is purely string-based on the URL host. It does <strong>not</strong> perform DNS resolution and does <strong>not</strong> normalise alternative IP encodings (decimal <code>2852039166</code>, hex <code>0xa9.0xfe.0xa9.0xfe</code>, octal, IPv4-mapped IPv6, etc.). If you need to deny access to a specific IP, also list its alternative encodings, or block at the network layer.</p>
+  <p>Matching is purely string-based on the URL host. It does <strong>not</strong> perform DNS resolution and does <strong>not</strong> normalise alternative IP encodings (decimal <code>2852039166</code>, hex <code>0xa9.0xfe.0xa9.0xfe</code>, octal, etc. IPv4-mapped IPv6 addresses ARE normalized to their IPv4 form). If you need to deny access to a specific IP, also list its alternative encodings, or block at the network layer.</p>
 </div>
 
 ### Custom Timeout
@@ -78,8 +80,11 @@ toolsets:
 toolsets:
   - type: fetch
     blocked_domains:
-      - 169.254.169.254       # cloud metadata endpoint
-      - internal.example.com  # internal corporate hostnames
+      - 169.254.169.254       # cloud metadata endpoint (literal IP)
+      - 169.254.0.0/16        # entire link-local range (CIDR)
+      - 10.0.0.0/8            # RFC1918 private range
+      - "*.internal.example.com"  # any subdomain (wildcard)
+      - internal.example.com  # internal corporate hostname
 ```
 
 ## Tool Interface

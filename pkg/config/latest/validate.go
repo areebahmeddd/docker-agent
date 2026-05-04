@@ -215,13 +215,45 @@ func (t *Toolset) validate() error {
 	return nil
 }
 
-// validateDomainPatterns rejects empty / whitespace-only entries in a fetch
-// allow- or block-list, since they silently match nothing and turn the list
-// into a foot-gun (e.g. allowed_domains: [""] would reject every URL).
+// validateDomainPatterns rejects empty / whitespace-only entries and
+// malformed wildcard or CIDR patterns in a fetch allow- or block-list.
+//
+// Catching these at config-load time turns silent foot-guns (e.g.
+// `allowed_domains: [""]` rejecting every URL, `*.foo.*` matching nothing)
+// into actionable errors. Plain hostnames and the leading-dot subdomain form
+// are intentionally not validated for syntax — the matcher is purely
+// string-based and any non-conforming entry simply never matches.
 func validateDomainPatterns(field string, patterns []string) error {
 	for i, p := range patterns {
-		if strings.TrimSpace(p) == "" {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
 			return fmt.Errorf("%s[%d] must not be empty", field, i)
+		}
+		if err := validateDomainPattern(trimmed); err != nil {
+			return fmt.Errorf("%s[%d] %q is invalid: %w", field, i, p, err)
+		}
+	}
+	return nil
+}
+
+// validateDomainPattern checks a single (already trimmed, non-empty) entry.
+func validateDomainPattern(p string) error {
+	// CIDR notation: must parse cleanly. We deliberately accept any /-bearing
+	// string as "intended to be a CIDR" so a typo like "10.0.0.0/33" is
+	// reported instead of being silently treated as a hostname.
+	if strings.Contains(p, "/") {
+		if _, _, err := net.ParseCIDR(p); err != nil {
+			return fmt.Errorf("not a valid CIDR: %w", err)
+		}
+		return nil
+	}
+	// Wildcards: only the leading "*." form is supported. Anything else
+	// ("foo.*", "*foo*", "**.example.com") would silently match nothing
+	// under the current matcher, which is almost never what the user wants.
+	if strings.Contains(p, "*") {
+		rest, ok := strings.CutPrefix(p, "*.")
+		if !ok || rest == "" || strings.Contains(rest, "*") {
+			return errors.New("'*' is only allowed as a leading '*.' wildcard, e.g. '*.example.com'")
 		}
 	}
 	return nil

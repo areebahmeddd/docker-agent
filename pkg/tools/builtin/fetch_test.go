@@ -439,6 +439,33 @@ func TestMatchesDomain(t *testing.T) {
 		{"trailing dot host matches subdomain pattern", "docs.example.com.", "example.com", true},
 		{"trailing dot pattern matches apex host", "example.com", "example.com.", true},
 		{"trailing dot host matches strict-subdomain pattern", "docs.example.com.", ".example.com", true},
+
+		// Wildcard glob form: alias for the leading-dot strict-subdomain match.
+		{"wildcard matches subdomain", "docs.example.com", "*.example.com", true},
+		{"wildcard matches deep subdomain", "a.b.example.com", "*.example.com", true},
+		{"wildcard does NOT match apex", "example.com", "*.example.com", false},
+		{"wildcard does NOT match unrelated suffix", "badexample.com", "*.example.com", false},
+		{"wildcard with trailing dot host", "docs.example.com.", "*.example.com", true},
+		{"interior wildcard never matches (defense in depth)", "foo.example.com", "foo.*", false},
+
+		// CIDR form.
+		{"ipv4 inside /16", "169.254.169.254", "169.254.0.0/16", true},
+		{"ipv4 outside /16", "10.0.0.1", "169.254.0.0/16", false},
+		{"ipv4 /32 exact", "169.254.169.254", "169.254.169.254/32", true},
+		{"ipv4 /32 mismatch", "169.254.169.255", "169.254.169.254/32", false},
+		{"private /8", "10.1.2.3", "10.0.0.0/8", true},
+		{"hostname does not match cidr", "example.com", "10.0.0.0/8", false},
+		{"ipv6 loopback", "::1", "::1/128", true},
+		{"ipv6 ula", "fc00::1234", "fc00::/7", true},
+		{"ipv6 outside ula", "2001:db8::1", "fc00::/7", false},
+		{"malformed cidr never matches", "169.254.169.254", "10.0.0.0/33", false},
+
+		// IPv4-mapped IPv6 bypass prevention (SSRF defense).
+		{"ipv4-mapped ipv6 matches ipv4 cidr", "::ffff:169.254.169.254", "169.254.0.0/16", true},
+		{"ipv4-mapped ipv6 matches ipv4 /32", "::ffff:10.0.0.1", "10.0.0.1/32", true},
+		{"ipv4-mapped ipv6 outside ipv4 cidr", "::ffff:10.0.0.1", "169.254.0.0/16", false},
+		{"ipv4-mapped ipv6 matches ipv4 literal", "::ffff:169.254.169.254", "169.254.169.254", true},
+		{"ipv4 literal matches ipv4-mapped ipv6 cidr (edge case)", "169.254.169.254", "::ffff:169.254.0.0/112", true},
 	}
 
 	for _, tc := range tests {
@@ -584,4 +611,36 @@ func TestFetch_BlockedDomains_RejectsRedirectToBlockedHost(t *testing.T) {
 	assert.Contains(t, result.Output, "Error fetching")
 	assert.Contains(t, result.Output, "is blocked by blocked_domains")
 	assert.Contains(t, result.Output, "169.254.169.254")
+}
+
+// Additional edge case tests for security review
+func TestMatchesDomain_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		pattern string
+		want    bool
+	}{
+		// Port handling (should be stripped by url.Hostname() before matchesDomain is called)
+		{"host with port should not match", "example.com:8080", "example.com", false},
+
+		// IPv6 with zone ID (should be stripped by url.Hostname())
+		{"ipv6 with zone id should not match", "fe80::1%eth0", "fe80::1", false},
+
+		// Empty CIDR prefix
+		{"empty after wildcard", "example.com", "*.", false},
+
+		// Case sensitivity in IPv6
+		{"ipv6 case insensitive", "2001:DB8::1", "2001:db8::1", true},
+
+		// Brackets in pattern (defensive)
+		{"brackets in pattern", "::1", "[::1]", true},
+		{"brackets in host", "[::1]", "::1", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, matchesDomain(tc.host, tc.pattern))
+		})
+	}
 }
