@@ -68,7 +68,7 @@ agents:
 
 | Property                    | Type    | Required | Description                                                                                                                                                                   |
 | --------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `model`                     | string  | ✓        | Model reference. Either inline (`openai/gpt-4o`) or a named model from the `models` section.                                                                                  |
+| `model`                     | string  | ✓        | Model reference. Either inline (`openai/gpt-5-mini`) or a named model from the `models` section.                                                                              |
 | `description`               | string  | ✓        | Brief description of the agent's purpose. Used by coordinators to decide delegation.                                                                                          |
 | `instruction`               | string  | ✓        | System prompt that defines the agent's behavior, personality, and constraints.                                                                                                |
 | `sub_agents`                | array   | ✗        | List of agent names or external OCI references this agent can delegate to. Supports local agents, registry references (e.g., `agentcatalog/pirate`), and named references (`name:reference`). Automatically enables the `transfer_task` tool. See [External Sub-Agents]({{ '/concepts/multi-agent/#external-sub-agents-from-registries' | relative_url }}). |
@@ -192,7 +192,7 @@ Display a message when users start a session:
 ```yaml
 agents:
   assistant:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Development assistant
     instruction: You are a helpful coding assistant.
     welcome_message: |
@@ -213,7 +213,7 @@ Toolsets support `defer` to load tools on-demand and speed up agent startup. See
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     description: Multi-purpose assistant
     instruction: You have access to many tools.
     toolsets:
@@ -241,10 +241,10 @@ Automatically switch to backup models when the primary fails:
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     fallback:
       models:
-        - openai/gpt-4o
+        - openai/gpt-5-mini
         - google/gemini-2.5-flash
       retries: 2
       cooldown: 1m
@@ -257,7 +257,7 @@ Define reusable prompt shortcuts:
 ```yaml
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     instruction: You are a system administrator.
     commands:
       df: "Check how much free space I have on my disk"
@@ -281,7 +281,7 @@ Commands use JavaScript template literal syntax for environment variable interpo
 models:
   claude:
     provider: anthropic
-    model: claude-sonnet-4-0
+    model: claude-sonnet-4-5
     max_tokens: 64000
 
 agents:
@@ -296,7 +296,7 @@ agents:
     add_date: true
     add_environment_info: true
     fallback:
-      models: [openai/gpt-4o]
+      models: [openai/gpt-5-mini]
     toolsets:
       - type: think
     commands:
@@ -318,7 +318,7 @@ agents:
       - type: todo
 
   researcher:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Web researcher with memory
     instruction: Search for information and remember findings.
     toolsets:

@@ -22,7 +22,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
 ```
 
 ### Named Model
@@ -31,7 +31,7 @@ agents:
 models:
   claude:
     provider: anthropic
-    model: claude-sonnet-4-0
+    model: claude-sonnet-4-5
     max_tokens: 64000
 ```
 
@@ -41,7 +41,7 @@ models:
 | ------------------- | --------------------------------------------------- |
 | `claude-opus-4-7`   | Highest-capability Opus model; supports task budget |
 | `claude-sonnet-4-5` | Most capable Sonnet, extended thinking (default)    |
-| `claude-sonnet-4-0` | Strong coding, balanced performance                 |
+| `claude-sonnet-4-0` | Previous Sonnet generation, still supported         |
 | `claude-haiku-4-5`  | Fast and inexpensive, good for tight loops          |
 
 ## Thinking Budget

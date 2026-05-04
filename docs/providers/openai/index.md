@@ -22,7 +22,7 @@ export OPENAI_API_KEY="sk-..."
 ```yaml
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
 ```
 
 ### Named Model
@@ -31,7 +31,7 @@ agents:
 models:
   gpt:
     provider: openai
-    model: gpt-4o
+    model: gpt-5-mini
     temperature: 0.7
     max_tokens: 4000
 ```
@@ -74,7 +74,7 @@ Use `base_url` to connect to OpenAI-compatible APIs:
 models:
   custom:
     provider: openai
-    model: gpt-4o
+    model: gpt-5-mini
     base_url: https://your-proxy.example.com/v1
 ```
 

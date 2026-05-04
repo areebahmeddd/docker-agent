@@ -19,7 +19,7 @@ Use the `provider/model` shorthand directly in the agent definition:
 ```yaml
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     instruction: You are a helpful assistant.
 ```
 
@@ -31,7 +31,7 @@ Define models in a `models` section and reference them by name:
 models:
   claude:
     provider: anthropic
-    model: claude-sonnet-4-0
+    model: claude-sonnet-4-5
     max_tokens: 64000
     temperature: 0.7
 
@@ -47,8 +47,8 @@ Named models let you configure temperature, token limits, thinking budgets, and 
 
 | Provider            | Key              | Example Models                       | API Key Env Var                     |
 | ------------------- | ---------------- | ------------------------------------ | ----------------------------------- |
-| OpenAI              | `openai`         | gpt-4o, gpt-5, gpt-5-mini            | `OPENAI_API_KEY`                    |
-| Anthropic           | `anthropic`      | claude-sonnet-4-0, claude-sonnet-4-5 | `ANTHROPIC_API_KEY`                 |
+| OpenAI              | `openai`         | gpt-5, gpt-5-mini, gpt-4o            | `OPENAI_API_KEY`                    |
+| Anthropic           | `anthropic`      | claude-sonnet-4-5, claude-opus-4-7   | `ANTHROPIC_API_KEY`                 |
 | Google              | `google`         | gemini-2.5-flash, gemini-3-pro       | `GOOGLE_API_KEY` / `GEMINI_API_KEY` |
 | AWS Bedrock         | `amazon-bedrock` | Claude, Nova, Llama models           | AWS credentials                     |
 | Docker Model Runner | `dmr`            | ai/qwen3, ai/llama3.2                | None (local)                        |
@@ -118,7 +118,7 @@ models:
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0,openai/gpt-5-mini
+    model: anthropic/claude-sonnet-4-5,openai/gpt-5-mini
     instruction: You are a helpful assistant.
 ```
 

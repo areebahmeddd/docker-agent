@@ -120,7 +120,7 @@ agents:
       - researcher
 
   researcher:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Web researcher
     instruction: |
       Search the web, then hand off to the summarizer.
@@ -131,7 +131,7 @@ agents:
       - summarizer
 
   summarizer:
-    model: openai/gpt-4o-mini
+    model: openai/gpt-5-mini
     description: Summarizes findings
     instruction: |
       Summarize the research results, then hand off
@@ -156,7 +156,7 @@ Add it to your coordinator's toolsets:
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     description: Research coordinator
     sub_agents: [researcher, analyst, writer]
     toolsets:
@@ -190,7 +190,7 @@ Sub-agents don't have to be defined locally — you can reference agents from OC
 ```yaml
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Coordinator that delegates to local and catalog sub-agents
     instruction: |
       Delegate tasks to the most appropriate sub-agent.
@@ -199,7 +199,7 @@ agents:
       - agentcatalog/pirate # pulled from registry automatically
 
   local_helper:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: A local helper agent for simple tasks
     instruction: You are a helpful assistant.
 ```
@@ -224,7 +224,7 @@ External sub-agents are automatically named after their last path segment — fo
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     description: Technical lead coordinating development
     instruction: |
       You are a technical lead managing a development team.
@@ -235,7 +235,7 @@ agents:
       - type: think
 
   developer:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     description: Expert software developer
     instruction: |
       You are an expert developer. Write clean, efficient code
@@ -246,7 +246,7 @@ agents:
       - type: think
 
   reviewer:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Code review specialist
     instruction: |
       You review code for quality, security, and maintainability.
@@ -255,7 +255,7 @@ agents:
       - type: filesystem
 
   tester:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Quality assurance engineer
     instruction: |
       You write tests and ensure software quality. Run tests
@@ -270,7 +270,7 @@ agents:
 ```yaml
 agents:
   root:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     description: Research coordinator
     instruction: |
       Coordinate research tasks. Delegate web searches to
@@ -280,7 +280,7 @@ agents:
       - type: think
 
   researcher:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Web researcher
     instruction: Search the web and gather information.
     toolsets:
@@ -290,7 +290,7 @@ agents:
         path: ./research.db
 
   writer:
-    model: anthropic/claude-sonnet-4-0
+    model: anthropic/claude-sonnet-4-5
     description: Content writer
     instruction: Write clear, well-structured content.
     toolsets:
@@ -310,7 +310,7 @@ models:
 
   creative:
     provider: openai
-    model: gpt-4o
+    model: gpt-5
     temperature: 0.8 # creative
 
   local:

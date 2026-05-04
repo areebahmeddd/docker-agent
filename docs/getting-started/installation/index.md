@@ -104,9 +104,11 @@ docker-agent needs API keys for the model providers you want to use. Set them as
 # Pick one (or more) depending on your provider
 export OPENAI_API_KEY="sk-..."           # OpenAI
 export ANTHROPIC_API_KEY="sk-ant-..."    # Anthropic
-export GOOGLE_API_KEY="AI..."           # Google Gemini
-export MISTRAL_API_KEY="..."            # Mistral
+export GOOGLE_API_KEY="AI..."            # Google Gemini (or GEMINI_API_KEY)
+export MISTRAL_API_KEY="..."             # Mistral
 ```
+
+See [Configuration Overview]({{ '/configuration/overview/#environment-variables' | relative_url }}) for the full list of supported providers and environment variables.
 
 <div class="callout callout-info" markdown="1">
 <div class="callout-title">ℹ️ Note

@@ -73,7 +73,7 @@ Registry agents can be used directly as sub-agents in a multi-agent configuratio
 ```yaml
 agents:
   root:
-    model: openai/gpt-4o
+    model: openai/gpt-5-mini
     description: Coordinator
     instruction: Delegate tasks to the right sub-agent.
     sub_agents:
