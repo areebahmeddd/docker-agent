@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel"
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config"
@@ -169,6 +170,7 @@ func CreateToolHandler(t *team.Team, agentName string) func(context.Context, *mc
 
 		rt, err := runtime.New(t,
 			runtime.WithCurrentAgent(agentName),
+			runtime.WithTracer(otel.Tracer("cagent")),
 		)
 		if err != nil {
 			return nil, ToolOutput{}, fmt.Errorf("failed to create runtime: %w", err)

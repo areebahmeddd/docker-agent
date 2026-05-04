@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/docker/docker-agent/pkg/api"
 	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/config"
@@ -425,6 +427,7 @@ func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.S
 		runtime.WithCurrentAgent(currentAgent),
 		runtime.WithManagedOAuth(false),
 		runtime.WithSessionStore(sm.sessionStore),
+		runtime.WithTracer(otel.Tracer("cagent")),
 	}
 	run, err := runtime.New(t, opts...)
 	if err != nil {

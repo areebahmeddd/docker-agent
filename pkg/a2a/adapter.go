@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"go.opentelemetry.io/otel"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/model"
 	adksession "google.golang.org/adk/session"
@@ -59,6 +60,7 @@ func runDockerAgent(ctx agent.InvocationContext, t *team.Team, agentName string,
 		// Create runtime
 		rt, err := runtime.New(t,
 			runtime.WithCurrentAgent(agentName),
+			runtime.WithTracer(otel.Tracer("cagent")),
 		)
 		if err != nil {
 			yield(nil, fmt.Errorf("failed to create runtime: %w", err))
