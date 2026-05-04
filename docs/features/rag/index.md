@@ -27,7 +27,7 @@ rag:
     docs: [./documents, ./some-doc.md]
     strategies:
       - type: chunked-embeddings
-        model: openai/text-embedding-3-small
+        embedding_model: openai/text-embedding-3-small
         database: ./docs.db
         vector_dimensions: 1536
 
@@ -50,7 +50,7 @@ Uses embedding models to find semantically similar content. Best for understandi
 ```yaml
 strategies:
   - type: chunked-embeddings
-    model: openai/text-embedding-3-small
+    embedding_model: openai/text-embedding-3-small
     database: ./vector.db
     vector_dimensions: 1536
     similarity_metric: cosine_similarity
@@ -113,7 +113,7 @@ rag:
     docs: [./docs]
     strategies:
       - type: chunked-embeddings
-        model: openai/text-embedding-3-small
+        embedding_model: openai/text-embedding-3-small
         database: ./vector.db
         vector_dimensions: 1536
         limit: 20
@@ -206,7 +206,7 @@ Look for log tags: `[RAG Manager]`, `[Chunked-Embeddings Strategy]`, `[BM25 Stra
 
 | Field                       | Type   | Default             | Description                                                  |
 | --------------------------- | ------ | ------------------- | ------------------------------------------------------------ |
-| `model`                     | string | —                   | **Required.** Embedding model reference                      |
+| `embedding_model`           | string | —                   | **Required.** Embedding model reference                      |
 | `database`                  | string | —                   | Path to local SQLite database                                |
 | `vector_dimensions`         | int    | —                   | Embedding dimensions (e.g., 1536 for text-embedding-3-small) |
 | `similarity_metric`         | string | `cosine_similarity` | Similarity metric                                            |

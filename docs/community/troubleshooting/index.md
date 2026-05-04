@@ -155,7 +155,7 @@ docker-agent validates config at startup and reports errors with line numbers. C
 
 ### Toolset validation
 
-- The `path` field is only valid for `memory` toolsets
+- The `path` field is valid for `memory` and `tasks` toolsets, and for the agent-level `cache` block
 - MCP toolsets need either `command` (stdio), `remote` (SSE/HTTP), or `ref` (Docker)
 - Provider names must be one of: `openai`, `anthropic`, `google`, `amazon-bedrock`, `dmr`, etc.
 

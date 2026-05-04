@@ -19,11 +19,11 @@ models:
                      # github-copilot, or a named provider defined under the top-level
                      # `providers:` section.
     model: string # Required: model identifier
-    temperature: float # Optional: 0.0–1.0
+    temperature: float # Optional: 0.0–2.0 (provider-dependent; e.g. Anthropic caps at 1.0)
     max_tokens: integer # Optional: response length limit
     top_p: float # Optional: 0.0–1.0
-    frequency_penalty: float # Optional: 0.0–2.0
-    presence_penalty: float # Optional: 0.0–2.0
+    frequency_penalty: float # Optional: -2.0–2.0
+    presence_penalty: float # Optional: -2.0–2.0
     base_url: string # Optional: custom API endpoint
     token_key: string # Optional: env var for API token
     thinking_budget: string|int # Optional: reasoning effort
@@ -39,13 +39,13 @@ models:
 
 | Property              | Type       | Required | Description                                                                           |
 | --------------------- | ---------- | -------- | ------------------------------------------------------------------------------------- |
-| `provider`            | string     | ✓        | Provider: `openai`, `anthropic`, `google`, `amazon-bedrock`, `dmr`, `mistral`, `xai`  |
+| `provider`            | string     | ✓        | Provider: `openai`, `anthropic`, `google`, `amazon-bedrock`, `dmr`, `mistral`, `xai`, `nebius`, `minimax`, `requesty`, `azure`, `ollama`, `github-copilot`, or any [named provider]({{ '/providers/custom/' | relative_url }}). |
 | `model`               | string     | ✓        | Model name (e.g., `gpt-4o`, `claude-sonnet-4-0`, `gemini-2.5-flash`)                  |
-| `temperature`         | float      | ✗        | Randomness. `0.0` = deterministic, `1.0` = creative                                   |
+| `temperature`         | float      | ✗        | Sampling randomness. Range is provider-dependent — typically `0.0–2.0` (Anthropic caps at `1.0`). `0.0` is deterministic. |
 | `max_tokens`          | int        | ✗        | Maximum response length in tokens                                                     |
-| `top_p`               | float      | ✗        | Nucleus sampling threshold                                                            |
-| `frequency_penalty`   | float      | ✗        | Penalize repeated tokens (0.0–2.0)                                                    |
-| `presence_penalty`    | float      | ✗        | Encourage topic diversity (0.0–2.0)                                                   |
+| `top_p`               | float      | ✗        | Nucleus sampling threshold (`0.0–1.0`)                                                |
+| `frequency_penalty`   | float      | ✗        | Penalize repeated tokens (`-2.0–2.0`)                                                 |
+| `presence_penalty`    | float      | ✗        | Encourage topic diversity (`-2.0–2.0`)                                                |
 | `base_url`            | string     | ✗        | Custom API endpoint URL (for self-hosted or proxied endpoints)                        |
 | `token_key`           | string     | ✗        | Environment variable name containing the API token (overrides provider default)       |
 | `thinking_budget`     | string/int | ✗        | Reasoning effort control                                                              |

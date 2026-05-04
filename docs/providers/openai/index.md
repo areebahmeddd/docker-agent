@@ -101,7 +101,7 @@ models:
 ### Requirements
 
 - Only works with Responses API models: `gpt-4.1+`, `o1`, `o3`, `o4`, `gpt-5`
-- NOT compatible with `--gateway` flag (automatically falls back to SSE)
+- NOT compatible with the `--models-gateway` flag (automatically falls back to SSE when a gateway is configured)
 - Requires `OPENAI_API_KEY` environment variable
 
 ### Example
