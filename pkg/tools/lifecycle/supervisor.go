@@ -446,13 +446,14 @@ func (s *Supervisor) tryRestart(ctx context.Context) bool {
 			return false
 		}
 		s.session = sess
-		// Wake any RestartAndWait callers, then prepare for the next cycle.
+		// Transition to Ready before unblocking RestartAndWait so callers
+		// observe the new state, not a stale Restarting.
+		s.tracker.Set(StateReady)
+		s.tracker.ResetRestarts()
 		close(s.restarted)
 		s.restarted = make(chan struct{})
 		s.mu.Unlock()
 
-		s.tracker.Set(StateReady)
-		s.tracker.ResetRestarts()
 		log.Info("supervisor: restarted", "name", s.name, "attempt", attempt+1)
 		return true
 	}
