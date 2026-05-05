@@ -1372,6 +1372,29 @@
           "description": "Whether to ignore VCS files (.git directories and .gitignore patterns) in filesystem operations. Default: true",
           "default": true
         },
+        "allow_list": {
+          "type": "array",
+          "description": "Allow-list of directories the filesystem tool is permitted to access (only valid for type 'filesystem'). Each entry may be '.' (the agent's working directory), '~' or '~/...' (the user's home directory), an absolute path, or a relative path (anchored at the working directory). Symlinks are followed before the containment check, so they cannot be used to escape the allow-list. An empty or omitted list preserves the default behaviour (any path the agent process can reach).",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            ["."],
+            [".", "~/projects"],
+            ["/srv/data", "~/scratch"]
+          ]
+        },
+        "deny_list": {
+          "type": "array",
+          "description": "Deny-list of directories the filesystem tool is forbidden to access (only valid for type 'filesystem'). Uses the same expansion rules as 'allow_list'. The deny-list takes precedence over the allow-list: a path that matches both is rejected.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            ["~/.ssh", "~/.aws"],
+            ["/etc", "/var/lib"]
+          ]
+        },
         "defer": {
           "description": "Enable deferred loading for tools in this toolset. Set to true to defer all tools, or an array of tool names to defer only those tools. Deferred tools are not loaded into the agent's context immediately, but can be discovered and loaded on-demand using search_tool and add_tool.",
           "oneOf": [

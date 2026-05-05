@@ -820,6 +820,23 @@ type Toolset struct {
 	// For the `filesystem` tool - VCS integration
 	IgnoreVCS *bool `json:"ignore_vcs,omitempty"`
 
+	// For the `filesystem` tool - allow-list of directories the tools are
+	// permitted to access. Each entry may be "." (the agent's working
+	// directory), "~" or "~/..." (the user's home directory), an absolute
+	// path, or a relative path (anchored at the working directory). When
+	// non-empty, every read/write operation is rejected unless its target
+	// resolves under one of the listed roots. Symlinks are followed before
+	// the containment check so they cannot be used to escape the allow-list.
+	// An empty or omitted list preserves the default behaviour (any path
+	// reachable by the process is allowed).
+	AllowList []string `json:"allow_list,omitempty" yaml:"allow_list,omitempty"`
+
+	// For the `filesystem` tool - deny-list of directories the tools are
+	// forbidden to access. Same expansion and matching rules as `allow_list`.
+	// The deny-list takes precedence over `allow_list`: a path that matches
+	// both is rejected. An empty or omitted list disables the deny-list.
+	DenyList []string `json:"deny_list,omitempty" yaml:"deny_list,omitempty"`
+
 	// For the `lsp` tool
 	FileTypes []string `json:"file_types,omitempty"`
 
