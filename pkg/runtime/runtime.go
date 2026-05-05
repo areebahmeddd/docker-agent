@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
+	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
@@ -1183,6 +1184,12 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 // hooks then fire inside [LocalRuntime.doCompact] with [Input.CompactionReason]
 // set to the canonical reason; they may veto or supply a custom summary.
 func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Session, additionalPrompt, reason string, events chan Event) {
+	// Stamp the session ID on ctx so the compaction LLM call carries
+	// `X-Cagent-Session-Id` to the gateway. Manual compaction
+	// (via `Summarize` from the App) bypasses `runStreamLoop`'s seed;
+	// internal callers (proactive threshold, overflow recovery) already
+	// run with a stamped ctx, but re-stamping is idempotent.
+	ctx = httpclient.ContextWithSessionID(ctx, sess.ID)
 	a := r.resolveSessionAgent(sess)
 
 	source := preCompactSourceFor(reason)
