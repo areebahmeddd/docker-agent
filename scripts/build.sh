@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-. .mise/helpers/git-env.sh
+. scripts/helpers/git-env.sh
 
 LDFLAGS="-X \"github.com/docker/docker-agent/pkg/version.Version=${GIT_TAG}\" -X \"github.com/docker/docker-agent/pkg/version.Commit=${GIT_COMMIT}\""
 
