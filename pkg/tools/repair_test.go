@@ -100,6 +100,25 @@ func TestRepair_RefusesMultiKeyObjectAsArray(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// TestRepair_VisitsPromotedFieldsFromEmbeddedStruct mirrors the shape of
+// LSP arg structs in pkg/tools/builtin/lsp.go (ReferencesArgs and friends
+// embed PositionArgs). reflect.VisibleFields is what makes promoted fields
+// visit-able; iterating NumField/Field directly would silently skip them.
+func TestRepair_VisitsPromotedFieldsFromEmbeddedStruct(t *testing.T) {
+	type Base struct {
+		Files []string `json:"files"`
+	}
+	type WithEmbedding struct {
+		Base
+		Extra string `json:"extra,omitempty"`
+	}
+	in := []byte(`{"files":"only.txt"}`)
+	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeFor[WithEmbedding]())
+	require.True(t, ok)
+	assert.Equal(t, []repairKind{repairWrapInArray}, kinds)
+	assert.JSONEq(t, `{"files":["only.txt"]}`, string(out))
+}
+
 func TestRepair_RepairsMultipleFieldsInOneCall(t *testing.T) {
 	type combo struct {
 		Paths []string `json:"paths"`

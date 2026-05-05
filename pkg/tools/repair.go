@@ -79,9 +79,20 @@ func tryRepairToolArgs(data []byte, paramsType reflect.Type) ([]byte, []repairKi
 		return nil, nil, false
 	}
 
+	// reflect.VisibleFields walks promoted fields from embedded structs,
+	// matching how encoding/json marshals struct values into JSON objects:
+	// fields lifted by embedding share the same top-level object, so they
+	// must be inspected in the same `raw` map. Iterating
+	// `paramsType.NumField()` directly would silently skip them — relevant
+	// today for ReferencesArgs/RenameArgs/CallHierarchyArgs/TypeHierarchyArgs
+	// which all embed PositionArgs.
 	repairs := []repairKind{}
-	for i := range paramsType.NumField() {
-		field := paramsType.Field(i)
+	for _, field := range reflect.VisibleFields(paramsType) {
+		if field.Anonymous {
+			// The embedding itself is a marker; its promoted children are
+			// emitted as separate visible fields by VisibleFields.
+			continue
+		}
 		name, ok := jsonFieldName(field)
 		if !ok {
 			continue
