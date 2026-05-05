@@ -1799,8 +1799,11 @@ func (p *parser) renderInlineWithStyleTo(out *strings.Builder, text string, rest
 			start := i
 			origStart := i // Track original start to detect no-progress
 			for i < n && !isInlineMarker(text[i]) {
-				// Check for auto-link URLs
-				if (i+8 <= n && text[i:i+8] == "https://") || (i+7 <= n && text[i:i+7] == "http://") {
+				// Auto-link URL detection. URLs we recognize all start with 'h'
+				// ("http://" or "https://"), so a single-byte gate keeps this hot
+				// loop tight on prose: we only pay for slice creation + memequal
+				// on the rare 'h' bytes.
+				if text[i] == 'h' && ((i+8 <= n && text[i:i+8] == "https://") || (i+7 <= n && text[i:i+7] == "http://")) {
 					// First, emit any plain text before the URL
 					if i > start {
 						plainText := text[start:i]
