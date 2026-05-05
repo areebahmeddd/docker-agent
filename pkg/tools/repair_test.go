@@ -110,6 +110,7 @@ func TestRepair_VisitsPromotedFieldsFromEmbeddedStruct(t *testing.T) {
 	}
 	type WithEmbedding struct {
 		Base
+
 		Extra string `json:"extra,omitempty"`
 	}
 	in := []byte(`{"files":"only.txt"}`)
