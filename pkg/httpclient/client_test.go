@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -68,6 +69,14 @@ func TestHeaders(t *testing.T) {
 // to a test server, and returns the headers the server received.
 func doRequest(t *testing.T, opts ...Opt) http.Header {
 	t.Helper()
+	return doRequestWithCtx(t, t.Context(), opts...)
+}
+
+// doRequestWithCtx is like doRequest but uses the supplied context for
+// the outbound request, so callers can exercise context-derived header
+// injection (e.g. session ID propagation).
+func doRequestWithCtx(t *testing.T, ctx context.Context, opts ...Opt) http.Header {
+	t.Helper()
 
 	var capturedHeaders http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -75,8 +84,8 @@ func doRequest(t *testing.T, opts ...Opt) http.Header {
 	}))
 	defer srv.Close()
 
-	client := NewHTTPClient(t.Context(), opts...)
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, http.NoBody)
+	client := NewHTTPClient(ctx, opts...)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, http.NoBody)
 	require.NoError(t, err)
 
 	resp, err := client.Do(req)
@@ -84,4 +93,60 @@ func doRequest(t *testing.T, opts ...Opt) http.Header {
 	defer func() { _ = resp.Body.Close() }()
 
 	return capturedHeaders
+}
+
+func TestSessionIDHeader_GatewayBoundOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		ctxSessionID   string
+		opts           []Opt
+		wantHeaderSent bool
+	}{
+		{
+			name:           "session ID present, gateway-bound (X-Cagent-Forward set) → header sent",
+			ctxSessionID:   "sess-abc",
+			opts:           []Opt{WithProxiedBaseURL("https://gateway.example/v1")},
+			wantHeaderSent: true,
+		},
+		{
+			name:           "session ID present, no X-Cagent-Forward → header skipped",
+			ctxSessionID:   "sess-abc",
+			opts:           nil,
+			wantHeaderSent: false,
+		},
+		{
+			name:           "no session ID on context, gateway-bound → header skipped",
+			ctxSessionID:   "",
+			opts:           []Opt{WithProxiedBaseURL("https://gateway.example/v1")},
+			wantHeaderSent: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := t.Context()
+			if tt.ctxSessionID != "" {
+				ctx = ContextWithSessionID(ctx, tt.ctxSessionID)
+			}
+			headers := doRequestWithCtx(t, ctx, tt.opts...)
+
+			if tt.wantHeaderSent {
+				assert.Equal(t, tt.ctxSessionID, headers.Get("X-Cagent-Session-Id"))
+			} else {
+				assert.Empty(t, headers.Get("X-Cagent-Session-Id"))
+			}
+		})
+	}
+}
+
+func TestContextWithSessionID_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	assert.Empty(t, SessionIDFromContext(t.Context()), "empty context yields empty session ID")
+	ctx := ContextWithSessionID(t.Context(), "sess-xyz")
+	assert.Equal(t, "sess-xyz", SessionIDFromContext(ctx))
 }

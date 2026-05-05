@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/compaction"
+	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
@@ -166,6 +167,11 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 // goroutine so it has a real name in stack traces and is easier to navigate
 // in editors.
 func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session, events chan Event) {
+	// Seed the cagent session ID at the run-loop boundary so any
+	// gateway-bound HTTP call originating from this loop can correlate
+	// back to the originating session. Plumbing happens in
+	// pkg/httpclient/userAgentTransport, gated on `X-Cagent-Forward`.
+	ctx = httpclient.ContextWithSessionID(ctx, sess.ID)
 	r.telemetry.RecordSessionStart(ctx, r.CurrentAgentName(), sess.ID)
 
 	ctx, sessionSpan := r.startSpan(ctx, "runtime.session", trace.WithAttributes(

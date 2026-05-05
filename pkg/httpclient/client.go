@@ -123,6 +123,17 @@ func (u *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	r2 := req.Clone(req.Context())
 	maps.Copy(r2.Header, u.httpOptions.Header)
 
+	// Forward the agent session ID only on gateway-bound calls. The
+	// gating on `X-Cagent-Forward` keeps the identifier out of direct
+	// provider requests and unrelated outbound HTTP made through this
+	// transport, even though `SessionIDFromContext` is populated for
+	// every call originating in the run loop.
+	if r2.Header.Get("X-Cagent-Forward") != "" {
+		if sid := SessionIDFromContext(r2.Context()); sid != "" {
+			r2.Header.Set("X-Cagent-Session-Id", sid)
+		}
+	}
+
 	if u.httpOptions.Query != nil {
 		q := r2.URL.Query()
 		for k, vs := range u.httpOptions.Query {
