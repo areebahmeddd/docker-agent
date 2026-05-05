@@ -91,6 +91,7 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 			AgentName:           ca,
 			Title:               "Skill: " + prepared.SkillName,
 			ToolsApproved:       sess.ToolsApproved,
+			NonInteractive:      sess.NonInteractive,
 			ExcludedTools:       []string{builtin.ToolNameRunSkill},
 		},
 	})

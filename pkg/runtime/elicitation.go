@@ -115,6 +115,15 @@ func (r *LocalRuntime) ResumeElicitation(ctx context.Context, action tools.Elici
 func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitParams) (tools.ElicitationResult, error) {
 	slog.Debug("Elicitation request received from MCP server", "message", req.Message)
 
+	// In non-interactive mode (e.g., MCP serve), there is no user to respond
+	// to elicitation requests. Decline immediately instead of blocking forever.
+	if r.nonInteractive {
+		slog.Debug("Declining elicitation in non-interactive mode", "message", req.Message)
+		return tools.ElicitationResult{
+			Action: tools.ElicitationActionDecline,
+		}, nil
+	}
+
 	r.executeOnUserInputHooks(ctx, "", "elicitation")
 
 	slog.Debug("Sending elicitation request event to client",

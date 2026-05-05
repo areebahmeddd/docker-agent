@@ -91,6 +91,10 @@ type SubSessionConfig struct {
 	Title string
 	// ToolsApproved overrides whether tools are pre-approved in the child session.
 	ToolsApproved bool
+	// NonInteractive marks the child session as running without a user present
+	// (e.g. MCP server, A2A adapter, background agent). This causes the runtime
+	// to auto-stop on max iterations instead of blocking for user input.
+	NonInteractive bool
 	// PinAgent, when true, pins the child session to AgentName via
 	// session.WithAgentName. This is required for concurrent background
 	// tasks that must not share the runtime's mutable currentAgent field.
@@ -161,6 +165,7 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 		session.WithMaxOldToolCallTokens(childAgent.MaxOldToolCallTokens()),
 		session.WithTitle(cfg.Title),
 		session.WithToolsApproved(cfg.ToolsApproved),
+		session.WithNonInteractive(cfg.NonInteractive),
 		session.WithSendUserMessage(false),
 		session.WithParentID(parent.ID),
 		session.WithAttachedFiles(attachedFiles),
@@ -381,6 +386,7 @@ func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams)
 		AgentName:      params.AgentName,
 		Title:          "Background agent task",
 		ToolsApproved:  true,
+		NonInteractive: true,
 		PinAgent:       true,
 	}, params.OnContent)
 }
@@ -416,6 +422,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 			AgentName:      params.Agent,
 			Title:          "Transferred task",
 			ToolsApproved:  sess.ToolsApproved,
+			NonInteractive: sess.NonInteractive,
 		},
 		SwitchCurrentAgent: true,
 	})
