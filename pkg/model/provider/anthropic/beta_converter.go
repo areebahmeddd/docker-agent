@@ -162,6 +162,7 @@ func convertBetaToolResultBlock(msg *chat.Message) anthropic.BetaContentBlockPar
 				OfText: &anthropic.BetaTextBlockParam{Text: part.Text},
 			})
 		case chat.MessagePartTypeImageURL:
+			// Deprecated: use MessagePartTypeDocument instead.
 			if part.ImageURL == nil {
 				continue
 			}
@@ -238,6 +239,7 @@ func (c *Client) convertBetaUserMultiContent(ctx context.Context, parts []chat.M
 			}
 
 		case chat.MessagePartTypeFile:
+			// Deprecated: use MessagePartTypeDocument instead.
 			if part.File == nil {
 				continue
 			}
@@ -271,6 +273,15 @@ func (c *Client) convertBetaUserMultiContent(ctx context.Context, parts []chat.M
 			default:
 				// File part has neither path nor file ID - this is invalid
 				return nil, errors.New("invalid file attachment: neither path nor file_id provided")
+			}
+
+		case chat.MessagePartTypeDocument:
+			if part.Document != nil {
+				docBlocks, err := convertDocument(ctx, *part.Document, c.ModelConfig.Model)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert document attachment %q: %w", part.Document.Name, err)
+				}
+				contentBlocks = append(contentBlocks, docBlocks...)
 			}
 		}
 	}

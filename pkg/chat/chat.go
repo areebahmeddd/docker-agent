@@ -29,9 +29,11 @@ const (
 type MessagePartType string
 
 const (
-	MessagePartTypeText     MessagePartType = "text"
+	MessagePartTypeText MessagePartType = "text"
+	// Deprecated: use MessagePartTypeDocument instead.
 	MessagePartTypeImageURL MessagePartType = "image_url"
-	MessagePartTypeFile     MessagePartType = "file"
+	// Deprecated: use MessagePartTypeDocument instead.
+	MessagePartTypeFile MessagePartType = "file"
 )
 
 type ImageURLDetail string
@@ -108,8 +110,12 @@ type MessageFile struct {
 type MessagePart struct {
 	Type     MessagePartType  `json:"type,omitempty"`
 	Text     string           `json:"text,omitempty"`
+	// Deprecated: use Document with MessagePartTypeDocument instead.
 	ImageURL *MessageImageURL `json:"image_url,omitempty"`
+	// Deprecated: use Document with MessagePartTypeDocument instead.
 	File     *MessageFile     `json:"file,omitempty"`
+	// Document is set when Type is MessagePartTypeDocument.
+	Document *Document        `json:"document,omitempty"`
 }
 
 // FinishReason represents the reason why the model finished generating a response

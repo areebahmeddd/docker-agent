@@ -179,8 +179,8 @@ func (c *Client) Close() {
 
 // convertMessages converts chat.Message to openai.ChatCompletionMessageParamUnion
 // using the shared oaistream implementation.
-func convertMessages(messages []chat.Message) []openai.ChatCompletionMessageParamUnion {
-	return oaistream.ConvertMessages(messages)
+func (c *Client) convertMessages(messages []chat.Message) []openai.ChatCompletionMessageParamUnion {
+	return oaistream.ConvertMessages(messages, c.ModelConfig.Model)
 }
 
 // CreateChatCompletionStream creates a streaming chat completion request
@@ -224,7 +224,7 @@ func (c *Client) CreateChatCompletionStream(
 
 	params := openai.ChatCompletionNewParams{
 		Model:    c.ModelConfig.Model,
-		Messages: convertMessages(messages),
+		Messages: c.convertMessages(messages),
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openai.Bool(trackUsage),
 		},
@@ -363,7 +363,7 @@ func (c *Client) CreateResponseStream(
 		return nil, errors.New("at least one message is required")
 	}
 
-	input := convertMessagesToResponseInput(messages)
+	input := c.convertMessagesToResponseInput(messages)
 
 	params := responses.ResponseNewParams{
 		Model: c.ModelConfig.Model,
@@ -563,7 +563,7 @@ func getTransport(cfg *latest.ModelConfig) string {
 	return "sse"
 }
 
-func convertMessagesToResponseInput(messages []chat.Message) []responses.ResponseInputItemUnionParam {
+func (c *Client) convertMessagesToResponseInput(messages []chat.Message) []responses.ResponseInputItemUnionParam {
 	var input []responses.ResponseInputItemUnionParam
 	for _, msg := range messages {
 		// Skip invalid messages
@@ -594,6 +594,7 @@ func convertMessagesToResponseInput(messages []chat.Message) []responses.Respons
 							},
 						})
 					case chat.MessagePartTypeImageURL:
+						// Deprecated: use MessagePartTypeDocument instead.
 						if part.ImageURL != nil {
 							detail := responses.ResponseInputImageContentDetailAuto
 							switch part.ImageURL.Detail {
@@ -608,6 +609,15 @@ func convertMessagesToResponseInput(messages []chat.Message) []responses.Respons
 									Detail:   responses.ResponseInputImageDetail(detail),
 								},
 							})
+						}
+					case chat.MessagePartTypeDocument:
+						if part.Document != nil {
+							docParts, err := convertDocumentToResponseInput(context.Background(), *part.Document, c.ModelConfig.Model)
+							if err != nil {
+								slog.Warn("failed to convert document attachment", "error", err, "doc", part.Document.Name)
+								continue
+							}
+							contentParts = append(contentParts, docParts...)
 						}
 					}
 				}

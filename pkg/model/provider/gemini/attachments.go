@@ -1,0 +1,54 @@
+package gemini
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"google.golang.org/genai"
+
+	"github.com/docker/docker-agent/pkg/attachment"
+	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
+	"github.com/docker/docker-agent/pkg/chat"
+)
+
+// convertDocument converts a chat.Document to a Gemini genai.Part.
+//
+// Routing:
+//   - image/* or binary with InlineData → genai.Blob part
+//   - text MIMEs with InlineText → genai.Text part with TXTEnvelope
+//   - unsupported / no content → nil (logged as warning)
+func convertDocument(ctx context.Context, doc chat.Document, modelID string) (*genai.Part, error) {
+	mc, _ := modelcaps.Load(modelID)
+	strategy, reason := attachment.Decide(doc, mc)
+
+	switch strategy {
+	case attachment.StrategyDrop:
+		slog.WarnContext(ctx, "attachment dropped", "reason", reason, "doc", doc.Name)
+		return nil, nil
+
+	case attachment.StrategyB64:
+		// Gemini's genai.NewPartFromBytes wraps binary data as an inline blob.
+		return genai.NewPartFromBytes(doc.Source.InlineData, doc.MimeType), nil
+
+	case attachment.StrategyTXT:
+		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType, doc.Source.InlineText)
+		return genai.NewPartFromText(envelope), nil
+
+	default:
+		return nil, fmt.Errorf("unknown attachment strategy %d", strategy)
+	}
+}
+
+// SupportedMIMETypes implements attachment.Advisor for the Gemini client.
+func (c *Client) SupportedMIMETypes() []string {
+	mc, _ := modelcaps.Load(c.ModelConfig.Model)
+	mimes := []string{"text/plain", "text/markdown", "text/html", "text/csv"}
+	if mc.Supports("image/jpeg") {
+		mimes = append(mimes, "image/jpeg", "image/png", "image/gif", "image/webp")
+	}
+	if mc.Supports("application/pdf") {
+		mimes = append(mimes, "application/pdf")
+	}
+	return mimes
+}
