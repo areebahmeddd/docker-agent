@@ -414,6 +414,72 @@ func TestFetchTool_BlockedDomainsAppearInInstructions(t *testing.T) {
 	assert.Contains(t, instructions, "169.254.169.254")
 }
 
+func TestFetchTool_WithHeadersOption(t *testing.T) {
+	headers := map[string]string{
+		"Authorization": "Bearer secret-token",
+		"X-Api-Key":     "key-123",
+	}
+	tool := NewFetchTool(WithHeaders(headers))
+
+	assert.Equal(t, headers, tool.handler.headers)
+}
+
+func TestFetch_Headers_SentOnRequest(t *testing.T) {
+	var gotAuthorization, gotAPIKey string
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		gotAuthorization = r.Header.Get("Authorization")
+		gotAPIKey = r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "ok")
+	})
+
+	tool := NewFetchTool(WithHeaders(map[string]string{
+		"Authorization": "Bearer secret-token",
+		"X-Api-Key":     "key-123",
+	}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/page"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Successfully fetched")
+	assert.Equal(t, "Bearer secret-token", gotAuthorization)
+	assert.Equal(t, "key-123", gotAPIKey)
+}
+
+// TestFetch_Headers_OverrideDefaults pins the precedence rule: caller-supplied
+// headers win over the default User-Agent and the format-driven Accept header.
+func TestFetch_Headers_OverrideDefaults(t *testing.T) {
+	var gotUserAgent, gotAccept string
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		gotUserAgent = r.Header.Get("User-Agent")
+		gotAccept = r.Header.Get("Accept")
+		fmt.Fprint(w, "ok")
+	})
+
+	tool := NewFetchTool(WithHeaders(map[string]string{
+		"User-Agent": "CustomAgent/1.0",
+		"Accept":     "application/json",
+	}))
+
+	_, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/page"},
+		Format: "text", // would normally set a text/plain Accept header
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "CustomAgent/1.0", gotUserAgent)
+	assert.Equal(t, "application/json", gotAccept)
+}
+
 func TestMatchesDomain(t *testing.T) {
 	tests := []struct {
 		name    string

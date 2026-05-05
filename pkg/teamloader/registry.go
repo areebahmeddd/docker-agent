@@ -305,7 +305,7 @@ func createAPITool(ctx context.Context, toolset latest.Toolset, _ string, runCon
 	return builtin.NewAPITool(toolset.APIConfig, expander), nil
 }
 
-func createFetchTool(_ context.Context, toolset latest.Toolset, _ string, _ *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+func createFetchTool(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
 	var opts []builtin.FetchToolOption
 	if toolset.Timeout > 0 {
 		timeout := time.Duration(toolset.Timeout) * time.Second
@@ -316,6 +316,14 @@ func createFetchTool(_ context.Context, toolset latest.Toolset, _ string, _ *con
 	}
 	if len(toolset.BlockedDomains) > 0 {
 		opts = append(opts, builtin.WithBlockedDomains(toolset.BlockedDomains))
+	}
+	if len(toolset.Headers) > 0 {
+		// Expand ${env.X} references so secrets (API tokens, ...) can be
+		// pulled from the environment instead of being inlined in YAML —
+		// matches the behaviour of openapi/a2a/mcp.remote/api headers.
+		expander := js.NewJsExpander(runConfig.EnvProvider())
+		headers := expander.ExpandMap(ctx, toolset.Headers)
+		opts = append(opts, builtin.WithHeaders(headers))
 	}
 	return builtin.NewFetchTool(opts...), nil
 }

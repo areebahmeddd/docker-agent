@@ -39,6 +39,7 @@ type fetchHandler struct {
 	timeout        time.Duration
 	allowedDomains []string
 	blockedDomains []string
+	headers        map[string]string
 }
 
 type FetchToolArgs struct {
@@ -167,6 +168,12 @@ func (h *fetchHandler) fetchURL(ctx context.Context, client *http.Client, urlStr
 		req.Header.Set("Accept", "text/plain;q=1.0,  text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1")
 	default:
 		req.Header.Set("Accept", "text/plain;q=1.0, */*;q=0.1")
+	}
+
+	// Apply caller-configured headers last so an operator-supplied
+	// Authorization, User-Agent, Accept, ... wins over the defaults set above.
+	for k, v := range h.headers {
+		req.Header.Set(k, v)
 	}
 
 	// Execute request
@@ -435,6 +442,19 @@ func WithAllowedDomains(domains []string) FetchToolOption {
 func WithBlockedDomains(domains []string) FetchToolOption {
 	return func(t *FetchTool) {
 		t.handler.blockedDomains = domains
+	}
+}
+
+// WithHeaders attaches a static set of HTTP headers to every request issued
+// by the fetch tool. Typical use is supplying authentication credentials
+// (e.g. an `Authorization: Bearer ${env.MY_TOKEN}` header expanded at config
+// load time) for endpoints that require them. The format-driven Accept
+// header and the default User-Agent are applied first, so caller-provided
+// values for the same header names override them. An empty or nil map is a
+// no-op.
+func WithHeaders(headers map[string]string) FetchToolOption {
+	return func(t *FetchTool) {
+		t.handler.headers = headers
 	}
 }
 
