@@ -1923,7 +1923,15 @@ const inlineMarkdownChars = "\\`*_~["
 const urlStopMarkdownChars = "`*~["
 
 // findFirstURL returns the index of the first "https://" or "http://" in s, or -1.
+//
+// Fast path: bail out with a single IndexByte scan when 'h' isn't present at
+// all. Both URL prefixes start with 'h', so the absence of 'h' guarantees no
+// URL — and IndexByte is much cheaper than a substring search on prose that
+// dominates real input (status lines, prompts, code without URLs, etc.).
 func findFirstURL(s string) int {
+	if strings.IndexByte(s, 'h') < 0 {
+		return -1
+	}
 	if idx := strings.Index(s, "https://"); idx != -1 {
 		if httpIdx := strings.Index(s, "http://"); httpIdx != -1 && httpIdx < idx {
 			return httpIdx
