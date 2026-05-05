@@ -51,6 +51,7 @@ Type `/` during a session to see available commands, or press <kbd>Ctrl</kbd>+<k
 | `/star`            | Star/unstar the current session                                                      |
 | `/cost`            | Show cost breakdown for this session                                                 |
 | `/eval`            | Create an evaluation report                                                          |
+| `/pause`           | Pause/resume the runtime loop after the current request                              |
 | `/tools`           | Show every toolset (with lifecycle state) and the tools they expose                  |
 | `/toolset-restart` | Force a supervisor-driven reconnect of the named toolset (`/toolset-restart <name>`) |
 | `/permissions`     | Inspect and edit tool permission rules                                               |

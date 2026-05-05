@@ -54,6 +54,7 @@ $ docker agent run [config] [message...] [flags]
 | `--hook-on-user-input <cmd>`            | Add an on-user-input hook command (repeatable)                                                                                            |
 | `--hook-stop <cmd>`                     | Add a stop hook command, fired when the model finishes responding (repeatable)                                                            |
 | `--fake <path>`                         | Replay AI responses from a cassette file (for testing). Mutually exclusive with `--record`.                                               |
+| `--fake-stream [ms]`                    | When replaying with `--fake`, simulate streaming with a delay between chunks (defaults to 15ms when given without a value).               |
 | `--record [path]`                       | Record AI API interactions to a cassette file (auto-generates filename if no path given)                                                  |
 | `-d, --debug`                           | Enable debug logging                                                                                                                      |
 | `--log-file <path>`                     | Custom debug log location                                                                                                                 |
@@ -133,26 +134,52 @@ $ docker agent models --format json | jq
 
 ### `docker agent serve api`
 
-Start the HTTP API server for programmatic access.
+Start the HTTP API server for programmatic access. The argument can be a single agent file, a registry reference, or a directory — when given a directory, every `.yaml`/`.yml`/`.hcl` file in it is exposed as a separate entry under `/api/agents`.
 
 ```bash
-$ docker agent serve api [config] [flags]
+$ docker agent serve api <agent-file>|<agents-dir>|<registry-ref> [flags]
+```
 
+| Flag                       | Default            | Description                                                                                                |
+| -------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `-l, --listen <addr>`      | `127.0.0.1:8080`   | Address to listen on.                                                                                      |
+| `-s, --session-db <path>`  | `session.db`       | Path to the SQLite session database (relative paths resolve against the working directory).                |
+| `--pull-interval <minutes>`| `0`                | Periodically re-pull OCI/URL references and refresh the agent definition. `0` disables auto-pull.          |
+| `--fake <path>`             | (none)             | Replay AI responses from a cassette file (for testing). Mutually exclusive with `--record`.               |
+| `--record [path]`           | (none)             | Record AI API interactions to a cassette file.                                                            |
+
+All [runtime configuration flags](#runtime-configuration-flags) (`--working-dir`, `--env-from-file`, `--models-gateway`, `--hook-*`, …) are also accepted.
+
+```bash
 # Examples
 $ docker agent serve api agent.yaml
 $ docker agent serve api agent.yaml --listen :8080
-$ docker agent serve api ociReference --pull-interval 10  # auto-refresh
+$ docker agent serve api ./agents/                          # directory of agent YAMLs
+$ docker agent serve api ociReference --pull-interval 10    # auto-refresh
 ```
+
+See [API Server]({{ '/features/api-server/' | relative_url }}) for the full HTTP API reference.
 
 ### `docker agent serve mcp`
 
-Expose agents as MCP tools for use in Claude Desktop, Claude Code, or other MCP clients.
+Expose agents as MCP tools for use in Claude Desktop, Claude Code, or other MCP clients. Defaults to stdio transport; use `--http` to start a streaming HTTP server instead.
 
 ```bash
-$ docker agent serve mcp [config] [flags]
+$ docker agent serve mcp <config> [flags]
+```
 
+| Flag                   | Default            | Description                                                                                       |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+| `-a, --agent <name>`   | (all agents)       | Name of the agent to expose. If omitted, every agent in the config is exposed as a separate tool. |
+| `--http`               | `false`            | Use streaming HTTP transport instead of stdio.                                                    |
+| `-l, --listen <addr>`  | `127.0.0.1:8081`   | Address to listen on (only used with `--http`).                                                   |
+
+All [runtime configuration flags](#runtime-configuration-flags) are also accepted.
+
+```bash
 # Examples
-$ docker agent serve mcp agent.yaml
+$ docker agent serve mcp agent.yaml                                # stdio transport
+$ docker agent serve mcp agent.yaml --http --listen 127.0.0.1:9090 # streaming HTTP
 $ docker agent serve mcp agent.yaml --working-dir /path/to/project
 $ docker agent serve mcp agentcatalog/coder
 ```
@@ -164,11 +191,21 @@ See [MCP Mode]({{ '/features/mcp-mode/' | relative_url }}) for detailed setup.
 Start an A2A (Agent-to-Agent) protocol server.
 
 ```bash
-$ docker agent serve a2a [config] [flags]
+$ docker agent serve a2a <config> [flags]
+```
 
+| Flag                   | Default            | Description                                                                                |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------ |
+| `-a, --agent <name>`   | (team default)     | Name of the agent to run. Defaults to the team's first agent if not specified.             |
+| `-l, --listen <addr>`  | `127.0.0.1:8082`   | Address to listen on.                                                                       |
+
+All [runtime configuration flags](#runtime-configuration-flags) are also accepted.
+
+```bash
 # Examples
 $ docker agent serve a2a agent.yaml
 $ docker agent serve a2a agent.yaml --listen 127.0.0.1:9000
+$ docker agent serve a2a agentcatalog/pirate
 ```
 
 ### `docker agent serve acp`
@@ -176,10 +213,20 @@ $ docker agent serve a2a agent.yaml --listen 127.0.0.1:9000
 Start an ACP (Agent Client Protocol) server over stdio. This allows external clients to interact with your agents using the ACP protocol.
 
 ```bash
-$ docker agent serve acp [config] [flags]
+$ docker agent serve acp <config> [flags]
+```
 
+| Flag                      | Default                     | Description                                       |
+| ------------------------- | --------------------------- | ------------------------------------------------- |
+| `-s, --session-db <path>` | `~/.cagent/session.db`      | Path to the SQLite session database.              |
+
+All [runtime configuration flags](#runtime-configuration-flags) are also accepted.
+
+```bash
 # Examples
 $ docker agent serve acp agent.yaml
+$ docker agent serve acp ./team.yaml
+$ docker agent serve acp agentcatalog/pirate
 ```
 
 See [ACP]({{ '/features/acp/' | relative_url }}) for details on the Agent Client Protocol.
@@ -189,7 +236,7 @@ See [ACP]({{ '/features/acp/' | relative_url }}) for details on the Agent Client
 Start an HTTP server that exposes one or more agents through an **OpenAI-compatible Chat Completions API** at `/v1/chat/completions` and `/v1/models`. This lets any tool that already speaks the OpenAI protocol — for example [Open WebUI](https://github.com/open-webui/open-webui), `curl`, the OpenAI Python SDK, or LangChain — drive a docker-agent agent without any custom integration.
 
 ```bash
-$ docker agent serve chat [config] [flags]
+$ docker agent serve chat <config> [flags]
 ```
 
 | Flag                          | Default            | Description                                                                                                       |
@@ -228,23 +275,49 @@ $ docker agent share push ./agent.yaml docker.io/username/my-agent:latest
 
 # Pull an agent
 $ docker agent share pull docker.io/username/my-agent:latest
+
+# Force pull, overwriting the local copy
+$ docker agent share pull docker.io/username/my-agent:latest --force
 ```
+
+| Flag       | Applies to | Description                                                |
+| ---------- | ---------- | ---------------------------------------------------------- |
+| `--force`  | `pull`     | Force pull even if the configuration already exists locally |
 
 See [Agent Distribution]({{ '/concepts/distribution/' | relative_url }}) for full registry workflow details.
 
 ### `docker agent eval`
 
-Run agent evaluations.
+Run agent evaluations against a directory of recorded sessions.
 
 ```bash
-$ docker agent eval eval-config.yaml
-
-# With flags
-$ docker agent eval agent.yaml ./evals -c 8              # 8 concurrent evaluations
-$ docker agent eval agent.yaml --keep-containers         # Keep containers for debugging
-$ docker agent eval agent.yaml --only "auth*"            # Only run matching evals
-$ docker agent eval agent.yaml --repeat 5                # Repeat each eval 5 times
+$ docker agent eval <agent-file>|<registry-ref> [<eval-dir>|./evals] [flags]
 ```
+
+| Flag                | Default                              | Description                                                                |
+| ------------------- | ------------------------------------ | -------------------------------------------------------------------------- |
+| `-c, --concurrency` | num CPUs                             | Number of concurrent evaluation runs                                       |
+| `--judge-model`     | `anthropic/claude-opus-4-5-20251101` | Model for LLM-as-a-judge relevance scoring (format: `provider/model`)      |
+| `--output <dir>`    | `<eval-dir>/results`                 | Directory for results, logs, and session databases                         |
+| `--only <pattern>`  | (all)                                | Only run evals with file names matching these patterns (repeatable)        |
+| `--base-image`      | (default)                            | Custom base Docker image for eval containers                               |
+| `--keep-containers` | `false`                              | Keep containers after evaluation (don't remove with `--rm`)                |
+| `-e, --env`         | (none)                               | Environment variables to pass to container (`KEY` or `KEY=VALUE`, repeatable) |
+| `--repeat <n>`      | `1`                                  | Number of times to repeat each evaluation (useful for computing baselines) |
+
+All [runtime configuration flags](#runtime-configuration-flags) are also accepted.
+
+```bash
+# Examples
+$ docker agent eval agent.yaml                            # use ./evals
+$ docker agent eval agent.yaml ./my-evals                 # custom directory
+$ docker agent eval agent.yaml -c 8                       # 8 concurrent evaluations
+$ docker agent eval agent.yaml --keep-containers          # keep containers for debugging
+$ docker agent eval agent.yaml --only "auth*"             # only run matching evals
+$ docker agent eval agent.yaml --repeat 5                 # repeat each eval 5 times
+```
+
+See [Evaluation]({{ '/features/evaluation/' | relative_url }}) for details on creating eval sessions and interpreting results.
 
 ### `docker agent version`
 
@@ -326,6 +399,23 @@ These flags are available on every `docker agent` command:
 | `--config-dir <path>`     | Override the config directory (default: `~/.config/cagent`)                            |
 | `--data-dir <path>`       | Override the data directory (default: `~/.cagent`)                                     |
 | `--help`                  | Show help for any command                                                              |
+
+## Runtime Configuration Flags
+
+These flags are accepted by every command that loads an agent (`run`, `run --exec`, `new`, `eval`, `serve api`, `serve mcp`, `serve a2a`, `serve acp`, `serve chat`). They are listed once here to avoid repetition in the per-command tables above.
+
+| Flag                            | Description                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `--working-dir <path>`          | Set the working directory for the session (applies to tools and relative paths).                                         |
+| `--env-from-file <path>`        | Load environment variables from file (repeatable).                                                                       |
+| `--code-mode-tools`             | Provide a single tool to call other tools via JavaScript (forces code-mode tools globally).                              |
+| `--models-gateway <addr>`       | Route model traffic through a gateway. Reads `DOCKER_AGENT_MODELS_GATEWAY` (legacy `CAGENT_MODELS_GATEWAY`) env var.      |
+| `--hook-pre-tool-use <cmd>`     | Add a pre-tool-use hook command (repeatable). See [Hooks]({{ '/configuration/hooks/' | relative_url }}).                 |
+| `--hook-post-tool-use <cmd>`    | Add a post-tool-use hook command (repeatable).                                                                           |
+| `--hook-session-start <cmd>`    | Add a session-start hook command (repeatable).                                                                           |
+| `--hook-session-end <cmd>`      | Add a session-end hook command (repeatable).                                                                             |
+| `--hook-on-user-input <cmd>`    | Add an on-user-input hook command (repeatable).                                                                          |
+| `--hook-stop <cmd>`             | Add a stop hook command, fired when the model finishes responding (repeatable).                                          |
 
 ## Agent References
 
