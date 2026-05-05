@@ -38,7 +38,7 @@ func NewHandler[T any](fn func(context.Context, T) (*ToolCallResult, error)) Too
 		// Strict parse failed. Try the four shape repairs at the field
 		// paths the schema disagreed at, then re-parse. Valid inputs are
 		// never reached by this code path so well-formed calls pay nothing.
-		repaired, kinds, ok := tryRepairToolArgs([]byte(args), reflect.TypeOf((*T)(nil)).Elem())
+		repaired, kinds, ok := tryRepairToolArgs([]byte(args), reflect.TypeFor[T]())
 		if !ok {
 			return nil, err
 		}

@@ -24,7 +24,7 @@ type argsWithInt struct {
 func TestRepair_UnwrapsStringifiedArray(t *testing.T) {
 	// Common DeepSeek/Qwen mistake: send an array as a JSON string.
 	in := []byte(`{"paths": "[\"a.txt\",\"b.txt\"]"}`)
-	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithStrings{}))
+	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithStrings]())
 	require.True(t, ok)
 	assert.Equal(t, []repairKind{repairUnwrapStringArray}, kinds)
 	assert.JSONEq(t, `{"paths":["a.txt","b.txt"]}`, string(out))
@@ -33,7 +33,7 @@ func TestRepair_UnwrapsStringifiedArray(t *testing.T) {
 func TestRepair_WrapsBareString(t *testing.T) {
 	// Single-string-instead-of-array, the most common shape mistake.
 	in := []byte(`{"paths": "only.txt"}`)
-	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithStrings{}))
+	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithStrings]())
 	require.True(t, ok)
 	assert.Equal(t, []repairKind{repairWrapInArray}, kinds)
 	assert.JSONEq(t, `{"paths":["only.txt"]}`, string(out))
@@ -42,7 +42,7 @@ func TestRepair_WrapsBareString(t *testing.T) {
 func TestRepair_WrapsSingleObjectPlaceholder(t *testing.T) {
 	// Some models wrap a single argument in an object.
 	in := []byte(`{"paths": {"path": "only.txt"}}`)
-	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithStrings{}))
+	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithStrings]())
 	require.True(t, ok)
 	assert.Equal(t, []repairKind{repairWrapObjectInArray}, kinds)
 	assert.JSONEq(t, `{"paths":["only.txt"]}`, string(out))
@@ -54,7 +54,7 @@ func TestRepair_OrderingPreventsDoubleWrap(t *testing.T) {
 	// The fact that we get a clean array out is the load-bearing assertion
 	// of this test.
 	in := []byte(`{"paths": "[\"a\",\"b\"]"}`)
-	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithStrings{}))
+	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithStrings]())
 	require.True(t, ok)
 	assert.Equal(t, []repairKind{repairUnwrapStringArray}, kinds)
 	assert.JSONEq(t, `{"paths":["a","b"]}`, string(out))
@@ -64,7 +64,7 @@ func TestRepair_DropsNullForPrimitive(t *testing.T) {
 	// Some custom UnmarshalJSON impls trip on null where a primitive is
 	// expected. Dropping the field lets the type's zero value win.
 	in := []byte(`{"n": null}`)
-	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithInt{}))
+	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithInt]())
 	require.True(t, ok)
 	assert.Equal(t, []repairKind{repairDropNull}, kinds)
 	assert.JSONEq(t, `{}`, string(out))
@@ -75,28 +75,28 @@ func TestRepair_LeavesValidArrayUntouched(t *testing.T) {
 	// already failed, but defensively ensure that a well-formed array is
 	// not "repaired" if we ever do get called with one.
 	in := []byte(`{"paths": ["a","b"]}`)
-	_, _, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithStrings{}))
+	_, _, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithStrings]())
 	assert.False(t, ok)
 }
 
 func TestRepair_LeavesUnknownFieldsAlone(t *testing.T) {
 	// Field not declared on the struct: out of repair scope.
 	in := []byte(`{"unknown": "foo"}`)
-	_, _, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithStrings{}))
+	_, _, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithStrings]())
 	assert.False(t, ok)
 }
 
 func TestRepair_ReturnsFalseOnNonObjectInput(t *testing.T) {
 	// Top-level non-object payloads are unparseable as field-shape errors.
 	in := []byte(`"just a string"`)
-	_, _, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithStrings{}))
+	_, _, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithStrings]())
 	assert.False(t, ok)
 }
 
 func TestRepair_RefusesMultiKeyObjectAsArray(t *testing.T) {
 	// Two keys in the placeholder object — too ambiguous to safely wrap.
 	in := []byte(`{"paths": {"path": "a.txt", "extra": "ignore"}}`)
-	_, _, ok := tryRepairToolArgs(in, reflect.TypeOf(argsWithStrings{}))
+	_, _, ok := tryRepairToolArgs(in, reflect.TypeFor[argsWithStrings]())
 	assert.False(t, ok)
 }
 
@@ -106,7 +106,7 @@ func TestRepair_RepairsMultipleFieldsInOneCall(t *testing.T) {
 		Tags  []string `json:"tags"`
 	}
 	in := []byte(`{"paths":"only.txt","tags":"[\"go\",\"ai\"]"}`)
-	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeOf(combo{}))
+	out, kinds, ok := tryRepairToolArgs(in, reflect.TypeFor[combo]())
 	require.True(t, ok)
 	assert.Len(t, kinds, 2)
 	assert.JSONEq(t, `{"paths":["only.txt"],"tags":["go","ai"]}`, string(out))

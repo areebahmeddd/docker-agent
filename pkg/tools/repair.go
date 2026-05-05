@@ -80,7 +80,7 @@ func tryRepairToolArgs(data []byte, paramsType reflect.Type) ([]byte, []repairKi
 	}
 
 	repairs := []repairKind{}
-	for i := 0; i < paramsType.NumField(); i++ {
+	for i := range paramsType.NumField() {
 		field := paramsType.Field(i)
 		name, ok := jsonFieldName(field)
 		if !ok {
