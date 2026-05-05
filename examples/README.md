@@ -15,6 +15,7 @@ Some of these agents use [built-in tools](../docs/index.html#configuration/tools
 | [contradict.yaml](contradict.yaml)     | Contrarian viewpoint provider          |            |       |      |       |        |             |            |
 | [silvia.yaml](silvia.yaml)             | Sylvia Plath-inspired poetic AI        |            |       |      |       |        |             |            |
 | [script_shell.yaml](script_shell.yaml) | Agent with custom shell commands       |            | ✓     |      |       |        |             |            |
+| [instructions_from_file.hcl](instructions_from_file.hcl) | HCL agent that loads instructions from a file |            |       |      |       |        |             |            |
 | [mem.yaml](mem.yaml)                   | Humorous AI with persistent memory     | ✓          |       |      |       | ✓      |             |            |
 | [diag.yaml](diag.yaml)                 | Log analysis and diagnostics           | ✓          | ✓     |      | ✓     |        |             |            |
 | [todo.yaml](todo.yaml)                 | Task manager example                   |            |       | ✓    |       |        |             |            |
