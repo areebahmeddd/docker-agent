@@ -151,25 +151,15 @@ func (h *fetchHandler) fetchURL(ctx context.Context, client *http.Client, urlStr
 		return result
 	}
 
+	fmtHandler := formatHandlerFor(format)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, http.NoBody)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to create request: %v", err)
 		return result
 	}
-
 	req.Header.Set("User-Agent", useragent.Header)
-
-	switch format {
-	case "markdown":
-		req.Header.Set("Accept", "text/markdown;q=1.0, text/plain;q=0.9, text/html;q=0.7, */*;q=0.1")
-	case "html":
-		req.Header.Set("Accept", "text/html;q=1.0, text/plain;q=0.8, */*;q=0.1")
-	case "text":
-		req.Header.Set("Accept", "text/plain;q=1.0,  text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1")
-	default:
-		req.Header.Set("Accept", "text/plain;q=1.0, */*;q=0.1")
-	}
-
+	req.Header.Set("Accept", fmtHandler.accept)
 	// Apply caller-configured headers last so an operator-supplied
 	// Authorization, User-Agent, Accept, ... wins over the defaults set above.
 	for k, v := range h.headers {
@@ -196,27 +186,10 @@ func (h *fetchHandler) fetchURL(ctx context.Context, client *http.Client, urlStr
 		return result
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-
-	switch format {
-	case "markdown":
-		if strings.Contains(contentType, "text/html") {
-			result.Body = htmlToMarkdown(string(body))
-		} else {
-			result.Body = string(body)
-		}
-	case "html":
-		result.Body = string(body)
-	case "text":
-		if strings.Contains(contentType, "text/html") {
-			result.Body = htmlToText(string(body))
-		} else {
-			result.Body = string(body)
-		}
-	default:
-		result.Body = string(body)
+	result.Body = string(body)
+	if fmtHandler.convertFromHTML != nil && strings.Contains(result.ContentType, "text/html") {
+		result.Body = fmtHandler.convertFromHTML(result.Body)
 	}
-
 	result.ContentLength = len(result.Body)
 
 	return result
@@ -393,6 +366,42 @@ func matchesDomain(host, pattern string) bool {
 	return host == pattern || strings.HasSuffix(host, "."+pattern)
 }
 
+// formatHandler describes how a fetch output format negotiates with the
+// server (`Accept` header) and how an HTML response body is post-processed
+// into that format. A nil convertFromHTML means the body is returned as-is.
+type formatHandler struct {
+	accept          string
+	convertFromHTML func(string) string
+}
+
+var formatHandlers = map[string]formatHandler{
+	"markdown": {
+		accept:          "text/markdown;q=1.0, text/plain;q=0.9, text/html;q=0.7, */*;q=0.1",
+		convertFromHTML: htmlToMarkdown,
+	},
+	"html": {
+		accept: "text/html;q=1.0, text/plain;q=0.8, */*;q=0.1",
+	},
+	"text": {
+		accept:          "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1",
+		convertFromHTML: htmlToText,
+	},
+}
+
+// defaultFormatHandler is used when the caller passes an unknown / empty
+// format string. The JSON schema enums to text|markdown|html, but we keep a
+// safe fallback for forwards compatibility and direct (non-tool) callers.
+var defaultFormatHandler = formatHandler{
+	accept: "text/plain;q=1.0, */*;q=0.1",
+}
+
+func formatHandlerFor(format string) formatHandler {
+	if h, ok := formatHandlers[format]; ok {
+		return h
+	}
+	return defaultFormatHandler
+}
+
 func htmlToMarkdown(html string) string {
 	markdown, err := htmltomarkdown.ConvertString(html)
 	if err != nil {
@@ -445,13 +454,10 @@ func WithBlockedDomains(domains []string) FetchToolOption {
 	}
 }
 
-// WithHeaders attaches a static set of HTTP headers to every request issued
-// by the fetch tool. Typical use is supplying authentication credentials
-// (e.g. an `Authorization: Bearer ${env.MY_TOKEN}` header expanded at config
-// load time) for endpoints that require them. The format-driven Accept
-// header and the default User-Agent are applied first, so caller-provided
-// values for the same header names override them. An empty or nil map is a
-// no-op.
+// WithHeaders sets static HTTP headers attached to every fetch request.
+// Typical use is supplying credentials such as `Authorization: Bearer ...`.
+// These are applied last, so they override the default User-Agent and the
+// format-driven Accept header. An empty or nil map is a no-op.
 func WithHeaders(headers map[string]string) FetchToolOption {
 	return func(t *FetchTool) {
 		t.handler.headers = headers

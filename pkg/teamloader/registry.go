@@ -306,10 +306,15 @@ func createAPITool(ctx context.Context, toolset latest.Toolset, _ string, runCon
 }
 
 func createFetchTool(ctx context.Context, toolset latest.Toolset, _ string, runConfig *config.RuntimeConfig, _ string) (tools.ToolSet, error) {
+	// Expand ${env.X} in headers so secrets (API tokens, ...) can come from
+	// the environment instead of being inlined in YAML — same behaviour as
+	// openapi/a2a/mcp.remote/api headers. ExpandMap and WithHeaders are both
+	// nil-safe, so no guard is needed when the user hasn't configured any.
+	expander := js.NewJsExpander(runConfig.EnvProvider())
+
 	var opts []builtin.FetchToolOption
 	if toolset.Timeout > 0 {
-		timeout := time.Duration(toolset.Timeout) * time.Second
-		opts = append(opts, builtin.WithTimeout(timeout))
+		opts = append(opts, builtin.WithTimeout(time.Duration(toolset.Timeout)*time.Second))
 	}
 	if len(toolset.AllowedDomains) > 0 {
 		opts = append(opts, builtin.WithAllowedDomains(toolset.AllowedDomains))
@@ -317,14 +322,7 @@ func createFetchTool(ctx context.Context, toolset latest.Toolset, _ string, runC
 	if len(toolset.BlockedDomains) > 0 {
 		opts = append(opts, builtin.WithBlockedDomains(toolset.BlockedDomains))
 	}
-	if len(toolset.Headers) > 0 {
-		// Expand ${env.X} references so secrets (API tokens, ...) can be
-		// pulled from the environment instead of being inlined in YAML —
-		// matches the behaviour of openapi/a2a/mcp.remote/api headers.
-		expander := js.NewJsExpander(runConfig.EnvProvider())
-		headers := expander.ExpandMap(ctx, toolset.Headers)
-		opts = append(opts, builtin.WithHeaders(headers))
-	}
+	opts = append(opts, builtin.WithHeaders(expander.ExpandMap(ctx, toolset.Headers)))
 	return builtin.NewFetchTool(opts...), nil
 }
 
