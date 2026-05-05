@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
@@ -59,6 +60,12 @@ func (g *Generator) Generate(ctx context.Context, sessionID string, userMessages
 	if g == nil || len(g.models) == 0 || len(userMessages) == 0 {
 		return "", nil
 	}
+
+	// Title generation runs outside the run loop, so the session ID
+	// is not yet on ctx. Stamp it here so the gateway-bound LLM calls
+	// below carry `X-Cagent-Session-Id` and remain attributable to
+	// the originating session.
+	ctx = httpclient.ContextWithSessionID(ctx, sessionID)
 
 	// Apply timeout to prevent hanging on slow or unresponsive models.
 	ctx, cancel := context.WithTimeout(ctx, titleGenerationTimeout)
