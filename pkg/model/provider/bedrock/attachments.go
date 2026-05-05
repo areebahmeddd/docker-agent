@@ -41,6 +41,11 @@ func imageFormatFromMIME(mimeType string) (types.ImageFormat, bool) {
 //   - unsupported / no content → nil (logged as warning)
 func convertDocument(ctx context.Context, doc chat.Document, modelID string) ([]types.ContentBlock, error) {
 	mc, _ := modelcaps.Load(modelID)
+	return convertDocumentWithCaps(ctx, doc, mc)
+}
+
+// convertDocumentWithCaps is the caps-injectable variant used by tests.
+func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcaps.ModelCapabilities) ([]types.ContentBlock, error) {
 	strategy, reason := attachment.Decide(doc, mc)
 
 	switch strategy {

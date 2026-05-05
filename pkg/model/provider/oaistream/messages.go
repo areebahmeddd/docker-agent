@@ -26,16 +26,17 @@ func (j JSONSchema) MarshalJSON() ([]byte, error) {
 }
 
 // ConvertMultiContent converts chat.MessagePart slices to OpenAI content parts.
+// ctx is forwarded to convertDocument for logging and future cancellation support.
 // modelID is used for attachment capability lookups; pass an empty string to
 // skip capability checks (all documents are attempted).
-func ConvertMultiContent(multiContent []chat.MessagePart, modelID string) []openai.ChatCompletionContentPartUnionParam {
+func ConvertMultiContent(ctx context.Context, multiContent []chat.MessagePart, modelID string) []openai.ChatCompletionContentPartUnionParam {
 	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(multiContent))
 	for _, part := range multiContent {
 		switch part.Type {
 		case chat.MessagePartTypeText:
 			parts = append(parts, openai.TextContentPart(part.Text))
 		case chat.MessagePartTypeImageURL:
-			// Deprecated: use MessagePartTypeDocument instead.
+			// Note: superseded by MessagePartTypeDocument.
 			if part.ImageURL != nil {
 				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
 					URL:    part.ImageURL.URL,
@@ -44,9 +45,9 @@ func ConvertMultiContent(multiContent []chat.MessagePart, modelID string) []open
 			}
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docParts, err := convertDocument(context.Background(), *part.Document, modelID)
+				docParts, err := convertDocument(ctx, *part.Document, modelID)
 				if err != nil {
-					slog.Warn("failed to convert document attachment", "error", err, "doc", part.Document.Name)
+					slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 					continue
 				}
 				parts = append(parts, docParts...)
@@ -57,9 +58,10 @@ func ConvertMultiContent(multiContent []chat.MessagePart, modelID string) []open
 }
 
 // ConvertMessages converts chat.Message slices to OpenAI message params.
+// ctx is forwarded to convertDocument for logging and cancellation support.
 // modelID is forwarded to convertDocument for attachment capability lookups.
 // This is the base conversion without any provider-specific post-processing.
-func ConvertMessages(messages []chat.Message, modelID string) []openai.ChatCompletionMessageParamUnion {
+func ConvertMessages(ctx context.Context, messages []chat.Message, modelID string) []openai.ChatCompletionMessageParamUnion {
 	openaiMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for i := range messages {
 		msg := &messages[i]
@@ -92,7 +94,7 @@ func ConvertMessages(messages []chat.Message, modelID string) []openai.ChatCompl
 			if len(msg.MultiContent) == 0 {
 				openaiMessage = openai.UserMessage(msg.Content)
 			} else {
-				openaiMessage = openai.UserMessage(ConvertMultiContent(msg.MultiContent, modelID))
+				openaiMessage = openai.UserMessage(ConvertMultiContent(ctx, msg.MultiContent, modelID))
 			}
 
 		case chat.MessageRoleAssistant:
@@ -315,20 +317,4 @@ func MergeConsecutiveMessages(openaiMessages []openai.ChatCompletionMessageParam
 	}
 
 	return mergedMessages
-}
-
-// ConvertMultiContentLegacy converts chat.MessagePart slices to OpenAI content parts
-// without model-capability lookup. It is equivalent to ConvertMultiContent(parts, "").
-//
-// Deprecated: use ConvertMultiContent with an explicit modelID instead.
-func ConvertMultiContentLegacy(multiContent []chat.MessagePart) []openai.ChatCompletionContentPartUnionParam {
-	return ConvertMultiContent(multiContent, "")
-}
-
-// ConvertMessagesLegacy converts chat.Message slices to OpenAI message params
-// without model-capability lookup. It is equivalent to ConvertMessages(msgs, "").
-//
-// Deprecated: use ConvertMessages with an explicit modelID instead.
-func ConvertMessagesLegacy(messages []chat.Message) []openai.ChatCompletionMessageParamUnion {
-	return ConvertMessages(messages, "")
 }

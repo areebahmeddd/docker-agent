@@ -162,7 +162,7 @@ func convertBetaToolResultBlock(msg *chat.Message) anthropic.BetaContentBlockPar
 				OfText: &anthropic.BetaTextBlockParam{Text: part.Text},
 			})
 		case chat.MessagePartTypeImageURL:
-			// Deprecated: use MessagePartTypeDocument instead.
+			// Note: superseded by MessagePartTypeDocument.
 			if part.ImageURL == nil {
 				continue
 			}
@@ -239,7 +239,7 @@ func (c *Client) convertBetaUserMultiContent(ctx context.Context, parts []chat.M
 			}
 
 		case chat.MessagePartTypeFile:
-			// Deprecated: use MessagePartTypeDocument instead.
+			// Note: superseded by MessagePartTypeDocument.
 			if part.File == nil {
 				continue
 			}

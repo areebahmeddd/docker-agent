@@ -25,6 +25,11 @@ import (
 //   - unsupported / no content → nil (logged as warning)
 func convertDocumentToResponseInput(ctx context.Context, doc chat.Document, modelID string) ([]responses.ResponseInputContentUnionParam, error) {
 	mc, _ := modelcaps.Load(modelID)
+	return convertDocumentToResponseInputWithCaps(ctx, doc, mc)
+}
+
+// convertDocumentToResponseInputWithCaps is the caps-injectable variant used by tests.
+func convertDocumentToResponseInputWithCaps(ctx context.Context, doc chat.Document, mc modelcaps.ModelCapabilities) ([]responses.ResponseInputContentUnionParam, error) {
 	strategy, reason := attachment.Decide(doc, mc)
 
 	switch strategy {

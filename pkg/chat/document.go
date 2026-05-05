@@ -19,9 +19,10 @@ type DocumentSource struct {
 	// base64-encoded when sent to the provider. Used for StrategyB64 attachments.
 	InlineData []byte `json:"inline_data,omitempty"`
 
-	// URL is reserved for Phase 2 (URL-referenced documents). It must never be
-	// set on stored Phase 1 messages; providers should treat a non-empty URL as
-	// unsupported and log a warning.
+	// URL is reserved for Phase 2 (URL-referenced documents). Must not be set
+	// on Documents stored in messages in Phase 1; providers should log a warning
+	// and skip documents that have only URL set.
+	// TODO(phase2): implement URL-referenced document fetching.
 	URL string `json:"url,omitempty"`
 }
 

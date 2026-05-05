@@ -24,11 +24,11 @@ func imageNoPDFCaps() modelcaps.ModelCapabilities {
 
 func TestDecide(t *testing.T) {
 	tests := []struct {
-		name           string
-		doc            chat.Document
-		caps           modelcaps.ModelCapabilities
-		wantStrategy   attachment.Strategy
-		wantReasonHas  string // non-empty: reason must contain this substring
+		name          string
+		doc           chat.Document
+		caps          modelcaps.ModelCapabilities
+		wantStrategy  attachment.Strategy
+		wantReasonHas string // non-empty: reason must contain this substring
 	}{
 		{
 			name: "b64 image supported",

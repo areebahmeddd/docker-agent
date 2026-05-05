@@ -1,31 +1,54 @@
 package oaistream
 
 import (
-	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
 )
 
+// minJPEG is a minimal JPEG magic-byte header for use in tests.
+var minJPEG = []byte{0xFF, 0xD8, 0xFF, 0xE0}
+
+// TestConvertDocument_StrategyB64_Image verifies that an image document with
+// InlineData and a vision-capable model produces an image content part with
+// a data-URI, not a text part.
 func TestConvertDocument_StrategyB64_Image(t *testing.T) {
 	doc := chat.Document{
 		Name:     "photo.jpg",
 		MimeType: "image/jpeg",
-		Source:   chat.DocumentSource{InlineData: []byte{0xFF, 0xD8, 0xFF, 0xE0}},
+		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	// Use a model ID that is unknown (text-only caps) — image/* will be dropped.
-	// For B64 testing we rely on an empty modelID which gives text-only caps.
-	// Use modelID "anthropic/claude-3-5-sonnet-20241022" which supports vision.
-	// Since we can't fetch live data in tests, we use the function directly with
-	// modelID="" (text-only) and verify the drop path, then test TXT path.
+	visionCaps := modelcaps.CapsWith(true, true)
+	parts, err := convertDocumentWithCaps(t.Context(), doc, visionCaps)
+	require.NoError(t, err)
+	require.Len(t, parts, 1, "expected exactly one image part")
+	require.NotNil(t, parts[0].OfImageURL, "expected image part, got non-image")
+	assert.Nil(t, parts[0].OfText, "expected no text part for B64 image")
 
-	// StrategyDrop: image not supported by text-only model
-	parts, err := convertDocument(context.Background(), doc, "")
+	// Data URI must embed the base64-encoded payload.
+	wantB64 := base64.StdEncoding.EncodeToString(minJPEG)
+	assert.Contains(t, parts[0].OfImageURL.ImageURL.URL, "data:image/jpeg;base64,")
+	assert.Contains(t, parts[0].OfImageURL.ImageURL.URL, wantB64)
+}
+
+// TestConvertDocument_StrategyB64_ImageDropped verifies that an image is
+// dropped when the model does not support vision.
+func TestConvertDocument_StrategyB64_ImageDropped(t *testing.T) {
+	doc := chat.Document{
+		Name:     "photo.jpg",
+		MimeType: "image/jpeg",
+		Source:   chat.DocumentSource{InlineData: minJPEG},
+	}
+
+	textOnlyCaps := modelcaps.CapsWith(false, false)
+	parts, err := convertDocumentWithCaps(t.Context(), doc, textOnlyCaps)
 	require.NoError(t, err)
 	assert.Nil(t, parts, "image should be dropped for text-only model")
 }
@@ -37,7 +60,7 @@ func TestConvertDocument_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "# Hello World"},
 	}
 
-	parts, err := convertDocument(context.Background(), doc, "")
+	parts, err := convertDocument(t.Context(), doc, "")
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
@@ -53,11 +76,10 @@ func TestConvertDocument_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "a,b,c\n1,2,3"},
 	}
 
-	parts, err := convertDocument(context.Background(), doc, "")
+	parts, err := convertDocument(t.Context(), doc, "")
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
-	// Verify envelope format
 	text := parts[0].OfText.Text
 	assert.True(t, strings.HasPrefix(text, "<document"), "should be wrapped in document envelope")
 	assert.Contains(t, text, `name="data.csv"`)
@@ -71,7 +93,7 @@ func TestConvertDocument_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	parts, err := convertDocument(context.Background(), doc, "")
+	parts, err := convertDocument(t.Context(), doc, "")
 	require.NoError(t, err)
 	assert.Nil(t, parts, "should be dropped when no inline content")
 }

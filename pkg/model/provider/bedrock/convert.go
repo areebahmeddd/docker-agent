@@ -131,7 +131,7 @@ func convertUserContent(ctx context.Context, msg *chat.Message, modelID string) 
 					Value: part.Text,
 				})
 			case chat.MessagePartTypeImageURL:
-				// Deprecated: use MessagePartTypeDocument instead.
+				// Note: superseded by MessagePartTypeDocument.
 				if part.ImageURL != nil {
 					if imageBlock := convertImageURL(part.ImageURL); imageBlock != nil {
 						blocks = append(blocks, imageBlock)

@@ -1,7 +1,6 @@
 package bedrock
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -9,8 +8,69 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
 )
+
+// minJPEG is a minimal JPEG magic-byte header for use in tests.
+var minJPEG = []byte{0xFF, 0xD8, 0xFF, 0xE0}
+
+// minPDF is a minimal PDF magic-byte header for use in tests.
+var minPDF = []byte{0x25, 0x50, 0x44, 0x46, 0x2D} // %PDF-
+
+// TestConvertDocumentBedrock_StrategyB64_Image verifies that an image document
+// with InlineData and a vision-capable model produces a ContentBlockMemberImage.
+func TestConvertDocumentBedrock_StrategyB64_Image(t *testing.T) {
+	doc := chat.Document{
+		Name:     "photo.jpg",
+		MimeType: "image/jpeg",
+		Source:   chat.DocumentSource{InlineData: minJPEG},
+	}
+
+	visionCaps := modelcaps.CapsWith(true, true)
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, visionCaps)
+	require.NoError(t, err)
+	require.Len(t, blocks, 1, "expected exactly one block")
+	imageBlock, ok := blocks[0].(*types.ContentBlockMemberImage)
+	require.True(t, ok, "expected ContentBlockMemberImage, got %T", blocks[0])
+	assert.Equal(t, types.ImageFormatJpeg, imageBlock.Value.Format)
+	srcBytes, ok := imageBlock.Value.Source.(*types.ImageSourceMemberBytes)
+	require.True(t, ok, "expected ImageSourceMemberBytes")
+	assert.Equal(t, minJPEG, srcBytes.Value)
+}
+
+// TestConvertDocumentBedrock_StrategyB64_PDF verifies that a PDF document
+// produces a ContentBlockMemberDocument when the model supports PDFs.
+func TestConvertDocumentBedrock_StrategyB64_PDF(t *testing.T) {
+	doc := chat.Document{
+		Name:     "spec.pdf",
+		MimeType: "application/pdf",
+		Source:   chat.DocumentSource{InlineData: minPDF},
+	}
+
+	pdfCaps := modelcaps.CapsWith(true, true)
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, pdfCaps)
+	require.NoError(t, err)
+	require.Len(t, blocks, 1, "expected exactly one block")
+	docBlock, ok := blocks[0].(*types.ContentBlockMemberDocument)
+	require.True(t, ok, "expected ContentBlockMemberDocument, got %T", blocks[0])
+	assert.Equal(t, types.DocumentFormatPdf, docBlock.Value.Format)
+}
+
+// TestConvertDocumentBedrock_StrategyB64_ImageDropped verifies that an image
+// is dropped when the model does not support vision.
+func TestConvertDocumentBedrock_StrategyB64_ImageDropped(t *testing.T) {
+	doc := chat.Document{
+		Name:     "photo.jpg",
+		MimeType: "image/jpeg",
+		Source:   chat.DocumentSource{InlineData: minJPEG},
+	}
+
+	textOnlyCaps := modelcaps.CapsWith(false, false)
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, textOnlyCaps)
+	require.NoError(t, err)
+	assert.Nil(t, blocks, "image should be dropped for text-only model")
+}
 
 func TestConvertDocumentBedrock_StrategyTXT(t *testing.T) {
 	doc := chat.Document{
@@ -19,7 +79,7 @@ func TestConvertDocumentBedrock_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "## Notes"},
 	}
 
-	blocks, err := convertDocument(context.Background(), doc, "")
+	blocks, err := convertDocument(t.Context(), doc, "")
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	textBlock, ok := blocks[0].(*types.ContentBlockMemberText)
@@ -36,7 +96,7 @@ func TestConvertDocumentBedrock_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "a,b"},
 	}
 
-	blocks, err := convertDocument(context.Background(), doc, "")
+	blocks, err := convertDocument(t.Context(), doc, "")
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	textBlock, ok := blocks[0].(*types.ContentBlockMemberText)
@@ -52,19 +112,7 @@ func TestConvertDocumentBedrock_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	blocks, err := convertDocument(context.Background(), doc, "")
+	blocks, err := convertDocument(t.Context(), doc, "")
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "should be nil when no inline content")
-}
-
-func TestConvertDocumentBedrock_Drop_UnsupportedMIME(t *testing.T) {
-	doc := chat.Document{
-		Name:     "photo.jpg",
-		MimeType: "image/jpeg",
-		Source:   chat.DocumentSource{InlineData: []byte{0xFF, 0xD8}},
-	}
-
-	blocks, err := convertDocument(context.Background(), doc, "")
-	require.NoError(t, err)
-	assert.Nil(t, blocks, "image should be dropped for text-only model")
 }

@@ -294,7 +294,7 @@ func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, t
 		case chat.MessagePartTypeText:
 			parts = append(parts, newTextPartWithSignature(part.Text, thoughtSignature))
 		case chat.MessagePartTypeImageURL:
-			// Deprecated: use MessagePartTypeDocument instead.
+			// Note: superseded by MessagePartTypeDocument.
 			if imgPart := convertImageURLToPart(part.ImageURL); imgPart != nil {
 				parts = append(parts, imgPart)
 			}

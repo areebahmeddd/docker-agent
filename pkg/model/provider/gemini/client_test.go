@@ -1,7 +1,6 @@
 package gemini
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -363,7 +362,7 @@ func TestConvertMessagesToGemini_ThoughtSignature(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			contents := convertMessagesToGemini(context.Background(), []chat.Message{
+			contents := convertMessagesToGemini(t.Context(), []chat.Message{
 				{Role: chat.MessageRoleUser, Content: "go"},
 				tt.message,
 			}, "")
