@@ -34,6 +34,8 @@ type Config struct {
 	HookSessionEnd   []string
 	HookOnUserInput  []string
 	HookStop         []string
+
+	MCPToolName string
 }
 
 func (runConfig *RuntimeConfig) Clone() *RuntimeConfig {

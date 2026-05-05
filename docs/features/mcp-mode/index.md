@@ -51,11 +51,12 @@ $ docker agent serve mcp ./agent.yaml --http
 $ docker agent serve mcp ./agent.yaml --http --listen 0.0.0.0:9090
 ```
 
-| Flag                   | Default            | Description                                                                   |
-| ---------------------- | ------------------ | ----------------------------------------------------------------------------- |
-| `--http`               | `false`            | Use streaming HTTP transport instead of stdio.                                |
-| `-l`, `--listen`       | `127.0.0.1:8081`   | Address to listen on when `--http` is enabled.                                |
-| `-a`, `--agent`        | all agents         | Expose a single named agent instead of every agent in the config.             |
+| Flag                   | Default            | Description                                                                                                  |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `--http`               | `false`            | Use streaming HTTP transport instead of stdio.                                                               |
+| `-l`, `--listen`       | `127.0.0.1:8081`   | Address to listen on when `--http` is enabled.                                                               |
+| `-a`, `--agent`        | all agents         | Expose a single named agent instead of every agent in the config.                                            |
+| `--tool-name`          | (none)             | Override the MCP tool identifier clients call (defaults to agent name); only valid when exposing one agent.  |
 
 Runtime configuration flags such as `--working-dir`, `--env-from-file`, `--models-gateway`, and hook flags are also available — see the [CLI reference]({{ '/features/cli/' | relative_url }}).
 

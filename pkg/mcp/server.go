@@ -114,6 +114,11 @@ func createMCPServer(ctx context.Context, agentFilename, agentName string, runCo
 		agentNames = []string{agentName}
 	}
 
+	if runConfig.MCPToolName != "" && len(agentNames) > 1 {
+		cleanup()
+		return nil, nil, errors.New("--tool-name can only be used when exactly one agent is exposed")
+	}
+
 	slog.Debug("Adding MCP tools for agents", "count", len(agentNames))
 
 	for _, agentName := range agentNames {
@@ -136,7 +141,7 @@ func createMCPServer(ctx context.Context, agentFilename, agentName string, runCo
 		annotations.Title = description
 
 		toolDef := &mcp.Tool{
-			Name:         agentName,
+			Name:         cmp.Or(runConfig.MCPToolName, agentName),
 			Description:  description,
 			Annotations:  annotations,
 			InputSchema:  tools.MustSchemaFor[ToolInput](),
