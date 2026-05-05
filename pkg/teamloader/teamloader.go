@@ -207,7 +207,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 			)
 		}
 
-		agentTools, warnings := getToolsForAgent(ctx, &agentConfig, parentDir, runConfig, loadOpts.toolsetRegistry, configName)
+		agentTools, warnings := getToolsForAgent(ctx, &agentConfig, parentDir, runConfig, loadOpts.toolsetRegistry, configName, expander)
 		if len(warnings) > 0 {
 			opts = append(opts, agent.WithLoadTimeWarnings(warnings))
 		}
@@ -223,7 +223,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 
 		opts = append(opts, agent.WithToolSets(agentTools...))
 
-		ag := agent.New(agentConfig.Name, agentConfig.Instruction, opts...)
+		ag := agent.New(agentConfig.Name, expander.Expand(ctx, agentConfig.Instruction, nil), opts...)
 		agents = append(agents, ag)
 		agentsByName[agentConfig.Name] = ag
 	}
@@ -394,8 +394,10 @@ func getFallbackModelsForAgent(ctx context.Context, cfg *latest.Config, a *lates
 	return fallbackModels, nil
 }
 
-// getToolsForAgent returns the tool definitions for an agent based on its configuration
-func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir string, runConfig *config.RuntimeConfig, registry *ToolsetRegistry, configName string) ([]tools.ToolSet, []string) {
+// getToolsForAgent returns the tool definitions for an agent based on its
+// configuration. Toolset instructions support ${...} JavaScript placeholders
+// (e.g. ${env.X}); they are expanded here using the runtime env provider.
+func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir string, runConfig *config.RuntimeConfig, registry *ToolsetRegistry, configName string, expander *js.Expander) ([]tools.ToolSet, []string) {
 	var (
 		toolSets    []tools.ToolSet
 		warnings    []string
@@ -416,7 +418,7 @@ func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir stri
 		}
 
 		wrapped := WithToolsFilter(tool, toolset.Tools...)
-		wrapped = WithInstructions(wrapped, toolset.Instruction)
+		wrapped = WithInstructions(wrapped, expander.Expand(ctx, toolset.Instruction, nil))
 		wrapped = WithToon(wrapped, toolset.Toon)
 		wrapped = WithModelOverride(wrapped, toolset.Model)
 
