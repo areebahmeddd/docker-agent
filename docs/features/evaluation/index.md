@@ -129,7 +129,7 @@ The `evals` object inside each session controls what gets scored:
 
 ## Scoring Metrics
 
-docker-agent evaluates agents across four dimensions:
+docker-agent evaluates agents across three dimensions:
 
 | Metric              | How It's Measured                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -195,10 +195,11 @@ $ docker agent eval demo.yaml ./evals
   ✓ Checking the Content of README.md File
     ✓ tool calls  ✓ relevance 1/1
 
-Summary: 2/2 passed
-  Sizes:      0/0
-  Tool Calls: avg F1 1.00 (2 evals)
-  Relevance:  3/3
+✅     Tool Calls: 100.0% avg F1 (2 evals)
+✅      Relevance: 3/3 passed (100.0%)
+
+Total Cost: $0.012345
+Total Time: 12s
 
 Sessions DB: ./evals/results/happy-panda-1234.db
 Sessions JSON: ./evals/results/happy-panda-1234-sessions.json

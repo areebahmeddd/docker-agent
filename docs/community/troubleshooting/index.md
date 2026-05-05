@@ -188,12 +188,13 @@ For remote MCP servers, verify the endpoint is reachable:
 $ curl -v https://mcp-server.example.com/sse
 ```
 
-### Multi-tenant isolation
+### Session isolation
 
-In API server mode, each client gets isolated sessions. If sessions are mixing up:
+The API server stores every conversation as a distinct session in the SQLite database (`session.db` by default). Each session is identified by its UUID and only mixes messages when the same session ID is reused. If conversations seem to bleed into each other:
 
-- Verify client IDs are unique per connection
-- Check session timeouts and cleanup in debug logs
+- Make sure each client creates a fresh session via `POST /api/sessions` (don't reuse session IDs across users).
+- Confirm `--session-db` points to the path you expect — a stale database from another run can resurface old sessions.
+- Use `GET /api/sessions/:id` to inspect what is actually stored, and `DELETE /api/sessions/:id` to clear sessions you don't want anymore.
 
 ## Performance Issues
 
