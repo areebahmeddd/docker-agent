@@ -175,3 +175,31 @@ func TestNewSSRFSafeTransport_RefusesPrivateIP(t *testing.T) {
 		})
 	}
 }
+
+// TestIsPublicIP_IPv4MappedIPv6 is a regression test that pins Go's
+// behaviour: IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) inherit the
+// classification of their embedded IPv4 address. This prevents an
+// attacker from bypassing SSRF checks by wrapping 169.254.169.254
+// in IPv6 notation.
+func TestIsPublicIP_IPv4MappedIPv6(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		addr     string
+		isPublic bool
+	}{
+		{"::ffff:127.0.0.1", false},      // loopback
+		{"::ffff:10.0.0.1", false},       // RFC1918
+		{"::ffff:169.254.169.254", false}, // cloud metadata (link-local)
+		{"::ffff:8.8.8.8", true},         // public
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			t.Parallel()
+			ip := net.ParseIP(tt.addr)
+			require.NotNil(t, ip, "ParseIP must succeed")
+			assert.Equal(t, tt.isPublic, IsPublicIP(ip))
+		})
+	}
+}
