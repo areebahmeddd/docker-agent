@@ -260,8 +260,101 @@
               "additionalProperties": false
             }
           ]
+        },
+        "auth": {
+          "$ref": "#/definitions/AuthConfig",
+          "description": "Non-API-key authentication scheme. When set, the provider's regular API-key path is bypassed."
         }
       },
+      "additionalProperties": false
+    },
+    "AuthConfig": {
+      "type": "object",
+      "description": "Non-API-key authentication for a model provider. Today only Anthropic Workload Identity Federation is supported (type: workload_identity_federation).",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["workload_identity_federation"],
+          "description": "Authentication scheme discriminator."
+        },
+        "workload_identity_federation": {
+          "$ref": "#/definitions/FederationAuthConfig",
+          "description": "Parameters for the Anthropic OIDC federation flow. Required when type is workload_identity_federation."
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "workload_identity_federation"}}},
+          "then": {"required": ["workload_identity_federation"]}
+        }
+      ]
+    },
+    "FederationAuthConfig": {
+      "type": "object",
+      "description": "Anthropic OIDC Federation Rule parameters and the source of the JWT identity token to exchange. See https://platform.claude.com/docs/en/build-with-claude/workload-identity-federation",
+      "properties": {
+        "federation_rule_id": {
+          "type": "string",
+          "pattern": "^fdrl_",
+          "description": "Anthropic OidcFederationRule ID. Must start with 'fdrl_'."
+        },
+        "organization_id": {
+          "type": "string",
+          "description": "UUID of the Anthropic organization that owns the federation rule."
+        },
+        "service_account_id": {
+          "type": "string",
+          "pattern": "^svac_",
+          "description": "Optional expected-target check for federation rules with target_type=SERVICE_ACCOUNT. Must start with 'svac_'."
+        },
+        "identity_token": {
+          "$ref": "#/definitions/IdentityTokenSourceConfig",
+          "description": "How to obtain a fresh JWT identity token for each token exchange."
+        }
+      },
+      "required": ["federation_rule_id", "organization_id", "identity_token"],
+      "additionalProperties": false
+    },
+    "IdentityTokenSourceConfig": {
+      "type": "object",
+      "description": "Source of the JWT identity token used for OIDC federation. Exactly one of file, env, command, or url must be set.",
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Path to a file containing the JWT. Re-read on every token exchange (suitable for K8s projected SA tokens, SPIFFE helpers, Vault sidecars)."
+        },
+        "env": {
+          "type": "string",
+          "description": "Name of an environment variable holding the JWT."
+        },
+        "command": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1,
+          "description": "Subprocess to execute; stdout is used as the JWT. Re-run on every token exchange."
+        },
+        "url": {
+          "type": "string",
+          "description": "HTTP(S) endpoint to GET for the JWT. ${VAR} references in the URL are expanded against the runtime environment."
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "HTTP headers sent with the URL request. Values support ${VAR} expansion. Only valid with 'url'."
+        },
+        "response_field": {
+          "type": "string",
+          "description": "When set, the URL response is parsed as JSON and this top-level field is used as the token. When empty, the entire (trimmed) response body is used. Only valid with 'url'."
+        }
+      },
+      "oneOf": [
+        {"required": ["file"], "not": {"anyOf": [{"required": ["env"]}, {"required": ["command"]}, {"required": ["url"]}]}},
+        {"required": ["env"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["command"]}, {"required": ["url"]}]}},
+        {"required": ["command"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["env"]}, {"required": ["url"]}]}},
+        {"required": ["url"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["env"]}, {"required": ["command"]}]}}
+      ],
       "additionalProperties": false
     },
     "AgentConfig": {
@@ -1000,6 +1093,10 @@
           "items": {
             "$ref": "#/definitions/RoutingRule"
           }
+        },
+        "auth": {
+          "$ref": "#/definitions/AuthConfig",
+          "description": "Non-API-key authentication scheme for this model. When set, takes precedence over both the provider's API-key path and any auth defined on the referenced ProviderConfig."
         }
       },
       "additionalProperties": false

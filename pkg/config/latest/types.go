@@ -258,6 +258,10 @@ type ProviderConfig struct {
 	// only Claude Opus 4.7 actually honors it; other models will reject the
 	// field. Accepts an integer token count or a {type: tokens, total: N} object.
 	TaskBudget *TaskBudget `json:"task_budget,omitempty"`
+	// Auth selects a non-API-key authentication scheme for this provider
+	// (currently: Anthropic Workload Identity Federation). When set, the
+	// provider's regular API-key path is bypassed.
+	Auth *AuthConfig `json:"auth,omitempty"`
 }
 
 // FallbackConfig represents fallback model configuration for an agent.
@@ -621,6 +625,11 @@ type ModelConfig struct {
 	// only Claude Opus 4.7 actually honors it; other models will reject the
 	// field. Accepts an integer token count or a {type: tokens, total: N} object.
 	TaskBudget *TaskBudget `json:"task_budget,omitempty"`
+	// Auth selects a non-API-key authentication scheme for this model
+	// (currently: Anthropic Workload Identity Federation). When set, it
+	// takes precedence over both the provider's API-key path and any
+	// auth defined on the referenced ProviderConfig.
+	Auth *AuthConfig `json:"auth,omitempty"`
 	// Routing defines rules for routing requests to different models.
 	// When routing is configured, this model becomes a rule-based router:
 	// - The provider/model fields define the fallback model

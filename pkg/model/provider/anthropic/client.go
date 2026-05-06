@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/httpclient"
+	"github.com/docker/docker-agent/pkg/model/provider/anthropic/federation"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
@@ -67,24 +68,53 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	}
 
 	if gateway := globalOptions.Gateway(); gateway == "" {
-		authToken, _ := env.Get(ctx, "ANTHROPIC_API_KEY")
-		if authToken == "" {
-			return nil, errors.New("ANTHROPIC_API_KEY environment variable is required")
-		}
+		switch {
+		case cfg.Auth != nil && cfg.Auth.Type == latest.AuthTypeWorkloadIdentityFederation:
+			if cfg.Auth.Federation == nil {
+				return nil, errors.New("anthropic: workload_identity_federation block is required when auth.type is workload_identity_federation")
+			}
+			slog.DebugContext(ctx, "Anthropic Workload Identity Federation configured, creating client",
+				"federation_rule_id", cfg.Auth.Federation.FederationRuleID)
+			fedOpts, err := federation.RequestOptions(cfg.Auth.Federation, env, nil)
+			if err != nil {
+				slog.ErrorContext(ctx, "Anthropic client creation failed", "error", err)
+				return nil, fmt.Errorf("anthropic workload identity federation: %w", err)
+			}
+			requestOptions := append([]option.RequestOption{
+				option.WithHTTPClient(httpclient.NewHTTPClient(ctx)),
+			}, fedOpts...)
+			if cfg.BaseURL != "" {
+				requestOptions = append(requestOptions, option.WithBaseURL(cfg.BaseURL))
+			}
+			client := anthropic.NewClient(requestOptions...)
+			anthropicClient.clientFn = func(context.Context) (anthropic.Client, error) {
+				return client, nil
+			}
+		case cfg.Auth != nil:
+			return nil, fmt.Errorf("anthropic: unsupported auth.type %q", cfg.Auth.Type)
+		default:
+			authToken, _ := env.Get(ctx, "ANTHROPIC_API_KEY")
+			if authToken == "" {
+				return nil, errors.New("ANTHROPIC_API_KEY environment variable is required")
+			}
 
-		slog.DebugContext(ctx, "Anthropic API key found, creating client")
-		requestOptions := []option.RequestOption{
-			option.WithAPIKey(authToken),
-			option.WithHTTPClient(httpclient.NewHTTPClient(ctx)),
-		}
-		if cfg.BaseURL != "" {
-			requestOptions = append(requestOptions, option.WithBaseURL(cfg.BaseURL))
-		}
-		client := anthropic.NewClient(requestOptions...)
-		anthropicClient.clientFn = func(context.Context) (anthropic.Client, error) {
-			return client, nil
+			slog.DebugContext(ctx, "Anthropic API key found, creating client")
+			requestOptions := []option.RequestOption{
+				option.WithAPIKey(authToken),
+				option.WithHTTPClient(httpclient.NewHTTPClient(ctx)),
+			}
+			if cfg.BaseURL != "" {
+				requestOptions = append(requestOptions, option.WithBaseURL(cfg.BaseURL))
+			}
+			client := anthropic.NewClient(requestOptions...)
+			anthropicClient.clientFn = func(context.Context) (anthropic.Client, error) {
+				return client, nil
+			}
 		}
 	} else {
+		if cfg.Auth != nil {
+			return nil, errors.New("anthropic: auth and Docker AI Gateway are mutually exclusive")
+		}
 		// Fail fast if Docker Desktop's auth token isn't available
 		if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
 			slog.ErrorContext(ctx, "Anthropic client creation failed", "error", "failed to get Docker Desktop's authentication token")
