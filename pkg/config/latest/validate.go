@@ -97,6 +97,9 @@ func (t *Toolset) validate() error {
 	if len(t.BlockedDomains) > 0 && t.Type != "fetch" {
 		return errors.New("blocked_domains can only be used with type 'fetch'")
 	}
+	if t.AllowPrivateIPs && t.Type != "fetch" {
+		return errors.New("allow_private_ips can only be used with type 'fetch'")
+	}
 	if len(t.AllowedDomains) > 0 && len(t.BlockedDomains) > 0 {
 		return errors.New("allowed_domains and blocked_domains are mutually exclusive")
 	}

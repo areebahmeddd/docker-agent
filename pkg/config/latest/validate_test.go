@@ -299,6 +299,31 @@ agents:
 			wantErr: "blocked_domains can only be used with type 'fetch'",
 		},
 		{
+			name: "allow_private_ips on non-fetch toolset is rejected",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: shell
+        allow_private_ips: true
+`,
+			wantErr: "allow_private_ips can only be used with type 'fetch'",
+		},
+		{
+			name: "allow_private_ips on fetch toolset is accepted",
+			config: `
+version: "8"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: fetch
+        allow_private_ips: true
+`,
+		},
+		{
 			name: "empty allowed_domains entry is rejected",
 			config: `
 version: "8"
