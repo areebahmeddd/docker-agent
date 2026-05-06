@@ -226,8 +226,8 @@ func (r *Registry) fetchIndex(ctx context.Context) (*registryIndex, error) {
 		}
 	} else {
 		// Best-effort: persist to disk for future fallback.
-		_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
-		_ = atomicfile.Write(cachePath, bytes.NewReader(data), 0o644)
+		_ = os.MkdirAll(filepath.Dir(cachePath), 0o700)
+		_ = atomicfile.Write(cachePath, bytes.NewReader(data), 0o600)
 	}
 
 	var index registryIndex
