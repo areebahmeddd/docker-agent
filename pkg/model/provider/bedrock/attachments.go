@@ -35,9 +35,8 @@ func imageFormatFromMIME(mimeType string) (types.ImageFormat, bool) {
 //
 // Routing:
 //   - image/* with InlineData → ContentBlockMemberImage
-//   - application/pdf with InlineData → ContentBlockMemberDocument
-//   - text with InlineText → ContentBlockMemberText with TXTEnvelope
-//   - other binary → ContentBlockMemberText with TXTEnvelope fallback
+//   - application/pdf with InlineData → ContentBlockMemberDocument (PDF)
+//   - text/* with InlineText → ContentBlockMemberText with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
 func convertDocument(ctx context.Context, doc chat.Document, modelID string) ([]types.ContentBlock, error) {
 	mc, _ := modelcaps.Load(modelID)
@@ -85,29 +84,11 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 			}, nil
 		}
 
-		// Other Office docs
-		if df, ok := officeDocumentFormat(mime); ok {
-			return []types.ContentBlock{
-				&types.ContentBlockMemberDocument{
-					Value: types.DocumentBlock{
-						Format: df,
-						Name:   aws.String(sanitizeDocumentName(doc.Name)),
-						Source: &types.DocumentSourceMemberBytes{
-							Value: doc.Source.InlineData,
-						},
-					},
-				},
-			}, nil
-		}
-
-		// Unknown binary: TXT envelope fallback
-		slog.DebugContext(ctx, "bedrock: no native block for MIME, falling back to TXT envelope",
+		// Unexpected binary MIME — modelcaps should have filtered this out via
+		// StrategyDrop, but guard defensively.
+		slog.WarnContext(ctx, "bedrock: unexpected binary MIME in StrategyB64, dropping",
 			"mime", doc.MimeType, "doc", doc.Name)
-		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType,
-			fmt.Sprintf("[binary content, %d bytes]", len(doc.Source.InlineData)))
-		return []types.ContentBlock{
-			&types.ContentBlockMemberText{Value: envelope},
-		}, nil
+		return nil, nil
 
 	case attachment.StrategyTXT:
 		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType, doc.Source.InlineText)
@@ -117,29 +98,6 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 
 	default:
 		return nil, fmt.Errorf("unknown attachment strategy %d", strategy)
-	}
-}
-
-// officeDocumentFormat maps Office MIME types to Bedrock DocumentFormats.
-func officeDocumentFormat(mime string) (types.DocumentFormat, bool) {
-	switch mime {
-	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-		return types.DocumentFormatDocx, true
-	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-		return types.DocumentFormatXlsx, true
-	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-		// Bedrock doesn't have a native PPTX format — treat as unsupported.
-		return "", false
-	case "text/csv":
-		return types.DocumentFormatCsv, true
-	case "text/plain":
-		return types.DocumentFormatTxt, true
-	case "text/html":
-		return types.DocumentFormatHtml, true
-	case "text/markdown", "text/x-markdown":
-		return types.DocumentFormatMd, true
-	default:
-		return "", false
 	}
 }
 
