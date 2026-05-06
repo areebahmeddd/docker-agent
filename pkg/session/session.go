@@ -515,9 +515,9 @@ func (s *Session) GetLastUserMessages(n int) []string {
 
 func (s *Session) getLastMessageContentByRole(role chat.MessageRole) string {
 	messages := s.GetAllMessages()
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Message.Role == role {
-			return strings.TrimSpace(messages[i].Message.Content)
+	for _, message := range slices.Backward(messages) {
+		if message.Message.Role == role {
+			return strings.TrimSpace(message.Message.Content)
 		}
 	}
 	return ""
@@ -881,7 +881,7 @@ func buildSessionSummaryMessages(items []Item) ([]chat.Message, int) {
 	// Find the last summary index to determine where conversation messages start
 	// and to include the summary in session summary messages
 	lastSummaryIndex := -1
-	for i := len(items) - 1; i >= 0; i-- {
+	for i := range slices.Backward(items) {
 		if items[i].Summary != "" {
 			lastSummaryIndex = i
 			break
@@ -1190,7 +1190,7 @@ func truncateOldToolContent(messages []chat.Message, maxTokens int) []chat.Messa
 
 	tokenBudget := maxTokens
 
-	for i := len(result) - 1; i >= 0; i-- {
+	for i := range slices.Backward(result) {
 		msg := &result[i]
 
 		if msg.Role == chat.MessageRoleTool {
