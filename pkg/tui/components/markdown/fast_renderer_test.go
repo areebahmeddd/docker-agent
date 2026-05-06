@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/glamour/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -77,6 +78,51 @@ func TestFastRendererHeadings(t *testing.T) {
 			result, err := r.Render(tt.input)
 			require.NoError(t, err)
 			assert.Contains(t, result, tt.contains)
+		})
+	}
+}
+
+// TestFastRendererHashLikeParagraphs ensures the renderer terminates on lines
+// that look like ATX headings but are rejected by tryHeading (7+ hashes, or '#'
+// not followed by whitespace). Previously these caused an infinite loop in
+// parser.parse() because tryHeading returned false without advancing lineIdx,
+// and renderParagraph also bailed out without consuming the line.
+func TestFastRendererHashLikeParagraphs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"seven hashes", "####### foo", "####### foo"},
+		{"eight hashes", "######## bar", "######## bar"},
+		{"hash without space", "#nospace", "#nospace"},
+		{"double hash without space", "##nospace", "##nospace"},
+		{"hash followed by punctuation", "#tag:value", "#tag:value"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			done := make(chan struct{})
+			var result string
+			var err error
+			go func() {
+				defer close(done)
+				r := NewFastRenderer(80)
+				result, err = r.Render(tt.input)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("renderer hung on input %q (infinite loop)", tt.input)
+			}
+
+			require.NoError(t, err)
+			assert.Contains(t, stripANSI(result), tt.contains)
 		})
 	}
 }

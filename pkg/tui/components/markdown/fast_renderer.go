@@ -1492,15 +1492,21 @@ func (p *parser) renderParagraph() {
 			p.lineIdx++
 			break
 		}
-		// Check if next line starts a block element
-		trimmed := strings.TrimLeft(line, " \t")
-		if strings.HasPrefix(trimmed, "#") ||
-			strings.HasPrefix(trimmed, "```") ||
-			strings.HasPrefix(trimmed, "~~~") ||
-			strings.HasPrefix(trimmed, ">") ||
-			isListStart(trimmed) ||
-			isHorizontalRule(trimmed) {
-			break
+		// On subsequent lines, stop the paragraph when a new block element starts.
+		// The first iteration always consumes the current line: parse() has already
+		// determined it isn't a block, so the prefix-based check below would otherwise
+		// loop forever on inputs like "####### foo" or "#nospace" that look like a
+		// heading prefix but were rejected by tryHeading.
+		if len(paraLines) > 0 {
+			trimmed := strings.TrimLeft(line, " \t")
+			if strings.HasPrefix(trimmed, "#") ||
+				strings.HasPrefix(trimmed, "```") ||
+				strings.HasPrefix(trimmed, "~~~") ||
+				strings.HasPrefix(trimmed, ">") ||
+				isListStart(trimmed) ||
+				isHorizontalRule(trimmed) {
+				break
+			}
 		}
 		paraLines = append(paraLines, line)
 		p.lineIdx++
