@@ -2,7 +2,6 @@ package main
 
 import (
 	"go/ast"
-	"slices"
 
 	"github.com/dgageot/rubocop-go/cop"
 )
@@ -170,14 +169,12 @@ func valueSpecDeclaresContext(s *ast.ValueSpec) bool {
 // bindsContext reports whether the assignment binds at least one LHS
 // identifier to a context.Context value. A single RHS covers both
 // single-value forms (`ctx := f()`) and multi-value returns
-// (`ctx, cancel := context.WithCancel(...)`); we check all LHS positions
-// since the context might not be at position 0 (e.g., `err, ctx := fn()`).
+// (`ctx, cancel := context.WithCancel(...)`); in the latter case the
+// context is always at the first return position — `_, cancel := ...`
+// discards the context and intentionally yields no in-scope name.
 func bindsContext(lhs, rhs []ast.Expr) bool {
 	if len(rhs) == 1 {
-		// Single RHS: could be single-value or multi-return.
-		// For multi-return, check all LHS positions since context
-		// might not be at position 0 (e.g., `err, ctx := fn()`).
-		return contextProducer(rhs[0]) && slices.ContainsFunc(lhs, namedIdent)
+		return len(lhs) >= 1 && contextProducer(rhs[0]) && namedIdent(lhs[0])
 	}
 	for i := 0; i < len(lhs) && i < len(rhs); i++ {
 		if contextProducer(rhs[i]) && namedIdent(lhs[i]) {
