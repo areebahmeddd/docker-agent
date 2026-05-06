@@ -48,56 +48,58 @@ func NewSlogContextual() *SlogContextual {
 	}}
 }
 
-// slogContextEquivalent maps a bare slog top-level helper to its
-// context-aware variant. Only the four level helpers are listed because
-// they are the only ones the codebase calls in their non-Context form;
-// slog.Log / slog.LogAttrs already take a context.
-var slogContextEquivalent = map[string]string{
-	"Debug": "DebugContext",
-	"Info":  "InfoContext",
-	"Warn":  "WarnContext",
-	"Error": "ErrorContext",
+// slogLevels is the set of slog top-level helpers whose Context-aware
+// sibling (e.g. Debug → DebugContext) should be preferred when a context
+// is in scope. slog.Log / slog.LogAttrs already take a context.
+var slogLevels = map[string]bool{
+	"Debug": true,
+	"Info":  true,
+	"Warn":  true,
+	"Error": true,
 }
 
 func (c *SlogContextual) Check(p *cop.Pass) {
 	p.ForEachFunc(func(fn *ast.FuncDecl) {
 		if fn.Body != nil {
-			c.checkScope(p, fn.Type, fn.Body, false)
+			c.checkFunc(p, fn.Type, fn.Body, false)
 		}
 	})
 }
 
-// checkScope reports bare slog calls inside body when a context is reachable
+// checkFunc reports bare slog calls inside body when a context is reachable
 // from any enclosing function. outerHasContext propagates that visibility
 // into nested function literals, since closures capture by name.
-func (c *SlogContextual) checkScope(p *cop.Pass, typ *ast.FuncType, body *ast.BlockStmt, outerHasContext bool) {
-	hasContext := outerHasContext || hasFuncTypeContext(typ) || hasLocalContext(body)
+func (c *SlogContextual) checkFunc(p *cop.Pass, typ *ast.FuncType, body *ast.BlockStmt, outerHasContext bool) {
+	hasContext := outerHasContext || signatureDeclaresContext(typ) || bodyDeclaresContext(body)
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FuncLit:
-			c.checkScope(p, x.Type, x.Body, hasContext)
+			c.checkFunc(p, x.Type, x.Body, hasContext)
 			return false
 		case *ast.CallExpr:
-			if !hasContext {
-				return true
-			}
-			pkg, level, ok := cop.MatchSelector(x.Fun)
-			if !ok || pkg != "slog" {
-				return true
-			}
-			if ctxVariant, ok := slogContextEquivalent[level]; ok {
-				p.Report(x,
-					"a context is in scope; use slog.%s(ctx, …) instead of slog.%s so handlers (e.g. OpenTelemetry) can read it",
-					ctxVariant, level)
+			if hasContext {
+				c.reportIfBareSlog(p, x)
 			}
 		}
 		return true
 	})
 }
 
-// hasFuncTypeContext reports whether typ has any parameter or named result
-// declared as context.Context.
-func hasFuncTypeContext(typ *ast.FuncType) bool {
+// reportIfBareSlog reports an offense when call is `slog.<Level>(...)`
+// for one of the four level helpers that have a Context-aware sibling.
+func (c *SlogContextual) reportIfBareSlog(p *cop.Pass, call *ast.CallExpr) {
+	pkg, level, ok := cop.MatchSelector(call.Fun)
+	if !ok || pkg != "slog" || !slogLevels[level] {
+		return
+	}
+	p.Report(call,
+		"a context is in scope; use slog.%s(ctx, …) instead of slog.%s so handlers (e.g. OpenTelemetry) can read it",
+		level+"Context", level)
+}
+
+// signatureDeclaresContext reports whether typ declares any parameter or
+// named result of type context.Context.
+func signatureDeclaresContext(typ *ast.FuncType) bool {
 	for _, fl := range []*ast.FieldList{typ.Params, typ.Results} {
 		if fl == nil {
 			continue
@@ -107,7 +109,7 @@ func hasFuncTypeContext(typ *ast.FuncType) bool {
 				continue
 			}
 			for _, n := range f.Names {
-				if n.Name != "" && n.Name != "_" {
+				if namedIdent(n) {
 					return true
 				}
 			}
@@ -116,10 +118,10 @@ func hasFuncTypeContext(typ *ast.FuncType) bool {
 	return false
 }
 
-// hasLocalContext reports whether body locally binds an identifier to a
-// context.Context value. Nested function literals are skipped — their
-// bindings are inspected separately when checkScope recurses into them.
-func hasLocalContext(body *ast.BlockStmt) bool {
+// bodyDeclaresContext reports whether body locally binds an identifier to
+// a context.Context value. Nested function literals are skipped — their
+// bindings are inspected separately when checkFunc recurses into them.
+func bodyDeclaresContext(body *ast.BlockStmt) bool {
 	found := false
 	ast.Inspect(body, func(n ast.Node) bool {
 		if found {
@@ -131,29 +133,36 @@ func hasLocalContext(body *ast.BlockStmt) bool {
 		case *ast.AssignStmt:
 			found = bindsContext(s.Lhs, s.Rhs)
 		case *ast.ValueSpec:
-			if isContextContextType(s.Type) {
-				for _, n := range s.Names {
-					if n.Name != "" && n.Name != "_" {
-						found = true
-						break
-					}
-				}
-			}
-			if !found && len(s.Values) > 0 {
-				lhs := make([]ast.Expr, len(s.Names))
-				for i, n := range s.Names {
-					lhs[i] = n
-				}
-				found = bindsContext(lhs, s.Values)
-			}
+			found = valueSpecDeclaresContext(s)
 		}
 		return !found
 	})
 	return found
 }
 
+// valueSpecDeclaresContext reports whether s declares a context.Context,
+// either explicitly via its declared type (`var ctx context.Context`) or
+// implicitly via its initializer (`var ctx = context.Background()`).
+func valueSpecDeclaresContext(s *ast.ValueSpec) bool {
+	if isContextContextType(s.Type) {
+		for _, n := range s.Names {
+			if namedIdent(n) {
+				return true
+			}
+		}
+	}
+	if len(s.Values) == 0 {
+		return false
+	}
+	lhs := make([]ast.Expr, len(s.Names))
+	for i, n := range s.Names {
+		lhs[i] = n
+	}
+	return bindsContext(lhs, s.Values)
+}
+
 // bindsContext reports whether the assignment binds at least one LHS
-// identifier to a context.Context value. A single RHS handles both
+// identifier to a context.Context value. A single RHS covers both
 // single-value forms (`ctx := f()`) and multi-value returns
 // (`ctx, cancel := context.WithCancel(...)`); in the latter case the
 // context is always at the first return position.
@@ -169,6 +178,8 @@ func bindsContext(lhs, rhs []ast.Expr) bool {
 	return false
 }
 
+// namedIdent reports whether e is a named identifier — anonymous (`_`)
+// or unset names produce no usable scope binding.
 func namedIdent(e ast.Expr) bool {
 	id, ok := e.(*ast.Ident)
 	return ok && id.Name != "" && id.Name != "_"
@@ -187,7 +198,7 @@ func contextProducer(expr ast.Expr) bool {
 }
 
 // isContextContextType reports whether expr is the syntactic type
-// `context.Context`. Type aliases and embeddings are out of scope.
+// `context.Context`.
 func isContextContextType(expr ast.Expr) bool {
 	pkg, sel, ok := cop.MatchSelector(expr)
 	return ok && pkg == "context" && sel == "Context"
