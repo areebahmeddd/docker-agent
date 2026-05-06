@@ -41,9 +41,11 @@ func TestContainsSecretsRecognisesKnownTokens(t *testing.T) {
 		{"notion_integration_token", "ntn_" + strings.Repeat("a", 46)},
 		{"gitlab_pipeline_trigger_token", "glptt-" + strings.Repeat("a", 40)},
 		{"vault_service_token", "hvs." + strings.Repeat("a", 95)},
+		{"vault_service_token_long", "hvs." + strings.Repeat("a", 180)},
 		{"slack_rotating_refresh_token", "xoxe-" + strings.Repeat("a", 60)},
 		{"slack_rotating_user_token", "xoxe.xoxp-" + strings.Repeat("a", 50)},
 		{"slack_rotating_bot_token", "xoxe.xoxb-" + strings.Repeat("a", 50)},
+		{"slack_rotating_long_token", "xoxe.xoxp-" + strings.Repeat("a", 250)},
 		{"replicate_api_token", "r8_" + strings.Repeat("a", 37)},
 		{"square_access_token", "EAAA" + strings.Repeat("a", 60)},
 		{"atlassian_cloud_api_token", "ATATT3xFfGF0" + strings.Repeat("a", 200)},
@@ -104,6 +106,33 @@ func TestRedactDetectsBareUnquotedSecrets(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRedactDoesNotSwallowAdjacentTextAfterSlackRotatingToken pins
+// the upper bound on the slack-rotating-token rule. The body class
+// overlaps with hostnames / dotted identifiers, so without an upper
+// quantifier bound a Slack token followed (without separator) by an
+// `api.slack.com`-style URL would silently consume the URL into the
+// redaction span. The upper bound of 300 is comfortably above the
+// longest observed Slack rotating-token body, so a real secret is
+// still fully redacted, but text well past that length stops being
+// part of the same match.
+func TestRedactDoesNotSwallowAdjacentTextAfterSlackRotatingToken(t *testing.T) {
+	t.Parallel()
+
+	// 320 chars is past the {40,300} cap, so the regex must split
+	// the input into a redacted prefix and a literal trailing
+	// suffix. The trailing dotted hostname is exactly the kind of
+	// content that an open-ended quantifier would over-consume.
+	token := "xoxe-" + strings.Repeat("a", 320)
+	input := token + ".api.slack.com"
+
+	out := secretsscan.Redact(input)
+
+	assert.Containsf(t, out, secretsscan.RedactionMarker,
+		"a Slack rotating token must still be redacted: %q", out)
+	assert.Containsf(t, out, "api.slack.com",
+		"adjacent hostname must NOT be swallowed by the rotating-token regex: %q", out)
 }
 
 // TestContainsSecretsIgnoresHarmlessText: pure digit strings, plain

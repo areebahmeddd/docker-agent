@@ -606,10 +606,15 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"glptt-"},
 		},
 		{
-			// vault-service-token. HashiCorp Vault batch / service
-			// tokens issued by recent Vault versions carry the `hvs.`
-			// prefix and a long base64url body.
-			expression: `hvs\.[A-Za-z0-9_-]{90,120}`,
+			// vault-service-token. HashiCorp Vault service tokens issued
+			// by recent Vault versions carry the `hvs.` prefix and a
+			// base64url body whose length varies with the policies /
+			// metadata encoded inside the CBOR payload. The lower bound
+			// of 90 chars covers a default-policy token; the upper bound
+			// of 200 covers tokens carrying multiple policies and
+			// namespace metadata (matching the looser bound Trivy uses
+			// for similar Vault formats).
+			expression: `hvs\.[A-Za-z0-9_-]{90,200}`,
 			keywords:   []string{"hvs."},
 		},
 		{
@@ -618,7 +623,15 @@ var rules = sync.OnceValue(func() []rule {
 			// (`xoxe.xoxb-…` / `xoxe.xoxp-…`) whose bodies include dashes
 			// and dots — a shape the legacy `slack-access-token` rule
 			// (locked to `xox[baprs]-`) does not cover.
-			expression: `xoxe(\.xox[bp])?-[A-Za-z0-9.-]{40,}`,
+			//
+			// The body class `[A-Za-z0-9.-]` happens to overlap with
+			// neighbouring URL / hostname text (e.g. `api.slack.com`)
+			// so we cap the quantifier at 300 — comfortably above the
+			// longest observed Slack rotating-token body — to keep an
+			// adjacent dotted identifier from being swallowed into the
+			// redaction span when the token isn't separated from it by
+			// whitespace or punctuation.
+			expression: `xoxe(\.xox[bp])?-[A-Za-z0-9.-]{40,300}`,
 			keywords:   []string{"xoxe-", "xoxe.xox"},
 		},
 		{
