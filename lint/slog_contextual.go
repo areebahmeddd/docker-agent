@@ -2,14 +2,14 @@ package main
 
 import (
 	"go/ast"
-	"go/token"
 	"strings"
 
 	"github.com/dgageot/rubocop-go/cop"
 )
 
 // SlogContextual enforces that callers use the *Context variant of every
-// slog top-level helper whenever a context.Context is reachable in scope.
+// slog top-level helper whenever a context.Context is reachable in the
+// enclosing function.
 //
 // Go 1.21's `log/slog` exposes DebugContext / InfoContext / WarnContext /
 // ErrorContext so that handlers can read request-scoped values from the
@@ -18,24 +18,23 @@ import (
 // Error helpers drop the context, so any context-aware handler ends up
 // emitting records that cannot be correlated with the surrounding trace.
 //
-// The rule fires only when the cop can statically see a context name that
-// is *already in scope* at the call site:
+// The rule fires when the cop can statically see a context name visible
+// in the call's enclosing function:
 //
 //   - a parameter or named result whose type is `context.Context`;
-//   - a local var declared earlier in the same function from a context-
-//     producing expression (e.g. `ctx := cmd.Context()`,
-//     `ctx := context.Background()`, or the first return of
-//     `context.WithCancel(...)` / `context.WithTimeout(...)`).
+//   - a local var declared from a context-producing expression (e.g.
+//     `ctx := cmd.Context()`, `ctx := context.Background()`, or the first
+//     return of `context.WithCancel(...)` / `context.WithTimeout(...)`).
 //
-// Function literals inherit the names visible at the position where the
-// literal is written, so a `defer func() { slog.Error(...) }()` placed
-// after `ctx := cmd.Context()` is flagged.
+// Function literals inherit context names from every enclosing function,
+// so a `defer func() { slog.Error(...) }()` placed inside a function
+// that holds a ctx is flagged.
 //
-// Helpers without an in-scope context (e.g. `applyTheme()` in the TUI)
-// are intentionally not flagged: rewriting them would force callers to
-// thread a context through APIs that don't otherwise need one. When that
-// trade-off is acceptable, callers can capture `cmd.Context()` into a
-// local and the cop will then enforce the `*Context` variant inside.
+// Convention: always declare the context near the top of the function so
+// that every later log statement sees it. Helpers without an in-scope
+// context (e.g. `applyTheme()` in cmd/root/run.go) are intentionally not
+// flagged: rewriting them would force callers to thread a context
+// through APIs that don't otherwise need one.
 //
 // Per-line suppression is provided centrally by the runner: annotate the
 // line with `//rubocop:disable Lint/SlogContextual` to opt out — the
@@ -65,49 +64,28 @@ var slogContextEquivalent = map[string]string{
 	"Error": "ErrorContext",
 }
 
-// contextBinding records a context-typed identifier alongside the source
-// position at which the identifier becomes visible (after the binding
-// statement). Captured names are compared against later positions so the
-// cop only treats a name as in scope once its declaration has executed.
-type contextBinding struct {
-	name string
-	pos  token.Pos
-}
-
 func (c *SlogContextual) Check(p *cop.Pass) {
 	p.ForEachFunc(func(fn *ast.FuncDecl) {
 		if fn.Body == nil {
 			return
 		}
-		c.checkScope(p, fn.Type, fn.Body, nil)
+		c.checkScope(p, fn.Type, fn.Body, false)
 	})
 }
 
-// checkScope walks body and reports bare slog calls that have a context
-// name visible at their position. outer carries the bindings already
-// visible from enclosing scopes (parameters of outer functions, locals
-// of the enclosing block declared before this function literal, …).
-func (c *SlogContextual) checkScope(p *cop.Pass, typ *ast.FuncType, body *ast.BlockStmt, outer []contextBinding) {
-	// Parameters and named results are visible from the very first byte
-	// of the body.
-	bindings := append([]contextBinding(nil), outer...)
-	for _, name := range contextNamesInFuncType(typ) {
-		bindings = append(bindings, contextBinding{name: name, pos: body.Lbrace})
-	}
-	// Add every locally-derived context, recorded at the position right
-	// after its binding statement so a use on the same line as the
-	// declaration is correctly considered in scope.
-	bindings = append(bindings, contextBindingsInBlock(body)...)
+// checkScope reports bare slog calls inside body when a context name is
+// visible in the enclosing function or any outer function literal.
+// outerHasContext propagates that visibility into nested literals.
+func (c *SlogContextual) checkScope(p *cop.Pass, typ *ast.FuncType, body *ast.BlockStmt, outerHasContext bool) {
+	hasContext := outerHasContext || hasContextInFuncType(typ) || hasContextBindingInBlock(body)
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FuncLit:
-			// Inherit only the names that exist at the position where
-			// the literal is written.
-			c.checkScope(p, x.Type, x.Body, visibleAt(bindings, x.Pos()))
+			c.checkScope(p, x.Type, x.Body, hasContext)
 			return false
 		case *ast.CallExpr:
-			if hasVisibleAt(bindings, x.Pos()) {
+			if hasContext {
 				c.maybeReport(p, x)
 			}
 		}
@@ -135,18 +113,15 @@ func (c *SlogContextual) maybeReport(p *cop.Pass, call *ast.CallExpr) {
 		ctxVariant, sel.Sel.Name)
 }
 
-// contextNamesInFuncType returns the identifier names declared in fn's
-// parameter or named-result lists whose syntactic type is `context.Context`.
-func contextNamesInFuncType(typ *ast.FuncType) []string {
-	var names []string
-	names = appendContextFieldNames(names, typ.Params)
-	names = appendContextFieldNames(names, typ.Results)
-	return names
+// hasContextInFuncType reports whether typ has any parameter or named
+// result whose syntactic type is `context.Context`.
+func hasContextInFuncType(typ *ast.FuncType) bool {
+	return fieldListHasContext(typ.Params) || fieldListHasContext(typ.Results)
 }
 
-func appendContextFieldNames(names []string, fl *ast.FieldList) []string {
+func fieldListHasContext(fl *ast.FieldList) bool {
 	if fl == nil {
-		return names
+		return false
 	}
 	for _, f := range fl.List {
 		if !isContextContextType(f.Type) {
@@ -154,36 +129,39 @@ func appendContextFieldNames(names []string, fl *ast.FieldList) []string {
 		}
 		for _, n := range f.Names {
 			if n.Name != "" && n.Name != "_" {
-				names = append(names, n.Name)
+				return true
 			}
 		}
 	}
-	return names
+	return false
 }
 
-// contextBindingsInBlock collects locally-declared context-typed
-// identifiers from body, recording each at the position right after the
-// binding statement so that scope lookups respect declaration order.
-// Nested function literals are skipped — their bindings are tracked
-// separately when checkScope recurses into them.
-func contextBindingsInBlock(body *ast.BlockStmt) []contextBinding {
+// hasContextBindingInBlock reports whether body locally binds at least one
+// identifier to a context.Context value, using purely syntactic shape
+// recognition. Nested function literals are skipped — their bindings are
+// inspected separately when checkScope recurses into them.
+func hasContextBindingInBlock(body *ast.BlockStmt) bool {
 	if body == nil {
-		return nil
+		return false
 	}
-	var out []contextBinding
+	found := false
 	ast.Inspect(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
 		switch s := n.(type) {
 		case *ast.FuncLit:
 			return false
 		case *ast.AssignStmt:
-			for _, name := range collectContextLHSNames(s.Lhs, s.Rhs) {
-				out = append(out, contextBinding{name: name, pos: s.End()})
+			if assignBindsContext(s.Lhs, s.Rhs) {
+				found = true
 			}
 		case *ast.ValueSpec:
 			if isContextContextType(s.Type) {
 				for _, n := range s.Names {
 					if n.Name != "" && n.Name != "_" {
-						out = append(out, contextBinding{name: n.Name, pos: s.End()})
+						found = true
+						return false
 					}
 				}
 			}
@@ -192,40 +170,33 @@ func contextBindingsInBlock(body *ast.BlockStmt) []contextBinding {
 				for i, n := range s.Names {
 					lhs[i] = n
 				}
-				for _, name := range collectContextLHSNames(lhs, s.Values) {
-					out = append(out, contextBinding{name: name, pos: s.End()})
+				if assignBindsContext(lhs, s.Values) {
+					found = true
 				}
 			}
 		}
-		return true
+		return !found
 	})
-	return out
+	return found
 }
 
-// collectContextLHSNames returns every LHS identifier name that an
-// assignment binds to a context.Context value, using purely syntactic
-// shape recognition.
-func collectContextLHSNames(lhs, rhs []ast.Expr) []string {
-	var names []string
+// assignBindsContext reports whether an assignment binds at least one LHS
+// identifier to a context.Context value, using purely syntactic shape
+// recognition.
+func assignBindsContext(lhs, rhs []ast.Expr) bool {
 	if len(rhs) == 1 && len(lhs) >= 1 {
 		// Multi-value RHS like `ctx, cancel := context.WithCancel(parent)`:
 		// the first return of context.With* is the derived Context.
 		if call, ok := rhs[0].(*ast.CallExpr); ok && isContextWithCall(call) {
-			if name := identName(lhs[0]); name != "" {
-				names = append(names, name)
-			}
-			return names
+			return identName(lhs[0]) != ""
 		}
 	}
 	for i := 0; i < len(lhs) && i < len(rhs); i++ {
-		if !isContextProducingExpr(rhs[i]) {
-			continue
-		}
-		if name := identName(lhs[i]); name != "" {
-			names = append(names, name)
+		if isContextProducingExpr(rhs[i]) && identName(lhs[i]) != "" {
+			return true
 		}
 	}
-	return names
+	return false
 }
 
 func identName(e ast.Expr) string {
@@ -277,26 +248,4 @@ func isContextContextType(expr ast.Expr) bool {
 	}
 	id, ok := sel.X.(*ast.Ident)
 	return ok && id.Name == "context" && sel.Sel.Name == "Context"
-}
-
-// hasVisibleAt reports whether at least one binding from bindings is
-// visible at position pos (i.e. its binding.pos < pos).
-func hasVisibleAt(bindings []contextBinding, pos token.Pos) bool {
-	for _, b := range bindings {
-		if b.pos < pos {
-			return true
-		}
-	}
-	return false
-}
-
-// visibleAt returns the subset of bindings already visible at position pos.
-func visibleAt(bindings []contextBinding, pos token.Pos) []contextBinding {
-	var out []contextBinding
-	for _, b := range bindings {
-		if b.pos < pos {
-			out = append(out, b)
-		}
-	}
-	return out
 }
