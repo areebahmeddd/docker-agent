@@ -190,12 +190,12 @@ command "fix-lint" {
   instruction = <<-EOT
   Run the linter and inspect the result:
 
-  $${shell({cmd: "mise lint"})}
+  $${shell({cmd: "task lint"})}
   EOT
 }
 ```
 
-The model will receive the literal `${shell({cmd: "mise lint"})}` text.
+The model will receive the literal `${shell({cmd: "task lint"})}` text.
 
 ## Repeated Blocks Become Lists
 
