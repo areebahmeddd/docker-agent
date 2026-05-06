@@ -295,14 +295,14 @@ func (a urlSource) Read(ctx context.Context) ([]byte, error) {
 	}
 
 	// Cache the response
-	if err := os.MkdirAll(cacheDir, 0o755); err == nil {
-		if err := os.WriteFile(cachePath, data, 0o644); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o700); err == nil {
+		if err := os.WriteFile(cachePath, data, 0o600); err != nil {
 			slog.DebugContext(ctx, "Failed to cache URL content", "url", a.url, "error", err)
 		}
 
 		// Save ETag if present
 		if etag := resp.Header.Get("ETag"); etag != "" {
-			if err := os.WriteFile(etagPath, []byte(etag), 0o644); err != nil {
+			if err := os.WriteFile(etagPath, []byte(etag), 0o600); err != nil {
 				slog.DebugContext(ctx, "Failed to cache ETag", "url", a.url, "error", err)
 			}
 		} else {
