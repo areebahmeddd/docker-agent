@@ -59,15 +59,3 @@ func Decide(doc chat.Document, mc modelcaps.ModelCapabilities) (Strategy, string
 func TXTEnvelope(name, mimeType, body string) string {
 	return fmt.Sprintf("<document name=%q mime-type=%q>%s</document>", name, mimeType, body)
 }
-
-// Advisor is implemented by provider clients that can report which MIME types
-// their current model supports as document attachments.
-//
-// Providers that do not implement Advisor are assumed to support no attachment
-// types (StrategyTXT text wrapping is always available as a fallback, but
-// callers must opt in via the Decide function).
-type Advisor interface {
-	// SupportedMIMETypes returns the list of MIME types that the provider's
-	// current model accepts as document attachments.  The list may be empty.
-	SupportedMIMETypes() []string
-}

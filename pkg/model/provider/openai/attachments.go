@@ -71,16 +71,3 @@ func convertDocumentToResponseInputWithCaps(ctx context.Context, doc chat.Docume
 		return nil, fmt.Errorf("unknown attachment strategy %d", strategy)
 	}
 }
-
-// SupportedMIMETypes implements attachment.Advisor for the OpenAI client.
-func (c *Client) SupportedMIMETypes() []string {
-	mc, _ := modelcaps.Load(c.ModelConfig.Model)
-	mimes := []string{"text/plain", "text/markdown", "text/html", "text/csv"}
-	if mc.Supports("image/jpeg") {
-		mimes = append(mimes, "image/jpeg", "image/png", "image/gif", "image/webp")
-	}
-	if mc.Supports("application/pdf") {
-		mimes = append(mimes, "application/pdf")
-	}
-	return mimes
-}

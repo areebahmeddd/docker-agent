@@ -160,21 +160,3 @@ func sanitizeDocumentName(name string) string {
 	}
 	return result
 }
-
-// SupportedMIMETypes implements attachment.Advisor for the Bedrock client.
-func (c *Client) SupportedMIMETypes() []string {
-	mc, _ := modelcaps.Load(c.ModelConfig.Model)
-	mimes := []string{
-		"text/plain", "text/markdown", "text/html", "text/csv",
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
-	}
-	if mc.Supports("image/jpeg") {
-		mimes = append(mimes, "image/jpeg", "image/png", "image/gif", "image/webp")
-	}
-	if mc.Supports("application/pdf") {
-		mimes = append(mimes, "application/pdf")
-	}
-	return mimes
-}

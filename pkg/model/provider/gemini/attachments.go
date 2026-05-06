@@ -44,16 +44,3 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 		return nil, fmt.Errorf("unknown attachment strategy %d", strategy)
 	}
 }
-
-// SupportedMIMETypes implements attachment.Advisor for the Gemini client.
-func (c *Client) SupportedMIMETypes() []string {
-	mc, _ := modelcaps.Load(c.ModelConfig.Model)
-	mimes := []string{"text/plain", "text/markdown", "text/html", "text/csv"}
-	if mc.Supports("image/jpeg") {
-		mimes = append(mimes, "image/jpeg", "image/png", "image/gif", "image/webp")
-	}
-	if mc.Supports("application/pdf") {
-		mimes = append(mimes, "application/pdf")
-	}
-	return mimes
-}

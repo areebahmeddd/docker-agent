@@ -71,20 +71,3 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 		return nil, fmt.Errorf("unknown attachment strategy %d", strategy)
 	}
 }
-
-// SupportedMIMETypesForModel returns the MIME types that the given model
-// supports as document attachments, based on models.dev capability data.
-// This implements the attachment.Advisor interface for oaistream-based clients.
-func SupportedMIMETypesForModel(modelID string) []string {
-	mc, _ := modelcaps.Load(modelID)
-	var mimes []string
-	// Always support text MIMEs.
-	mimes = append(mimes, "text/plain", "text/markdown", "text/html", "text/csv")
-	if mc.Supports("image/jpeg") {
-		mimes = append(mimes, "image/jpeg", "image/png", "image/gif", "image/webp")
-	}
-	if mc.Supports("application/pdf") {
-		mimes = append(mimes, "application/pdf")
-	}
-	return mimes
-}
