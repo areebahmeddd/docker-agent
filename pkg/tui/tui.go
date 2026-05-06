@@ -284,7 +284,6 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 		transcriber:             transcribe.New(os.Getenv("OPENAI_API_KEY")),
 		workingSpinner:          spinner.New(spinner.ModeSpinnerOnly, styles.SpinnerDotsHighlightStyle),
 		focusedPanel:            PanelEditor,
-		focused:                 true,
 		editorLines:             3,
 		dockerDesktop:           os.Getenv("TERM_PROGRAM") == "docker_desktop",
 		appName:                 "docker agent",
