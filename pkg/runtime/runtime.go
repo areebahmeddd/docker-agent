@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -984,7 +985,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 		// parent agent's state: this event carries the parent session_id,
 		// and sub-agents emit their own token_usage events with their own
 		// session_id during live streaming.
-		for i := len(sess.Messages) - 1; i >= 0; i-- {
+		for i := range slices.Backward(sess.Messages) {
 			item := &sess.Messages[i]
 			if !item.IsMessage() || item.Message.Message.Role != chat.MessageRoleAssistant {
 				continue
