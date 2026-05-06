@@ -131,9 +131,10 @@ type appModel struct {
 	// environment.
 	dockerDesktop bool
 
-	// focused tracks whether the terminal currently has focus. Used to
-	// detect real blur→focus transitions and ignore spurious FocusMsg
-	// events emitted by RestoreTerminal re-enabling focus reporting.
+	// focused tracks whether the terminal currently has focus. Used both
+	// to filter spurious FocusMsg events (RestoreTerminal re-enables focus
+	// reporting and delivers one) and to skip animation ticks when nobody
+	// is looking at the terminal — the chain re-arms on FocusMsg.
 	focused bool
 
 	// pendingRestores maps runtime tab IDs (supervisor routing keys) to
@@ -283,6 +284,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 		transcriber:             transcribe.New(os.Getenv("OPENAI_API_KEY")),
 		workingSpinner:          spinner.New(spinner.ModeSpinnerOnly, styles.SpinnerDotsHighlightStyle),
 		focusedPanel:            PanelEditor,
+		focused:                 true,
 		editorLines:             3,
 		dockerDesktop:           os.Getenv("TERM_PROGRAM") == "docker_desktop",
 		appName:                 "docker agent",
@@ -488,6 +490,12 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleRoutedMsg(msg)
 
 	case animation.TickMsg:
+		// Drop the tick (and let the chain die) when the terminal is
+		// blurred. animation.StartTick re-arms the chain on FocusMsg so
+		// spinners resume immediately when the user comes back.
+		if !m.focused {
+			return m, nil
+		}
 		cmds := []tea.Cmd{m.updateChatCmd(msg)}
 		// Update working spinner
 		if m.chatPage.IsWorking() {
@@ -592,25 +600,30 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.FocusMsg:
-		// Only act on a real blur→focus transition. RestoreTerminal
-		// re-enables focus reporting which delivers a spurious FocusMsg;
-		// since m.focused is already true at that point, we skip it.
-		if m.focused || m.program == nil {
+		// Filter spurious FocusMsg: RestoreTerminal re-enables focus
+		// reporting which delivers a FocusMsg even when we never blurred.
+		if m.focused {
 			return m, nil
 		}
 		m.focused = true
-		if !m.dockerDesktop {
-			return m, nil
+
+		var cmds []tea.Cmd
+		if animation.HasActive() {
+			// Re-arm the tick chain that died while we were blurred.
+			cmds = append(cmds, animation.StartTick())
 		}
-		// Docker Desktop: the terminal may have lost all mode state (alt
-		// screen, mouse tracking, keyboard enhancements, background color,
-		// etc.). A full release/restore cycle re-emits every mode sequence
-		// and forces a complete repaint.
-		return m, func() tea.Msg {
-			_ = m.program.ReleaseTerminal()
-			_ = m.program.RestoreTerminal()
-			return nil
+		if m.dockerDesktop && m.program != nil {
+			// Docker Desktop: the terminal may have lost all mode state (alt
+			// screen, mouse tracking, keyboard enhancements, background
+			// color, etc.). A full release/restore cycle re-emits every mode
+			// sequence and forces a complete repaint.
+			cmds = append(cmds, func() tea.Msg {
+				_ = m.program.ReleaseTerminal()
+				_ = m.program.RestoreTerminal()
+				return nil
+			})
 		}
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyboardEnhancementsMsg:
 		m.keyboardEnhancements = &msg
