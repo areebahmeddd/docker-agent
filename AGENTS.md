@@ -31,9 +31,9 @@ complex algorithms that cannot be simplified further.
 
 Before marking work as complete:
 
-- [ ] Code builds successfully (`mise build`)
-- [ ] All tests pass (`mise test`)
-- [ ] Linter shows no new issues (`mise lint`)
+- [ ] Code builds successfully (`task build`)
+- [ ] All tests pass (`task test`)
+- [ ] Linter shows no new issues (`task lint`)
 - [ ] Changes meet acceptance criteria
 - [ ] Code follows project patterns and conventions
 - [ ] Proper error handling is implemented
@@ -43,18 +43,18 @@ Before marking work as complete:
 
 ## Build and Development
 
-- `mise build` — Build the application binary (outputs to `./bin/docker-agent`)
-- `mise test` — Run Go tests (clears API keys to ensure deterministic tests)
-- `mise lint` — Run golangci-lint (uses `.golangci.yml` configuration)
-- `mise format` — Format code using golangci-lint fmt
-- `mise dev` — Run lint, test, and build in sequence
+- `task build` — Build the application binary (outputs to `./bin/docker-agent`)
+- `task test` — Run Go tests (clears API keys to ensure deterministic tests)
+- `task lint` — Run golangci-lint (uses `.golangci.yml` configuration)
+- `task format` — Format code using golangci-lint fmt
+- `task dev` — Run lint, test, and build in sequence
 
 ## Docker and Cross-Platform Builds
 
-- `mise build-local` — Build binary for local platform using Docker Buildx
-- `mise cross` — Build binaries for multiple platforms (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64)
-- `mise build-image` — Build Docker image tagged as `docker/docker-agent`
-- `mise push-image` — Build and push multi-platform Docker image to registry
+- `task build-local` — Build binary for local platform using Docker Buildx
+- `task cross` — Build binaries for multiple platforms (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64)
+- `task build-image` — Build Docker image tagged as `docker/docker-agent`
+- `task push-image` — Build and push multi-platform Docker image to registry
 
 ## Running docker-agent
 
@@ -80,7 +80,7 @@ Before marking work as complete:
 # Testing
 
 - Tests are located alongside source files (`*_test.go`)
-- Run `mise test` to execute the full test suite
+- Run `task test` to execute the full test suite
 - E2E tests live in the `e2e/` directory
 - Test fixtures and data live in `testdata/` subdirectories
 - Use `github.com/stretchr/testify/assert` and `require` for assertions
