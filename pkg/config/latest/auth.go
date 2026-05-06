@@ -3,6 +3,9 @@ package latest
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"os"
+	"slices"
 	"strings"
 )
 
@@ -28,6 +31,28 @@ type AuthConfig struct {
 const (
 	AuthTypeWorkloadIdentityFederation = "workload_identity_federation"
 )
+
+// EffectiveAuth returns the auth that applies to a model: the model's own
+// Auth wins, otherwise the referenced ProviderConfig's Auth.
+func EffectiveAuth(m ModelConfig, providers map[string]ProviderConfig) *AuthConfig {
+	if m.Auth != nil {
+		return m.Auth
+	}
+	if p, ok := providers[m.Provider]; ok {
+		return p.Auth
+	}
+	return nil
+}
+
+// EffectiveProviderType returns the underlying provider type for a model,
+// resolving custom-provider indirection (a model whose `provider:` points
+// to an entry in `providers:` inherits that entry's `provider:` field).
+func EffectiveProviderType(m ModelConfig, providers map[string]ProviderConfig) string {
+	if p, ok := providers[m.Provider]; ok && p.Provider != "" {
+		return p.Provider
+	}
+	return m.Provider
+}
 
 // FederationAuthConfig describes an Anthropic OIDC Federation Rule and the
 // source of the JWT identity token to be exchanged for a short-lived access
@@ -93,10 +118,46 @@ type IdentityTokenSourceConfig struct {
 	ResponseField string `json:"response_field,omitempty" yaml:"response_field,omitempty"`
 }
 
-// validate validates an AuthConfig, including a provider-type-aware check
-// that the chosen scheme is supported by providerType. providerType may be
-// empty when the auth lives on a ProviderConfig that does not declare an
-// underlying provider; in that case the provider-specific check is skipped.
+// EnvVars returns the environment variables that the auth configuration
+// references at runtime. Today this is only meaningful for Workload Identity
+// Federation, whose identity-token source may either name an env var
+// directly (env source) or reference one through ${VAR} expansion in URL
+// or header values.
+func (a *AuthConfig) EnvVars() []string {
+	if a == nil || a.Type != AuthTypeWorkloadIdentityFederation || a.Federation == nil {
+		return nil
+	}
+	src := a.Federation.IdentityToken
+	if src == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	collect := func(s string) {
+		os.Expand(s, func(name string) string {
+			if name != "" {
+				seen[name] = true
+			}
+			return ""
+		})
+	}
+	if src.Env != "" {
+		seen[src.Env] = true
+	}
+	if src.URL != "" {
+		collect(src.URL)
+	}
+	for _, v := range src.Headers {
+		collect(v)
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
+// validate validates an AuthConfig. providerType, when non-empty, is used
+// to enforce that the chosen scheme is supported by the underlying
+// provider (today: WIF requires "anthropic"). Empty providerType skips
+// that check, which is what we want when an [AuthConfig] sits on a
+// [ProviderConfig] that doesn't declare an underlying provider — the
+// per-model check picks it up later.
 func (a *AuthConfig) validate(providerType string) error {
 	if a == nil {
 		return nil
@@ -105,14 +166,13 @@ func (a *AuthConfig) validate(providerType string) error {
 	case "":
 		return errors.New("auth.type is required")
 	case AuthTypeWorkloadIdentityFederation:
-		// WIF is currently only meaningful for the Anthropic provider.
-		// We allow an empty providerType so a ProviderConfig that only
-		// sets `auth:` (and inherits `provider:` from a model) still
-		// passes validation; the per-model check kicks in later.
 		if providerType != "" && providerType != "anthropic" {
 			return fmt.Errorf("auth.type %q is only supported with the anthropic provider (got %q)", a.Type, providerType)
 		}
-		return a.Federation.validate()
+		if err := a.Federation.validate(); err != nil {
+			return fmt.Errorf("auth: %w", err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported auth.type %q", a.Type)
 	}
@@ -123,45 +183,32 @@ func (f *FederationAuthConfig) validate() error {
 		return errors.New("workload_identity_federation block is required when auth.type is workload_identity_federation")
 	}
 	if f.FederationRuleID == "" {
-		return errors.New("workload_identity_federation.federation_rule_id is required")
+		return errors.New("federation_rule_id is required")
 	}
 	if !strings.HasPrefix(f.FederationRuleID, "fdrl_") {
-		return fmt.Errorf("workload_identity_federation.federation_rule_id must start with %q (got %q)", "fdrl_", f.FederationRuleID)
+		return fmt.Errorf("federation_rule_id must start with %q (got %q)", "fdrl_", f.FederationRuleID)
 	}
 	if f.OrganizationID == "" {
-		return errors.New("workload_identity_federation.organization_id is required")
+		return errors.New("organization_id is required")
 	}
 	if f.ServiceAccountID != "" && !strings.HasPrefix(f.ServiceAccountID, "svac_") {
-		return fmt.Errorf("workload_identity_federation.service_account_id must start with %q when set (got %q)", "svac_", f.ServiceAccountID)
+		return fmt.Errorf("service_account_id must start with %q when set (got %q)", "svac_", f.ServiceAccountID)
 	}
 	if f.IdentityToken == nil {
-		return errors.New("workload_identity_federation.identity_token is required")
+		return errors.New("identity_token is required")
 	}
 	return f.IdentityToken.validate()
 }
 
 func (s *IdentityTokenSourceConfig) validate() error {
-	if s == nil {
-		return errors.New("identity_token is required")
-	}
-	set := 0
-	if s.File != "" {
-		set++
-	}
-	if s.Env != "" {
-		set++
-	}
-	if len(s.Command) > 0 {
-		set++
-	}
-	if s.URL != "" {
-		set++
-	}
-	if set == 0 {
+	sources := s.setSources()
+	switch len(sources) {
+	case 0:
 		return errors.New("identity_token requires exactly one of: file, env, command, url")
-	}
-	if set > 1 {
-		return errors.New("identity_token must set exactly one of: file, env, command, url")
+	case 1:
+		// ok
+	default:
+		return fmt.Errorf("identity_token must set exactly one of file, env, command, url (got %s)", strings.Join(sources, ", "))
 	}
 	// Headers / response_field are only meaningful with url:
 	if s.URL == "" {
@@ -172,12 +219,31 @@ func (s *IdentityTokenSourceConfig) validate() error {
 			return errors.New("identity_token.response_field can only be used with identity_token.url")
 		}
 	}
-	if len(s.Command) > 0 {
-		for i, arg := range s.Command {
-			if arg == "" {
-				return fmt.Errorf("identity_token.command[%d] must not be empty", i)
-			}
+	for i, arg := range s.Command {
+		if arg == "" {
+			return fmt.Errorf("identity_token.command[%d] must not be empty", i)
 		}
 	}
 	return nil
+}
+
+// setSources returns the names of the source fields that are populated.
+func (s *IdentityTokenSourceConfig) setSources() []string {
+	if s == nil {
+		return nil
+	}
+	var names []string
+	if s.File != "" {
+		names = append(names, "file")
+	}
+	if s.Env != "" {
+		names = append(names, "env")
+	}
+	if len(s.Command) > 0 {
+		names = append(names, "command")
+	}
+	if s.URL != "" {
+		names = append(names, "url")
+	}
+	return names
 }

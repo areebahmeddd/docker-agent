@@ -1,10 +1,8 @@
 // Package federation builds the Anthropic Workload Identity Federation
 // pieces (identity-token providers and SDK request options) from a typed
-// [latest.AuthConfig].
-//
-// The package is deliberately Anthropic-specific for now. If another
-// provider gains a federation flow we'll factor out the source-of-token
-// helpers; until then keeping the Anthropic dependency local avoids a
+// [latest.AuthConfig]. The package is deliberately Anthropic-specific: if
+// another provider gains a federation flow we'll factor out the source
+// helpers, but until then keeping the SDK dependency local avoids a
 // cross-cutting auth abstraction.
 package federation
 
@@ -26,26 +24,18 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 )
 
-// RequestOptions returns the anthropic-sdk-go RequestOption(s) that
-// authenticate the client using OIDC Workload Identity Federation, plus a
-// ready-to-call IdentityTokenFunc whose errors are wrapped with
-// [RefreshError] so callers can recognise refresh failures specifically.
+// RequestOptions builds the anthropic-sdk-go RequestOption that
+// authenticates the client using OIDC Workload Identity Federation.
+// It replaces option.WithAPIKey rather than augmenting it.
 //
-// The returned options should be passed to anthropic.NewClient instead of
-// (not in addition to) option.WithAPIKey.
-//
-// If onRefreshError is non-nil, it is invoked synchronously every time the
-// token source returns an error. This is the hook the runtime uses to
-// surface refresh errors in the TUI.
-func RequestOptions(
-	cfg *latest.FederationAuthConfig,
-	env environment.Provider,
-	onRefreshError func(error),
-) ([]option.RequestOption, error) {
+// Token-source errors are wrapped with a message that names the source
+// kind and federation rule, so refresh failures show up actionable in the
+// runtime's standard ErrorEvent path (and therefore in the TUI).
+func RequestOptions(cfg *latest.FederationAuthConfig, env environment.Provider) ([]option.RequestOption, error) {
 	if cfg == nil {
 		return nil, errors.New("federation: nil config")
 	}
-	src, err := tokenSource(cfg.IdentityToken, env)
+	src, kind, err := tokenSource(cfg.IdentityToken, env)
 	if err != nil {
 		return nil, err
 	}
@@ -53,20 +43,10 @@ func RequestOptions(
 	provider := func(ctx context.Context) (string, error) {
 		token, err := src(ctx)
 		if err != nil {
-			wrapped := &RefreshError{
-				FederationRuleID: cfg.FederationRuleID,
-				OrganizationID:   cfg.OrganizationID,
-				SourceKind:       sourceKind(cfg.IdentityToken),
-				Err:              err,
-			}
-			slog.Error("Anthropic federation: failed to obtain identity token",
-				"federation_rule_id", cfg.FederationRuleID,
-				"source", wrapped.SourceKind,
-				"error", err)
-			if onRefreshError != nil {
-				onRefreshError(wrapped)
-			}
-			return "", wrapped
+			return "", fmt.Errorf(
+				"anthropic workload identity federation: failed to refresh identity token from %s source (federation_rule=%s): %w",
+				kind, cfg.FederationRuleID, err,
+			)
 		}
 		return token, nil
 	}
@@ -80,74 +60,29 @@ func RequestOptions(
 	}, nil
 }
 
-// RefreshError wraps any failure to obtain a fresh identity token from the
-// configured source. Both the SDK error path and the TUI-facing event hook
-// receive this type, so we can render a clear, source-aware message.
-type RefreshError struct {
-	FederationRuleID string
-	OrganizationID   string
-	SourceKind       string
-	Err              error
-}
-
-func (e *RefreshError) Error() string {
-	if e == nil {
-		return ""
-	}
-	return fmt.Sprintf("anthropic workload identity federation: failed to refresh identity token from %s source (federation_rule=%s): %v",
-		e.SourceKind, e.FederationRuleID, e.Err)
-}
-
-func (e *RefreshError) Unwrap() error { return e.Err }
-
-// IsRefreshError reports whether err is, or wraps, a [RefreshError].
-func IsRefreshError(err error) bool {
-	var re *RefreshError
-	return errors.As(err, &re)
-}
-
-// sourceKind names the kind of token source for logging and error messages.
-func sourceKind(s *latest.IdentityTokenSourceConfig) string {
+// tokenSource turns the typed config into an option.IdentityTokenFunc plus
+// a short kind name used in error messages. Validation has already ensured
+// exactly one source is set; we re-check defensively for callers that
+// construct the type programmatically.
+func tokenSource(s *latest.IdentityTokenSourceConfig, env environment.Provider) (option.IdentityTokenFunc, string, error) {
 	switch {
 	case s == nil:
-		return "unknown"
+		return nil, "", errors.New("federation: identity_token is required")
 	case s.File != "":
-		return "file"
+		return fileSource(s.File), "file", nil
 	case s.Env != "":
-		return "env"
+		return envSource(s.Env, env), "env", nil
 	case len(s.Command) > 0:
-		return "command"
+		return commandSource(s.Command), "command", nil
 	case s.URL != "":
-		return "url"
-	default:
-		return "unknown"
+		return urlSource(s.URL, s.Headers, s.ResponseField, env), "url", nil
 	}
+	return nil, "", errors.New("federation: identity_token has no source configured")
 }
 
-// tokenSource turns the typed config into an option.IdentityTokenFunc.
-// Validation should already have ensured exactly one of the four kinds is
-// set, but we re-check defensively.
-func tokenSource(s *latest.IdentityTokenSourceConfig, env environment.Provider) (option.IdentityTokenFunc, error) {
-	if s == nil {
-		return nil, errors.New("federation: identity_token is required")
-	}
-	switch {
-	case s.File != "":
-		return fileSource(s.File), nil
-	case s.Env != "":
-		return envSource(s.Env, env), nil
-	case len(s.Command) > 0:
-		return commandSource(s.Command, env), nil
-	case s.URL != "":
-		return urlSource(s.URL, s.Headers, s.ResponseField, env, http.DefaultClient), nil
-	}
-	return nil, errors.New("federation: identity_token has no source configured")
-}
-
-// fileSource reads the token from path on every invocation. We delegate to
-// a tiny inline reader rather than option.IdentityTokenFile so that error
-// messages mention the path and so that test injection of fs.FS would be
-// straightforward later.
+// fileSource reads the token from path on every invocation. Suitable for
+// rotating-on-disk credentials (K8s projected SA tokens, SPIFFE helpers,
+// Vault sidecars, ...).
 func fileSource(path string) option.IdentityTokenFunc {
 	return func(_ context.Context) (string, error) {
 		data, err := os.ReadFile(path)
@@ -162,9 +97,9 @@ func fileSource(path string) option.IdentityTokenFunc {
 	}
 }
 
-// envSource reads the token from the named environment variable through the
-// runtime [environment.Provider], so docker-agent's secret-provider chain
-// (run secrets, credential helpers, keychain, ...) all work out of the box.
+// envSource reads the token through the runtime [environment.Provider], so
+// docker-agent's secret-provider chain (run secrets, credential helpers,
+// keychain, ...) all work out of the box.
 func envSource(name string, env environment.Provider) option.IdentityTokenFunc {
 	return func(ctx context.Context) (string, error) {
 		v, _ := env.Get(ctx, name)
@@ -177,10 +112,9 @@ func envSource(name string, env environment.Provider) option.IdentityTokenFunc {
 }
 
 // commandSource executes argv on every invocation and returns trimmed
-// stdout. Stderr is logged at warn level. The command is re-resolved by
-// [exec.LookPath] each call so that PATH changes inside long-running
-// processes are picked up.
-func commandSource(argv []string, _ environment.Provider) option.IdentityTokenFunc {
+// stdout. Stderr is logged at warn level on success and folded into the
+// error on failure.
+func commandSource(argv []string) option.IdentityTokenFunc {
 	return func(ctx context.Context) (string, error) {
 		if len(argv) == 0 {
 			return "", errors.New("identity_token.command is empty")
@@ -209,16 +143,13 @@ func commandSource(argv []string, _ environment.Provider) option.IdentityTokenFu
 // urlSource fetches a JWT from an HTTP(S) endpoint. The URL and header
 // values support ${VAR} expansion against env so callers can plug in
 // dynamic values like ACTIONS_ID_TOKEN_REQUEST_TOKEN without putting them
-// in the YAML.
+// in YAML.
 //
 // When responseField is non-empty, the response body is parsed as JSON and
-// the named top-level field is used as the token (e.g. GitHub Actions
-// returns {"value": "<jwt>"}). Otherwise, the trimmed response body is
-// used verbatim (e.g. GCP / Azure metadata servers return the raw JWT).
-func urlSource(rawURL string, headers map[string]string, responseField string, env environment.Provider, httpClient *http.Client) option.IdentityTokenFunc {
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
+// the named top-level field is read (GitHub Actions returns
+// {"value": "<jwt>"}); otherwise the trimmed body is used verbatim (GCP /
+// Azure metadata servers return the raw JWT).
+func urlSource(rawURL string, headers map[string]string, responseField string, env environment.Provider) option.IdentityTokenFunc {
 	return func(ctx context.Context) (string, error) {
 		expandedURL, err := environment.Expand(ctx, rawURL, env)
 		if err != nil {
@@ -235,7 +166,7 @@ func urlSource(rawURL string, headers map[string]string, responseField string, e
 			}
 			req.Header.Set(k, expanded)
 		}
-		resp, err := httpClient.Do(req)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("fetch %q: %w", expandedURL, err)
 		}
@@ -252,31 +183,35 @@ func urlSource(rawURL string, headers map[string]string, responseField string, e
 			}
 			return "", fmt.Errorf("fetch %q: status %d: %s", expandedURL, resp.StatusCode, snippet)
 		}
+		return extractToken(body, responseField, expandedURL)
+	}
+}
 
-		if responseField == "" {
-			token := strings.TrimSpace(string(body))
-			if token == "" {
-				return "", fmt.Errorf("fetch %q: empty response body", expandedURL)
-			}
-			return token, nil
-		}
-
-		var parsed map[string]any
-		if err := json.Unmarshal(body, &parsed); err != nil {
-			return "", fmt.Errorf("parse JSON response from %q: %w", expandedURL, err)
-		}
-		raw, ok := parsed[responseField]
-		if !ok {
-			return "", fmt.Errorf("fetch %q: response is missing field %q", expandedURL, responseField)
-		}
-		token, ok := raw.(string)
-		if !ok {
-			return "", fmt.Errorf("fetch %q: field %q is not a string", expandedURL, responseField)
-		}
-		token = strings.TrimSpace(token)
+// extractToken pulls the JWT out of an HTTP response body, either as the
+// trimmed body itself or a named top-level JSON field.
+func extractToken(body []byte, responseField, sourceURL string) (string, error) {
+	if responseField == "" {
+		token := strings.TrimSpace(string(body))
 		if token == "" {
-			return "", fmt.Errorf("fetch %q: field %q is empty", expandedURL, responseField)
+			return "", fmt.Errorf("fetch %q: empty response body", sourceURL)
 		}
 		return token, nil
 	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("parse JSON response from %q: %w", sourceURL, err)
+	}
+	raw, ok := parsed[responseField]
+	if !ok {
+		return "", fmt.Errorf("fetch %q: response is missing field %q", sourceURL, responseField)
+	}
+	token, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("fetch %q: field %q is not a string", sourceURL, responseField)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", fmt.Errorf("fetch %q: field %q is empty", sourceURL, responseField)
+	}
+	return token, nil
 }

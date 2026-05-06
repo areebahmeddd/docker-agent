@@ -68,48 +68,20 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	}
 
 	if gateway := globalOptions.Gateway(); gateway == "" {
-		switch {
-		case cfg.Auth != nil && cfg.Auth.Type == latest.AuthTypeWorkloadIdentityFederation:
-			if cfg.Auth.Federation == nil {
-				return nil, errors.New("anthropic: workload_identity_federation block is required when auth.type is workload_identity_federation")
-			}
-			slog.DebugContext(ctx, "Anthropic Workload Identity Federation configured, creating client",
-				"federation_rule_id", cfg.Auth.Federation.FederationRuleID)
-			fedOpts, err := federation.RequestOptions(cfg.Auth.Federation, env, nil)
-			if err != nil {
-				slog.ErrorContext(ctx, "Anthropic client creation failed", "error", err)
-				return nil, fmt.Errorf("anthropic workload identity federation: %w", err)
-			}
-			requestOptions := append([]option.RequestOption{
-				option.WithHTTPClient(httpclient.NewHTTPClient(ctx)),
-			}, fedOpts...)
-			if cfg.BaseURL != "" {
-				requestOptions = append(requestOptions, option.WithBaseURL(cfg.BaseURL))
-			}
-			client := anthropic.NewClient(requestOptions...)
-			anthropicClient.clientFn = func(context.Context) (anthropic.Client, error) {
-				return client, nil
-			}
-		case cfg.Auth != nil:
-			return nil, fmt.Errorf("anthropic: unsupported auth.type %q", cfg.Auth.Type)
-		default:
-			authToken, _ := env.Get(ctx, "ANTHROPIC_API_KEY")
-			if authToken == "" {
-				return nil, errors.New("ANTHROPIC_API_KEY environment variable is required")
-			}
-
-			slog.DebugContext(ctx, "Anthropic API key found, creating client")
-			requestOptions := []option.RequestOption{
-				option.WithAPIKey(authToken),
-				option.WithHTTPClient(httpclient.NewHTTPClient(ctx)),
-			}
-			if cfg.BaseURL != "" {
-				requestOptions = append(requestOptions, option.WithBaseURL(cfg.BaseURL))
-			}
-			client := anthropic.NewClient(requestOptions...)
-			anthropicClient.clientFn = func(context.Context) (anthropic.Client, error) {
-				return client, nil
-			}
+		authOpts, err := buildDirectAuthOptions(ctx, cfg, env)
+		if err != nil {
+			slog.ErrorContext(ctx, "Anthropic client creation failed", "error", err)
+			return nil, err
+		}
+		requestOptions := append([]option.RequestOption{
+			option.WithHTTPClient(httpclient.NewHTTPClient(ctx)),
+		}, authOpts...)
+		if cfg.BaseURL != "" {
+			requestOptions = append(requestOptions, option.WithBaseURL(cfg.BaseURL))
+		}
+		client := anthropic.NewClient(requestOptions...)
+		anthropicClient.clientFn = func(context.Context) (anthropic.Client, error) {
+			return client, nil
 		}
 	} else {
 		if cfg.Auth != nil {
@@ -164,6 +136,30 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	anthropicClient.fileManager = NewFileManager(anthropicClient.clientFn)
 
 	return anthropicClient, nil
+}
+
+// buildDirectAuthOptions returns the SDK request options that authenticate
+// a direct (non-gateway) Anthropic client. It picks between Workload
+// Identity Federation and the legacy ANTHROPIC_API_KEY path based on cfg.
+func buildDirectAuthOptions(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider) ([]option.RequestOption, error) {
+	if cfg.Auth != nil {
+		if cfg.Auth.Type != latest.AuthTypeWorkloadIdentityFederation {
+			return nil, fmt.Errorf("anthropic: unsupported auth.type %q", cfg.Auth.Type)
+		}
+		slog.Debug("Anthropic Workload Identity Federation configured",
+			"federation_rule_id", cfg.Auth.Federation.FederationRuleID)
+		opts, err := federation.RequestOptions(cfg.Auth.Federation, env)
+		if err != nil {
+			return nil, fmt.Errorf("anthropic workload identity federation: %w", err)
+		}
+		return opts, nil
+	}
+	apiKey, _ := env.Get(ctx, "ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		return nil, errors.New("ANTHROPIC_API_KEY environment variable is required")
+	}
+	slog.Debug("Anthropic API key found")
+	return []option.RequestOption{option.WithAPIKey(apiKey)}, nil
 }
 
 // hasFileAttachments checks if any messages contain file attachments.

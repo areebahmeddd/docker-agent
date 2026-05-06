@@ -90,19 +90,11 @@ func gatherEnvVarsForModel(cfg *latest.Config, modelName string, requiredEnv map
 // addEnvVarsForModelConfig adds required environment variables for a model config.
 // It checks custom providers first, then built-in aliases, then hardcoded fallbacks.
 func addEnvVarsForModelConfig(model *latest.ModelConfig, customProviders map[string]latest.ProviderConfig, requiredEnv map[string]bool) {
-	// Resolve effective auth from model-level value, falling back to the
-	// referenced provider's auth. A model with workload-identity-federation
-	// (or any other non-API-key auth) does NOT require a TokenKey or the
-	// hardcoded API-key env var; instead, the env vars referenced by its
-	// identity-token source are required.
-	effectiveAuth := model.Auth
-	if effectiveAuth == nil {
-		if provCfg, exists := customProviders[model.Provider]; exists && provCfg.Auth != nil {
-			effectiveAuth = provCfg.Auth
-		}
-	}
-	if effectiveAuth != nil {
-		for _, name := range envVarsForAuth(effectiveAuth) {
+	// A model with non-API-key auth (e.g. Workload Identity Federation) does
+	// not require a TokenKey or the hardcoded API-key env var. Instead, the
+	// env vars referenced by its identity-token source are required.
+	if auth := latest.EffectiveAuth(*model, customProviders); auth != nil {
+		for _, name := range auth.EnvVars() {
 			requiredEnv[name] = true
 		}
 		return
@@ -196,37 +188,4 @@ func GatherEnvVarsForTools(ctx context.Context, cfg *latest.Config) ([]string, e
 
 func sortedKeys(requiredEnv map[string]bool) []string {
 	return slices.Sorted(maps.Keys(requiredEnv))
-}
-
-// envVarsForAuth returns the environment variables referenced by a non-API-key
-// auth configuration. Today we support Workload Identity Federation, whose
-// identity-token source may pull from an env var directly (Env source) or via
-// ${VAR} expansion in URL / header values.
-func envVarsForAuth(a *latest.AuthConfig) []string {
-	if a == nil || a.Type != latest.AuthTypeWorkloadIdentityFederation || a.Federation == nil {
-		return nil
-	}
-	src := a.Federation.IdentityToken
-	if src == nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	collect := func(s string) {
-		os.Expand(s, func(name string) string {
-			if name != "" {
-				seen[name] = true
-			}
-			return ""
-		})
-	}
-	if src.Env != "" {
-		seen[src.Env] = true
-	}
-	if src.URL != "" {
-		collect(src.URL)
-	}
-	for _, v := range src.Headers {
-		collect(v)
-	}
-	return slices.Sorted(maps.Keys(seen))
 }
