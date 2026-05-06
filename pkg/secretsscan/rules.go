@@ -249,8 +249,9 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"discord"},
 		},
 		{
-			// doppler-api-token
-			expression: `['\"](dp\.pt\.)(?i)[a-z0-9]{43}['\"]`,
+			// doppler-api-token. Personal tokens are `dp.pt.<43 chars>`;
+			// the prefix is unique to Doppler so quotes aren't required.
+			expression: `(dp\.pt\.)(?i)[a-z0-9]{43}`,
 			keywords:   []string{"dp.pt."},
 		},
 		{
@@ -274,14 +275,18 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"duffel_test_", "duffel_live_"},
 		},
 		{
-			// dynatrace-api-token
-			expression: `['\"]dt0c01\.(?i)[a-z0-9]{24}\.[a-z0-9]{64}['\"]`,
+			// dynatrace-api-token. `dt0c01.` is the documented version
+			// prefix; combined with the fixed 24+64 hex body it doesn't
+			// need quote anchoring to stay specific.
+			expression: `dt0c01\.(?i)[a-z0-9]{24}\.[a-z0-9]{64}`,
 			keywords:   []string{"dt0c01."},
 		},
 		{
-			// easypost-api-token
-			expression: `['\"]EZ[AT]K(?i)[a-z0-9]{54}['\"]`,
-			keywords:   []string{"EZAK", "EZAT"},
+			// easypost-api-token. `EZAK` (production) / `EZTK` (test)
+			// prefixes plus the fixed 54-char body are specific enough
+			// that surrounding quotes aren't required.
+			expression: `EZ[AT]K(?i)[a-z0-9]{54}`,
+			keywords:   []string{"EZAK", "EZTK"},
 		},
 		{
 			// fastly-api-token
@@ -324,8 +329,10 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"eyJrIjoi"},
 		},
 		{
-			// hashicorp-tf-api-token
-			expression: `['\"](?i)[a-z0-9]{14}\.atlasv1\.[a-z0-9\-_=]{60,70}['\"]`,
+			// hashicorp-tf-api-token. The `<14 chars>.atlasv1.<body>`
+			// shape is documented and unique to Terraform Cloud, so the
+			// quote anchors that the upstream rule used aren't needed.
+			expression: `(?i)[a-z0-9]{14}\.atlasv1\.[a-z0-9\-_=]{60,70}`,
 			keywords:   []string{"atlasv1."},
 		},
 		{
@@ -404,8 +411,10 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"messagebird"},
 		},
 		{
-			// new-relic-user-api-key
-			expression: `['\"](NRAK-[A-Z0-9]{27})['\"]`,
+			// new-relic-user-api-key. `NRAK-` is the documented prefix;
+			// combined with the fixed 27-char body it stays specific
+			// without the surrounding quotes.
+			expression: `NRAK-[A-Z0-9]{27}`,
 			keywords:   []string{"NRAK-"},
 		},
 		{
@@ -414,13 +423,18 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"newrelic"},
 		},
 		{
-			// new-relic-browser-api-token
-			expression: `['\"](NRJS-[a-f0-9]{19})['\"]`,
+			// new-relic-browser-api-token. `NRJS-` is the documented
+			// prefix; the fixed 19-char body keeps the rule specific.
+			expression: `NRJS-[a-f0-9]{19}`,
 			keywords:   []string{"NRJS-"},
 		},
 		{
-			// npm-access-token
-			expression: `['\"](npm_(?i)[a-z0-9]{36})['\"]`,
+			// npm-access-token. The `npm_` prefix + fixed 36-char body is
+			// unique enough that we don't anchor on surrounding quotes —
+			// this catches CLI output (`npm token list`) and `.npmrc`
+			// shapes (`//registry.npmjs.org/:_authToken=npm_…`) alongside
+			// the JSON/YAML config form the upstream rule expected.
+			expression: `npm_(?i)[a-z0-9]{36}`,
 			keywords:   []string{"npm_"},
 		},
 		{
@@ -535,10 +549,12 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"GOCSPX-"},
 		},
 		{
-			// digitalocean-pat. v1 personal-access tokens are 71 chars
-			// total: `dop_v1_` + 64 lowercase hex.
-			expression: `dop_v1_[a-f0-9]{64}`,
-			keywords:   []string{"dop_v1_"},
+			// digitalocean-token. v1 personal-access tokens (`dop_v1_`),
+			// OAuth tokens (`doo_v1_`), and OAuth refresh tokens
+			// (`dor_v1_`) all share the 71-char total shape: 7-char
+			// prefix + 64 lowercase hex.
+			expression: `do[opr]_v1_[a-f0-9]{64}`,
+			keywords:   []string{"dop_v1_", "doo_v1_", "dor_v1_"},
 		},
 		{
 			// stripe-webhook-signing-secret. Used to verify incoming
@@ -566,6 +582,66 @@ var rules = sync.OnceValue(func() []rule {
 			// starts with `eyJ` (the base64 of `{"`).
 			expression: `sntrys_eyJ[A-Za-z0-9+/=_-]{40,}`,
 			keywords:   []string{"sntrys_"},
+		},
+		{
+			// stripe-restricted-key. Restricted API keys (introduced
+			// alongside the publishable / secret keys) follow the same
+			// `<prefix>_<env>_<body>` shape as `pk_` / `sk_`. Leakage of
+			// a restricted key still grants the scoped Stripe permissions
+			// it was issued with, so it must be redacted.
+			expression: `(?i)rk_(test|live)_[0-9a-z]{10,32}`,
+			keywords:   []string{"rk_test_", "rk_live_"},
+		},
+		{
+			// notion-integration-token. The `ntn_` prefix is the modern
+			// (post-2023) format for internal-integration tokens; the
+			// 46-character body is fixed.
+			expression: `ntn_[A-Za-z0-9]{46}`,
+			keywords:   []string{"ntn_"},
+		},
+		{
+			// gitlab-pipeline-trigger-token. `glptt-` is the documented
+			// prefix for trigger tokens; body is 40 lowercase hex.
+			expression: `glptt-[a-f0-9]{40}`,
+			keywords:   []string{"glptt-"},
+		},
+		{
+			// vault-service-token. HashiCorp Vault batch / service
+			// tokens issued by recent Vault versions carry the `hvs.`
+			// prefix and a long base64url body.
+			expression: `hvs\.[A-Za-z0-9_-]{90,120}`,
+			keywords:   []string{"hvs."},
+		},
+		{
+			// slack-rotating-token. Modern Slack OAuth issues refresh
+			// tokens (`xoxe-…`) and rotating bot/user tokens
+			// (`xoxe.xoxb-…` / `xoxe.xoxp-…`) whose bodies include dashes
+			// and dots — a shape the legacy `slack-access-token` rule
+			// (locked to `xox[baprs]-`) does not cover.
+			expression: `xoxe(\.xox[bp])?-[A-Za-z0-9.-]{40,}`,
+			keywords:   []string{"xoxe-", "xoxe.xox"},
+		},
+		{
+			// replicate-api-token. Replicate keys carry the `r8_`
+			// prefix; the fixed 37-char body keeps the rule specific.
+			expression: `r8_[A-Za-z0-9]{37}`,
+			keywords:   []string{"r8_"},
+		},
+		{
+			// square-access-token. Square production / sandbox access
+			// tokens carry the `EAAA` prefix and a 60-character body.
+			expression: `EAAA[A-Za-z0-9_-]{60}`,
+			keywords:   []string{"EAAA"},
+		},
+		{
+			// atlassian-api-token (Cloud). Atlassian Cloud API tokens
+			// carry the very distinctive `ATATT3xFfGF0` prefix followed
+			// by a long base64url body and an 8-char hex CRC. The
+			// existing `atlassian-api-token` rule only catches values
+			// preceded by an `atlassian` keyword — this rule fills the
+			// gap for bare leakage in CLI output / logs.
+			expression: `ATATT3xFfGF0[A-Za-z0-9_=-]{180,250}`,
+			keywords:   []string{"ATATT3xFfGF0"},
 		},
 	}
 })
