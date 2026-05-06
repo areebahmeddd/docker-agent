@@ -15,17 +15,18 @@ func ContainsSecrets(text string) bool {
 	if text == "" {
 		return false
 	}
-	rs := compiledRuleSet()
-	found := rs.ac.scan(text)
+	found := keywordPrefilter().scan(text)
 	if found[0]|found[1] == 0 {
 		return false
 	}
+	rs := compiledRuleSet()
 	for i := range rs.rules {
 		r := &rs.rules[i]
 		if found[0]&r.kwBits[0]|found[1]&r.kwBits[1] == 0 {
 			continue
 		}
-		if r.re.MatchString(text) {
+		re, _ := r.compile()
+		if re.MatchString(text) {
 			return true
 		}
 	}
@@ -50,11 +51,16 @@ func Redact(text string) string {
 	// redaction can only REMOVE keywords (RedactionMarker contains
 	// none — see TestRedactionMarkerIsNotASecret) so a stale "yes" on
 	// a rewritten string just means we run a regex that won't match.
-	rs := compiledRuleSet()
-	found := rs.ac.scan(text)
+	//
+	// On a clean input the AC scan returns an empty mask and we
+	// short-circuit before touching [compiledRuleSet] — no rule
+	// regexes are compiled, ever, in a process that only sees clean
+	// text.
+	found := keywordPrefilter().scan(text)
 	if found[0]|found[1] == 0 {
 		return text
 	}
+	rs := compiledRuleSet()
 	out := text
 	for i := range rs.rules {
 		r := &rs.rules[i]
@@ -71,7 +77,8 @@ func Redact(text string) string {
 // match indices to slice out the "secret" subgroup while keeping the
 // rest of the match intact.
 func redactWithRule(r *compiledRule, text string) string {
-	matches := r.re.FindAllStringSubmatchIndex(text, -1)
+	re, secretIdx := r.compile()
+	matches := re.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
 		return text
 	}
@@ -81,8 +88,8 @@ func redactWithRule(r *compiledRule, text string) string {
 	cursor := 0
 	for _, m := range matches {
 		start, end := m[0], m[1]
-		if r.secretIdx >= 0 && m[2*r.secretIdx] >= 0 {
-			start, end = m[2*r.secretIdx], m[2*r.secretIdx+1]
+		if secretIdx >= 0 && m[2*secretIdx] >= 0 {
+			start, end = m[2*secretIdx], m[2*secretIdx+1]
 		}
 		b.WriteString(text[cursor:start])
 		b.WriteString(RedactionMarker)

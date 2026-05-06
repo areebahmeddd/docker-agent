@@ -578,25 +578,33 @@ var rules = sync.OnceValue(func() []rule {
 // bitset lets us decide whether to run a rule's regex with two AND
 // instructions per rule once the AC pre-filter has produced the
 // "keywords found in this input" bitset.
+//
+// The regex itself is compiled lazily, on the first scan that
+// actually triggers this rule's keyword. A clean input — the
+// overwhelmingly common case — therefore never pays for compiling
+// any of the ~85 expressions in the catalogue, only for the
+// (de-duplicated) keyword bitset and the AC table.
 type compiledRule struct {
-	re        *regexp.Regexp
-	kwBits    [2]uint64 // indices into compiledRuleSet.ac's pattern slice
-	secretIdx int       // -1 when the rule has no (?P<secret>…) subgroup
+	kwBits  [2]uint64 // indices into keywordPrefilter's pattern slice
+	compile func() (*regexp.Regexp, int)
 }
 
-// ruleSet bundles the compiled rules with the Aho–Corasick automaton
-// built from their (de-duplicated) keyword set, so that a single
-// pre-filter scan answers "which rules might possibly match here?"
-// for every rule at once.
+// ruleSet groups the compiled rules with the keyword index they
+// share with [keywordPrefilter]. The AC table is intentionally NOT
+// stored here — it lives in its own [sync.OnceValue] so its
+// (relatively expensive) construction is deferred until the first
+// actual scan rather than piggy-backing on rule compilation.
 type ruleSet struct {
-	rules []compiledRule
-	ac    *acAutomaton
+	rules   []compiledRule
+	uniqKWs []string
 }
 
-// compiledRuleSet resolves the source ruleset exactly once. The
-// compilation cost — regex compilation, AC table construction — is
-// paid lazily on first use and amortised across every subsequent
-// [Redact]/[ContainsSecrets] call.
+// compiledRuleSet resolves the source catalogue into the cheap,
+// scan-time metadata: per-rule keyword bitset and a lazy regex
+// compiler. No regular expression and no AC table is built here —
+// each is wrapped in its own [sync.OnceValue] so a process that
+// calls [Redact] only on clean inputs ultimately pays for nothing
+// beyond this metadata pass and the AC scan.
 var compiledRuleSet = sync.OnceValue(func() *ruleSet {
 	src := rules()
 
@@ -619,22 +627,31 @@ var compiledRuleSet = sync.OnceValue(func() *ruleSet {
 		}
 	}
 
-	rs := &ruleSet{
-		rules: make([]compiledRule, len(src)),
-		ac:    buildAhoCorasick(uniqKWs),
-	}
+	out := make([]compiledRule, len(src))
 	for i, r := range src {
-		re := regexp.MustCompile(r.expression)
 		var bits [2]uint64
 		for _, k := range r.keywords {
 			idx := kwIdx[strings.ToLower(k)]
 			bits[idx>>6] |= 1 << uint(idx&63)
 		}
-		rs.rules[i] = compiledRule{
-			re:        re,
-			kwBits:    bits,
-			secretIdx: re.SubexpIndex("secret"),
+		expr := r.expression // bind for the closure below
+		out[i] = compiledRule{
+			kwBits: bits,
+			compile: sync.OnceValues(func() (*regexp.Regexp, int) {
+				re := regexp.MustCompile(expr)
+				return re, re.SubexpIndex("secret")
+			}),
 		}
 	}
-	return rs
+	return &ruleSet{rules: out, uniqKWs: uniqKWs}
+})
+
+// keywordPrefilter is the Aho–Corasick automaton built from the
+// rule catalogue's (de-duplicated) keyword set. It is its own
+// [sync.OnceValue] — separate from [compiledRuleSet] — so
+// construction of the dense transition table is deferred until the
+// first actual scan; merely importing this package, or calling
+// [Redact] on the empty string, builds nothing.
+var keywordPrefilter = sync.OnceValue(func() *acAutomaton {
+	return buildAhoCorasick(compiledRuleSet().uniqKWs)
 })
