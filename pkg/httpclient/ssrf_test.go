@@ -188,10 +188,10 @@ func TestIsPublicIP_IPv4MappedIPv6(t *testing.T) {
 		addr     string
 		isPublic bool
 	}{
-		{"::ffff:127.0.0.1", false},      // loopback
-		{"::ffff:10.0.0.1", false},       // RFC1918
+		{"::ffff:127.0.0.1", false},       // loopback
+		{"::ffff:10.0.0.1", false},        // RFC1918
 		{"::ffff:169.254.169.254", false}, // cloud metadata (link-local)
-		{"::ffff:8.8.8.8", true},         // public
+		{"::ffff:8.8.8.8", true},          // public
 	}
 
 	for _, tt := range tests {
@@ -202,4 +202,16 @@ func TestIsPublicIP_IPv4MappedIPv6(t *testing.T) {
 			assert.Equal(t, tt.isPublic, IsPublicIP(ip))
 		})
 	}
+}
+
+// TestSSRFDialControl_IPv6ZoneID verifies that IPv6 addresses with zone
+// identifiers (fe80::1%eth0) are rejected. net.ParseIP returns nil for
+// such addresses, causing the dial control to fail-closed with "not a
+// valid IP" rather than potentially bypassing the public-IP check.
+func TestSSRFDialControl_IPv6ZoneID(t *testing.T) {
+	t.Parallel()
+
+	err := SSRFDialControl("tcp", "[fe80::1%eth0]:80", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a valid IP")
 }
