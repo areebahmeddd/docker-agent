@@ -1,20 +1,21 @@
 # https://taskfile.dev
 version: "3"
 
+vars:
+  GIT_TAG:
+    sh: echo "${GIT_TAG:-$(git describe --tags --exact-match 2>/dev/null || echo dev)}"
+  GIT_COMMIT:
+    sh: echo "${GIT_COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo dev)}"
+
+env:
+  GIT_TAG: "{{.GIT_TAG}}"
+  GIT_COMMIT: "{{.GIT_COMMIT}}"
+
 tasks:
   default:
     desc: Run lint, test, and build
-    deps:
-      - lint
-      - test
-      - build
-
-  dev:
-    desc: Run lint, test, and build
-    deps:
-      - lint
-      - test
-      - build
+    aliases: [dev]
+    deps: [lint, test, build]
 
   build:
     desc: Build the application binary
@@ -33,8 +34,7 @@ tasks:
 
   deploy-local:
     desc: Deploy the cli-plugin
-    deps:
-      - build
+    deps: [build]
     cmds:
       - mkdir -p "${HOME}/.docker/cli-plugins"
       - /bin/ln -sf "$(pwd)/bin/docker-agent" "${HOME}/.docker/cli-plugins/docker-agent"
@@ -61,26 +61,22 @@ tasks:
 
   test:
     desc: Run tests
-    dotenv:
-      - .env.test
+    dotenv: [.env.test]
     cmds:
       - go test ./...
 
   test-binary:
     desc: Run tests on build binary
-    deps:
-      - deploy-local
-    dotenv:
-      - .env.test
+    deps: [deploy-local]
+    dotenv: [.env.test]
     cmds:
       - go test -tags=binary_required ./e2e/binary/...
 
   build-local:
     desc: Build binaries for local host platform
     cmds:
+      - docker build --target=local --build-arg GIT_TAG --build-arg GIT_COMMIT --platform local --output=./dist .
       - |
-        . scripts/helpers/git-env.sh
-        docker build --target=local --build-arg GIT_TAG="${GIT_TAG}" --build-arg GIT_COMMIT="${GIT_COMMIT}" --platform local --output=./dist .
         if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
           mv ./dist/docker-agent ./dist/docker-agent.exe
         fi
@@ -88,23 +84,17 @@ tasks:
   cross:
     desc: Build binaries for multiple platforms
     cmds:
-      - |
-        . scripts/helpers/git-env.sh
-        docker buildx build --target=cross --build-arg GIT_TAG="${GIT_TAG}" --build-arg GIT_COMMIT="${GIT_COMMIT}" --platform linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64,windows/arm64 --output=./dist .
+      - docker buildx build --target=cross --build-arg GIT_TAG --build-arg GIT_COMMIT --platform linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64,windows/arm64 --output=./dist .
 
   build-image:
     desc: Build Docker image
     cmds:
-      - |
-        . scripts/helpers/git-env.sh
-        docker build -t docker/docker-agent --build-arg GIT_TAG="${GIT_TAG}" --build-arg GIT_COMMIT="${GIT_COMMIT}" .
+      - docker build -t docker/docker-agent --build-arg GIT_TAG --build-arg GIT_COMMIT .
 
   push-image:
     desc: Build and Push Docker image
     cmds:
-      - |
-        . scripts/helpers/git-env.sh
-        docker buildx build --push --platform linux/amd64,linux/arm64 -t docker/docker-agent --build-arg GIT_TAG="${GIT_TAG}" --build-arg GIT_COMMIT="${GIT_COMMIT}" .
+      - docker buildx build --push --platform linux/amd64,linux/arm64 -t docker/docker-agent --build-arg GIT_TAG --build-arg GIT_COMMIT .
 
   docs-serve:
     desc: Preview the Jekyll documentation site locally
