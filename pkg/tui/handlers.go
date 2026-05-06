@@ -71,7 +71,7 @@ func (m *appModel) handleBranchFromEdit(msg messages.BranchFromEditMsg) (tea.Mod
 	if m.tuiStore != nil {
 		oldPersistedID := m.persistedSessionID(activeID)
 		if err := m.tuiStore.UpdateTabSessionID(ctx, oldPersistedID, newSess.ID); err != nil {
-			slog.Warn("Failed to update tab session ID after branch", "error", err)
+			slog.WarnContext(ctx, "Failed to update tab session ID after branch", "error", err)
 		}
 	}
 	m.persistActiveTab(newSess.ID)
@@ -135,7 +135,7 @@ func (m *appModel) handleForkSession() (tea.Model, tea.Cmd) {
 
 	if m.tuiStore != nil {
 		if err := m.tuiStore.AddTab(ctx, forkedSession.ID, forkedSession.WorkingDir); err != nil {
-			slog.Warn("Failed to persist forked tab", "error", err)
+			slog.WarnContext(ctx, "Failed to persist forked tab", "error", err)
 		}
 	}
 

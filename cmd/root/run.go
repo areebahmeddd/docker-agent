@@ -592,7 +592,7 @@ func stopToolSets(t toolStopper) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := t.StopToolSets(ctx); err != nil {
-		slog.Error("Failed to stop tool sets", "error", err)
+		slog.ErrorContext(ctx, "Failed to stop tool sets", "error", err)
 	}
 }
 

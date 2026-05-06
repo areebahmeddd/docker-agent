@@ -27,6 +27,7 @@ func allCops() []cop.Cop {
 		NewRuntimeSessionScoped(),
 		NewHookConfigSync(),
 		NewHookBuiltinsRegistered(),
+		NewSlogContextual(),
 	}
 }
 
