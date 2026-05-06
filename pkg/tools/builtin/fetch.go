@@ -64,6 +64,20 @@ func (h *fetchHandler) CallTool(ctx context.Context, params FetchToolArgs) (*too
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
 			}
+			// Strip caller-supplied headers when redirecting to a different
+			// host so credentials (Authorization, X-Api-Key, ...) never leak
+			// to a third-party host. Go's stdlib already strips a small
+			// allow-list (Authorization, WWW-Authenticate, Cookie) on cross-
+			// domain redirects but does NOT strip arbitrary custom headers,
+			// so we strip everything the operator configured. via[0] is the
+			// original request; comparing req.URL.Host against it (rather
+			// than the previous hop) guarantees that headers cannot reappear
+			// after a chain like A -> B -> A.
+			if origHost := via[0].URL.Host; origHost != req.URL.Host {
+				for k := range h.headers {
+					req.Header.Del(k)
+				}
+			}
 			return h.checkDomainAllowed(req.URL)
 		},
 	}
@@ -198,6 +212,16 @@ func (h *fetchHandler) fetchURL(ctx context.Context, client *http.Client, urlStr
 // fetchRobots fetches and parses robots.txt for the given URL's host.
 // Returns nil (allow all) if robots.txt is missing or unreachable.
 // Returns an error if the server returns a non-OK status or the content cannot be read/parsed.
+//
+// We deliberately reuse the caller-supplied client (rather than building a
+// separate one) so that robots.txt requests inherit the same CheckRedirect
+// policy as the main fetch:
+//   - allowed_domains / blocked_domains are re-evaluated on every redirect,
+//     so an allow-listed origin's robots.txt cannot redirect into a denied
+//     host (e.g. cloud-metadata IPs) to bypass the policy.
+//   - caller-supplied headers (Authorization, X-Api-Key, ...) are stripped
+//     when crossing host boundaries, so credentials never leak to a
+//     third-party host that handles a robots.txt redirect.
 func (h *fetchHandler) fetchRobots(ctx context.Context, client *http.Client, targetURL *url.URL, userAgent string) (*robotstxt.RobotsData, error) {
 	// Build robots.txt URL
 	robotsURL := &url.URL{
@@ -214,16 +238,19 @@ func (h *fetchHandler) fetchRobots(ctx context.Context, client *http.Client, tar
 	}
 
 	req.Header.Set("User-Agent", userAgent)
-
-	// Create robots client with same timeout and transport as main client
-	robotsClient := &http.Client{
-		Timeout:   client.Timeout,   // Same timeout as main client
-		Transport: client.Transport, // Inherit proxy/transport settings
+	// Apply custom headers to robots.txt requests too, so authenticated
+	// endpoints that also protect robots.txt work correctly. Cross-host
+	// leaks are prevented by the shared client's CheckRedirect.
+	for k, v := range h.headers {
+		req.Header.Set(k, v)
 	}
 
-	resp, err := robotsClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		// If robots.txt is unreachable, allow the fetch
+		// If robots.txt is unreachable, allow the fetch. This also covers the
+		// case where CheckRedirect blocks a robots.txt redirect into a denied
+		// host: we treat it as "no robots.txt available" and proceed with the
+		// main fetch, which itself runs through the same allow/deny checks.
 		return nil, nil
 	}
 	defer resp.Body.Close()
