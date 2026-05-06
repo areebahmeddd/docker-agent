@@ -17,12 +17,45 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 )
+
+// Tunables for the network-bound and process-bound token sources. Identity
+// tokens are tiny (a few KB at most) and the endpoints serving them — cloud
+// metadata servers, GitHub Actions OIDC, on-disk helpers — respond fast or
+// not at all. We therefore set a hard cap on response size and a default
+// deadline as defence in depth on top of the SDK-provided context.
+const (
+	// maxTokenResponseBytes caps the body we'll read from a urlSource
+	// endpoint. JWT identity tokens are well under 16 KiB; 1 MiB leaves a
+	// generous margin while preventing OOM from a hostile or misconfigured
+	// endpoint.
+	maxTokenResponseBytes int64 = 1 << 20
+	// tokenFetchTimeout bounds a single urlSource HTTP request when the
+	// caller's context has no deadline of its own. The SDK passes a
+	// per-request context that is normally already bounded; this is a
+	// belt-and-braces fallback for callers that don't.
+	tokenFetchTimeout = 30 * time.Second
+	// tokenCommandTimeout does the same job for commandSource.
+	tokenCommandTimeout = 30 * time.Second
+)
+
+// noRedirectClient is the HTTP client used by urlSource. We disable redirect
+// following because Go only strips Authorization/Cookie/Www-Authenticate on
+// cross-origin redirects; a custom header value carrying a secret (e.g.
+// X-OIDC-Token) would still be re-sent to the new host. Identity-token
+// endpoints (GitHub Actions, IMDS, GCP/Azure metadata, ...) don't redirect.
+var noRedirectClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // RequestOptions builds the anthropic-sdk-go RequestOption that
 // authenticates the client using OIDC Workload Identity Federation.
@@ -113,12 +146,15 @@ func envSource(name string, env environment.Provider) option.IdentityTokenFunc {
 
 // commandSource executes argv on every invocation and returns trimmed
 // stdout. Stderr is logged at warn level on success and folded into the
-// error on failure.
+// error on failure. A hard timeout is applied on top of the caller's
+// context so a wedged subprocess can't stall token refresh forever.
 func commandSource(argv []string) option.IdentityTokenFunc {
 	return func(ctx context.Context) (string, error) {
 		if len(argv) == 0 {
 			return "", errors.New("identity_token.command is empty")
 		}
+		ctx, cancel := context.WithTimeout(ctx, tokenCommandTimeout)
+		defer cancel()
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // user-provided per config; intentional
 		var stdout, stderr strings.Builder
 		cmd.Stdout = &stdout
@@ -145,6 +181,15 @@ func commandSource(argv []string) option.IdentityTokenFunc {
 // dynamic values like ACTIONS_ID_TOKEN_REQUEST_TOKEN without putting them
 // in YAML.
 //
+// Three pieces of defensive behaviour worth noting:
+//   - Redirects are NOT followed: Go strips Authorization on cross-origin
+//     redirects but not arbitrary user-defined headers, so a redirect from
+//     the configured endpoint could leak a header secret to a different host.
+//   - The response body is hard-capped at maxTokenResponseBytes to bound
+//     memory in the face of a hostile endpoint.
+//   - A request-level timeout (tokenFetchTimeout) is layered on top of the
+//     caller's context.
+//
 // When responseField is non-empty, the response body is parsed as JSON and
 // the named top-level field is read (GitHub Actions returns
 // {"value": "<jwt>"}); otherwise the trimmed body is used verbatim (GCP /
@@ -155,6 +200,8 @@ func urlSource(rawURL string, headers map[string]string, responseField string, e
 		if err != nil {
 			return "", fmt.Errorf("expand identity_token.url: %w", err)
 		}
+		ctx, cancel := context.WithTimeout(ctx, tokenFetchTimeout)
+		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, expandedURL, http.NoBody)
 		if err != nil {
 			return "", fmt.Errorf("build request for %q: %w", expandedURL, err)
@@ -166,25 +213,35 @@ func urlSource(rawURL string, headers map[string]string, responseField string, e
 			}
 			req.Header.Set(k, expanded)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := noRedirectClient.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("fetch %q: %w", expandedURL, err)
 		}
 		defer resp.Body.Close()
 
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponseBytes))
 		if err != nil {
 			return "", fmt.Errorf("read response from %q: %w", expandedURL, err)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			snippet := strings.TrimSpace(string(body))
-			if len(snippet) > 256 {
-				snippet = snippet[:256] + "…"
-			}
-			return "", fmt.Errorf("fetch %q: status %d: %s", expandedURL, resp.StatusCode, snippet)
+			return "", fmt.Errorf("fetch %q: status %d: %s", expandedURL, resp.StatusCode, truncateForError(body))
 		}
 		return extractToken(body, responseField, expandedURL)
 	}
+}
+
+// truncateForError returns a UTF-8-safe, single-line, length-bounded
+// rendering of body for use in error messages. We cap at ~256 runes and
+// append an ellipsis when truncated, never splitting in the middle of a
+// multibyte sequence.
+func truncateForError(body []byte) string {
+	const maxRunes = 256
+	s := strings.TrimSpace(string(body))
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:maxRunes]) + "…"
 }
 
 // extractToken pulls the JWT out of an HTTP response body, either as the

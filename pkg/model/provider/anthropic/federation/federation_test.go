@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,6 +136,56 @@ func TestURLSource_MissingField(t *testing.T) {
 	_, err := urlSource(server.URL, nil, "value", environment.NewMapEnvProvider(nil))(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `missing field "value"`)
+}
+
+// TestURLSource_DoesNotFollowRedirects verifies that a redirect from the
+// configured token endpoint is surfaced as a non-2xx error rather than
+// silently followed. Following redirects could leak sensitive headers
+// (e.g. X-OIDC-Token) to attacker-controlled hosts.
+func TestURLSource_DoesNotFollowRedirects(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Location", "https://attacker.example/grab")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+
+	_, err := urlSource(server.URL, nil, "", environment.NewMapEnvProvider(nil))(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "status 302")
+	assert.Equal(t, 1, calls, "client must not follow the redirect")
+}
+
+// TestURLSource_LimitsResponseBody verifies that a hostile or misconfigured
+// endpoint returning a giant body cannot exhaust memory: we read at most
+// maxTokenResponseBytes and treat the rest as silently truncated.
+func TestURLSource_LimitsResponseBody(t *testing.T) {
+	huge := strings.Repeat("A", int(maxTokenResponseBytes)+1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(huge))
+	}))
+	defer server.Close()
+
+	got, err := urlSource(server.URL, nil, "", environment.NewMapEnvProvider(nil))(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, got, int(maxTokenResponseBytes), "body must be truncated to the limit")
+}
+
+func TestTruncateForError(t *testing.T) {
+	// Short input passes through verbatim, with surrounding whitespace trimmed.
+	assert.Equal(t, "hello", truncateForError([]byte("  hello\n")))
+
+	// Long ASCII input is truncated to 256 runes plus an ellipsis.
+	long := strings.Repeat("a", 300)
+	got := truncateForError([]byte(long))
+	assert.Equal(t, strings.Repeat("a", 256)+"…", got)
+
+	// Multibyte input is truncated on a rune boundary, never mid-codepoint.
+	multi := strings.Repeat("你", 300) // each is 3 bytes
+	got = truncateForError([]byte(multi))
+	assert.True(t, utf8.ValidString(got), "truncated string must be valid UTF-8")
+	assert.Equal(t, strings.Repeat("你", 256)+"…", got)
 }
 
 func TestRequestOptions_RejectsNilConfig(t *testing.T) {

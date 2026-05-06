@@ -25,13 +25,7 @@ func (t *Config) validate() error {
 		}
 	}
 	for name, m := range t.Models {
-		prov := m.Provider
-		if prov == "" {
-			if p, ok := t.Providers[name]; ok {
-				prov = p.Provider
-			}
-		}
-		if err := m.Auth.validate(prov); err != nil {
+		if err := m.Auth.validate(EffectiveProviderType(m, t.Providers)); err != nil {
 			return fmt.Errorf("models.%s: %w", name, err)
 		}
 	}

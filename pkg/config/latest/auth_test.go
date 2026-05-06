@@ -268,15 +268,18 @@ func TestConfigValidate_AuthErrorsAreScoped(t *testing.T) {
 		assert.Contains(t, err.Error(), "federation_rule_id is required")
 	})
 
-	t.Run("model auth inherits provider type from referenced provider", func(t *testing.T) {
-		// Model has empty Provider but its name maps to a custom provider
-		// that resolves to "anthropic" — auth should validate against that.
+	t.Run("model auth on a model that references a custom provider", func(t *testing.T) {
+		// The model points at a custom-provider key ("my-anthropic") whose
+		// underlying type is "anthropic". Validation must look through that
+		// indirection rather than comparing the auth.type against the raw
+		// provider key on the model.
 		cfg := Config{
 			Providers: map[string]ProviderConfig{
-				"claude": {Provider: "anthropic"},
+				"my-anthropic": {Provider: "anthropic"},
 			},
 			Models: map[string]ModelConfig{
 				"claude": {
+					Provider: "my-anthropic",
 					Auth: &AuthConfig{
 						Type: AuthTypeWorkloadIdentityFederation,
 						Federation: &FederationAuthConfig{
@@ -290,5 +293,29 @@ func TestConfigValidate_AuthErrorsAreScoped(t *testing.T) {
 		}
 		err := cfg.validate()
 		assert.NoError(t, err)
+	})
+
+	t.Run("model auth rejected when referenced provider is not anthropic", func(t *testing.T) {
+		cfg := Config{
+			Providers: map[string]ProviderConfig{
+				"my-openai": {Provider: "openai"},
+			},
+			Models: map[string]ModelConfig{
+				"gpt": {
+					Provider: "my-openai",
+					Auth: &AuthConfig{
+						Type: AuthTypeWorkloadIdentityFederation,
+						Federation: &FederationAuthConfig{
+							FederationRuleID: "fdrl_x",
+							OrganizationID:   "org",
+							IdentityToken:    &IdentityTokenSourceConfig{File: "/t"},
+						},
+					},
+				},
+			},
+		}
+		err := cfg.validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "only supported with the anthropic provider")
 	})
 }
