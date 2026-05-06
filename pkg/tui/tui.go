@@ -1219,9 +1219,30 @@ func (m *appModel) openWorkingDirPicker() (tea.Model, tea.Cmd) {
 // Existing chat pages and editors are preserved (not recreated) so that in-flight streaming
 // content and draft text are retained when switching back to a tab.
 func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
+	// If a background dialog (e.g. pending elicitation) is open on the
+	// outgoing tab, capture its originating event and the outgoing tab ID
+	// before the supervisor flips activeID. We only commit the re-stash
+	// after SwitchTo succeeds — otherwise a failed switch would leave the
+	// supervisor with a stale pending event and the dialog still on screen.
+	var (
+		backgroundEvent tea.Msg
+		outgoingTabID   string
+	)
+	if m.dialogMgr.Open() && m.dialogMgr.TopIsBackground() {
+		backgroundEvent = m.dialogMgr.TopBackgroundEvent()
+		outgoingTabID = m.supervisor.ActiveID()
+	}
+
 	runner := m.supervisor.SwitchTo(sessionID)
 	if runner == nil {
 		return m, notification.ErrorCmd("Session not found")
+	}
+
+	// Now that the switch is committed, finalize the dialog hand-off.
+	var closeBackgroundDialogCmd tea.Cmd
+	if backgroundEvent != nil && outgoingTabID != "" && outgoingTabID != sessionID {
+		m.supervisor.SetPendingEvent(outgoingTabID, backgroundEvent)
+		closeBackgroundDialogCmd = core.CmdHandler(dialog.CloseDialogMsg{})
 	}
 
 	// Blur current editor before switching
@@ -1243,7 +1264,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 					}
 				}
 
-				cmd = tea.Batch(cmd, m.applySidebarCollapsed(sessionID))
+				cmd = tea.Batch(cmd, m.applySidebarCollapsed(sessionID), closeBackgroundDialogCmd)
 				return model, cmd
 			}
 		}
@@ -1294,6 +1315,9 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	if pendingCmd := m.replayPendingEvent(sessionID); pendingCmd != nil {
 		cmds = append(cmds, pendingCmd)
 	}
+	if closeBackgroundDialogCmd != nil {
+		cmds = append(cmds, closeBackgroundDialogCmd)
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -1328,12 +1352,14 @@ func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
 	switch ev := pendingEvent.(type) {
 	case *runtime.ToolCallConfirmationEvent:
 		return core.CmdHandler(dialog.OpenDialogMsg{
-			Model: dialog.NewToolConfirmationDialog(ev, sessionState),
+			Model:            dialog.NewToolConfirmationDialog(ev, sessionState),
+			OriginatingEvent: ev,
 		})
 
 	case *runtime.MaxIterationsReachedEvent:
 		return core.CmdHandler(dialog.OpenDialogMsg{
-			Model: dialog.NewMaxIterationsDialog(ev.MaxIterations, m.application),
+			Model:            dialog.NewMaxIterationsDialog(ev.MaxIterations, m.application),
+			OriginatingEvent: ev,
 		})
 
 	case *runtime.ElicitationRequestEvent:
@@ -1353,7 +1379,8 @@ func (m *appModel) replayElicitationEvent(ev *runtime.ElicitationRequestEvent) t
 				serverURL = url
 			}
 			return core.CmdHandler(dialog.OpenDialogMsg{
-				Model: dialog.NewOAuthAuthorizationDialog(serverURL, m.application),
+				Model:            dialog.NewOAuthAuthorizationDialog(serverURL, m.application),
+				OriginatingEvent: ev,
 			})
 		}
 	}
@@ -1361,11 +1388,13 @@ func (m *appModel) replayElicitationEvent(ev *runtime.ElicitationRequestEvent) t
 	switch ev.Mode {
 	case "url":
 		return core.CmdHandler(dialog.OpenDialogMsg{
-			Model: dialog.NewURLElicitationDialog(ev.Message, ev.URL),
+			Model:            dialog.NewURLElicitationDialog(ev.Message, ev.URL),
+			OriginatingEvent: ev,
 		})
 	default:
 		return core.CmdHandler(dialog.OpenDialogMsg{
-			Model: dialog.NewElicitationDialog(ev.Message, ev.Schema, ev.Meta),
+			Model:            dialog.NewElicitationDialog(ev.Message, ev.Schema, ev.Meta),
+			OriginatingEvent: ev,
 		})
 	}
 }
@@ -1682,8 +1711,16 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		})
 	}
 
-	// Dialog gets priority when open
+	// Dialog gets priority when open, EXCEPT for background dialogs (e.g.
+	// pending elicitations) which let tab-navigation keys keep working so
+	// the user can switch to another conversation while the prompt waits.
 	if m.dialogMgr.Open() {
+		if m.dialogMgr.TopIsBackground() && !m.leanMode && !m.editor.IsHistorySearchActive() {
+			m.tabBar.SetCloseTabEnabled(true)
+			if cmd := m.tabBar.Update(msg); cmd != nil {
+				return m, cmd
+			}
+		}
 		return m.forwardDialog(msg)
 	}
 
@@ -1829,6 +1866,17 @@ func (m *appModel) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 
 	// Dialogs use full-window coordinates (they're positioned over the entire screen)
 	if m.dialogMgr.Open() {
+		// Background dialogs (e.g. pending elicitations) let tab-bar clicks
+		// pass through so the user can keep navigating between tabs.
+		if m.dialogMgr.TopIsBackground() && !m.leanMode && m.hitTestRegion(msg.Y) == regionTabBar {
+			adjustedMsg := msg
+			adjustedMsg.X = msg.X - styles.AppPadding
+			adjustedMsg.Y = msg.Y - m.contentHeight - 1
+			if cmd := m.tabBar.Update(adjustedMsg); cmd != nil {
+				return m, cmd
+			}
+			return m, nil
+		}
 		return m.forwardDialog(msg)
 	}
 
@@ -1953,6 +2001,12 @@ func (m *appModel) handleWheelCoalesced(msg messages.WheelCoalescedMsg) (tea.Mod
 	}
 
 	if m.dialogMgr.Open() {
+		// Background dialogs (e.g. pending elicitations) let chat-area scroll
+		// wheel events fall through so the user can review the conversation
+		// behind the dialog while the prompt waits.
+		if m.dialogMgr.TopIsBackground() && m.hitTestRegion(msg.Y) == regionContent {
+			return m.forwardChat(msg)
+		}
 		return m.forwardDialog(msg)
 	}
 
