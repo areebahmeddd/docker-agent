@@ -162,6 +162,12 @@ func (w *SandboxTokenWriter) writeOnce(ctx context.Context) {
 		slog.DebugContext(ctx, "Failed to rename sandbox tokens file", "to", w.path, "error", err)
 		return
 	}
+	// natefinch/atomic does not allow specifying a file mode; the file holds
+	// a bearer token, so restrict it to the user.
+	if err := os.Chmod(w.path, 0o600); err != nil {
+		slog.Debug("Failed to chmod sandbox tokens file", "path", w.path, "error", err)
+		return
+	}
 
 	slog.DebugContext(ctx, "Wrote sandbox tokens file", "path", w.path)
 }
