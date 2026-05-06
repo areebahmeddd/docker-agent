@@ -166,7 +166,7 @@ type Dispatcher struct {
 // error responses can be sent back to the model on the next turn.
 func (d *Dispatcher) Process(ctx context.Context, sess *session.Session, calls []tools.ToolCall, agentTools []tools.Tool, em Emitter) (stopRun bool, stopMessage string) {
 	a := d.AgentFor(sess)
-	slog.Debug("Processing tool calls", "agent", a.Name(), "call_count", len(calls))
+	slog.DebugContext(ctx, "Processing tool calls", "agent", a.Name(), "call_count", len(calls))
 
 	toolByName := make(map[string]tools.Tool, len(agentTools))
 	for _, t := range agentTools {
@@ -254,13 +254,13 @@ func (c *call) run(ctx context.Context) CallOutcome {
 	))
 	defer span.End()
 
-	slog.Debug("Processing tool call", "agent", c.a.Name(), "tool", c.tc.Function.Name, "session_id", c.sess.ID)
+	slog.DebugContext(ctx, "Processing tool call", "agent", c.a.Name(), "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 
 	// After a handoff the model may hallucinate tools it saw earlier in
 	// the conversation. Reject unknown tools with an error response so it
 	// can self-correct.
 	if !c.available {
-		slog.Warn("Tool call for unavailable tool", "agent", c.a.Name(), "tool", c.tc.Function.Name, "session_id", c.sess.ID)
+		slog.WarnContext(ctx, "Tool call for unavailable tool", "agent", c.a.Name(), "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 		c.errorResponse(ctx, fmt.Sprintf("Tool '%s' is not available. You can only use the tools provided to you.", c.tc.Function.Name))
 		span.SetStatus(codes.Error, "tool not available")
 		return CallOutcome{}
@@ -333,7 +333,7 @@ func (c *call) approveAndRun(ctx context.Context, runTool func() CallOutcome) Ca
 		c.notifyApproval(ctx, ApprovalDecisionAllow, allowSourceForDecision(decision))
 		return runTool()
 	case OutcomeDeny:
-		slog.Debug("Tool denied by permissions", "tool", c.tc.Function.Name, "source", decision.Source, "session_id", c.sess.ID)
+		slog.DebugContext(ctx, "Tool denied by permissions", "tool", c.tc.Function.Name, "source", decision.Source, "session_id", c.sess.ID)
 		c.notifyApproval(ctx, ApprovalDecisionDeny, denySourceForChecker(decision.Source))
 		c.errorResponse(ctx, fmt.Sprintf("Tool '%s' is denied by %s.", c.tc.Function.Name, decision.Source))
 		return CallOutcome{}
@@ -342,7 +342,7 @@ func (c *call) approveAndRun(ctx context.Context, runTool func() CallOutcome) Ca
 			// Explicit ask pattern from a checker: skip the hook and
 			// prompt the user directly. The user is the source of
 			// truth for these calls.
-			slog.Debug("Tool requires confirmation (ask pattern)", "tool", c.tc.Function.Name, "source", decision.Source, "session_id", c.sess.ID)
+			slog.DebugContext(ctx, "Tool requires confirmation (ask pattern)", "tool", c.tc.Function.Name, "source", decision.Source, "session_id", c.sess.ID)
 			return c.askUser(ctx, runTool)
 		}
 	}
@@ -386,7 +386,7 @@ func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOut
 	c.applyHookModifiedInput(result)
 
 	if !result.Allowed {
-		slog.Debug("Pre-tool hook blocked tool call", "tool", c.tc.Function.Name, "message", result.Message)
+		slog.DebugContext(ctx, "Pre-tool hook blocked tool call", "tool", c.tc.Function.Name, "message", result.Message)
 		c.notifyApproval(ctx, ApprovalDecisionDeny, ApprovalSourcePreToolUseHookDeny)
 		c.em.EmitHookBlocked(c.tc, c.tool, result.Message, c.a.Name())
 		c.errorResponse(ctx, "Tool call blocked by hook: "+result.Message)
@@ -395,11 +395,11 @@ func (c *call) consultPreToolUseHook(ctx context.Context, runTool func() CallOut
 
 	switch result.Decision {
 	case hooks.DecisionAllow:
-		slog.Debug("Tool auto-approved by pre_tool_use hook", "tool", c.tc.Function.Name, "reason", result.DecisionReason, "session_id", c.sess.ID)
+		slog.DebugContext(ctx, "Tool auto-approved by pre_tool_use hook", "tool", c.tc.Function.Name, "reason", result.DecisionReason, "session_id", c.sess.ID)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourcePreToolUseHookAllow)
 		return runTool(), true
 	case hooks.DecisionAsk:
-		slog.Debug("pre_tool_use hook escalated to user", "tool", c.tc.Function.Name, "reason", result.DecisionReason, "session_id", c.sess.ID)
+		slog.DebugContext(ctx, "pre_tool_use hook escalated to user", "tool", c.tc.Function.Name, "reason", result.DecisionReason, "session_id", c.sess.ID)
 		return c.askUser(ctx, runTool), true
 	}
 	return CallOutcome{}, false
@@ -487,7 +487,7 @@ func (c *call) askUser(ctx context.Context, runTool func() CallOutcome) CallOutc
 		return outcome
 	}
 
-	slog.Debug("Tools not approved, waiting for resume", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
+	slog.DebugContext(ctx, "Tools not approved, waiting for resume", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 	c.em.EmitToolCallConfirmation(c.tc, c.tool, c.a.Name())
 
 	if c.d.Hooks != nil {
@@ -498,7 +498,7 @@ func (c *call) askUser(ctx context.Context, runTool func() CallOutcome) CallOutc
 	case req := <-c.d.Resume:
 		return c.handleResume(ctx, req, runTool)
 	case <-ctx.Done():
-		slog.Debug("Context cancelled while waiting for resume", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
+		slog.DebugContext(ctx, "Context cancelled while waiting for resume", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 		c.notifyApproval(ctx, ApprovalDecisionCanceled, ApprovalSourceContextCanceled)
 		c.errorResponse(ctx, "The tool call was canceled by the user.")
 		return CallOutcome{Canceled: true}
@@ -528,7 +528,7 @@ func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() Call
 	}
 
 	if !result.Allowed {
-		slog.Debug("Tool denied by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.Message)
+		slog.DebugContext(ctx, "Tool denied by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.Message)
 		rejectMsg := "The tool call was rejected by a permission_request hook."
 		if reason := strings.TrimSpace(result.Message); reason != "" {
 			rejectMsg += " Reason: " + reason
@@ -538,7 +538,7 @@ func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() Call
 	}
 
 	if result.PermissionAllowed {
-		slog.Debug("Tool auto-approved by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.AdditionalContext)
+		slog.DebugContext(ctx, "Tool auto-approved by permission_request hook", "tool", toolName, "session_id", c.sess.ID, "reason", result.AdditionalContext)
 		return runTool(), true
 	}
 
@@ -551,11 +551,11 @@ func (c *call) runPermissionRequestHook(ctx context.Context, runTool func() Call
 func (c *call) handleResume(ctx context.Context, req ResumeRequest, runTool func() CallOutcome) CallOutcome {
 	switch req.Type {
 	case ResumeTypeApprove:
-		slog.Debug("Resume signal received, approving tool", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
+		slog.DebugContext(ctx, "Resume signal received, approving tool", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApproved)
 		return runTool()
 	case ResumeTypeApproveSession:
-		slog.Debug("Resume signal received, approving session", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
+		slog.DebugContext(ctx, "Resume signal received, approving session", "tool", c.tc.Function.Name, "session_id", c.sess.ID)
 		c.sess.ToolsApproved = true
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApprovedSession)
 		return runTool()
@@ -570,11 +570,11 @@ func (c *call) handleResume(ctx context.Context, req ResumeRequest, runTool func
 		if !slices.Contains(c.sess.Permissions.Allow, approvedTool) {
 			c.sess.Permissions.Allow = append(c.sess.Permissions.Allow, approvedTool)
 		}
-		slog.Debug("Resume signal received, approving tool permanently", "tool", approvedTool, "session_id", c.sess.ID)
+		slog.DebugContext(ctx, "Resume signal received, approving tool permanently", "tool", approvedTool, "session_id", c.sess.ID)
 		c.notifyApproval(ctx, ApprovalDecisionAllow, ApprovalSourceUserApprovedTool)
 		return runTool()
 	case ResumeTypeReject:
-		slog.Debug("Resume signal received, rejecting tool", "tool", c.tc.Function.Name, "session_id", c.sess.ID, "reason", req.Reason)
+		slog.DebugContext(ctx, "Resume signal received, rejecting tool", "tool", c.tc.Function.Name, "session_id", c.sess.ID, "reason", req.Reason)
 		c.notifyApproval(ctx, ApprovalDecisionDeny, ApprovalSourceUserRejected)
 		msg := "The user rejected the tool call."
 		if reason := strings.TrimSpace(req.Reason); reason != "" {
@@ -635,7 +635,7 @@ func (c *call) invoke(ctx context.Context, spanName string, exec func(ctx contex
 		res = c.translateError(ctx, span, err)
 	} else {
 		span.SetStatus(codes.Ok, "tool handler completed")
-		slog.Debug("Tool call completed", "tool", c.tc.Function.Name, "output_length", len(res.Output))
+		slog.DebugContext(ctx, "Tool call completed", "tool", c.tc.Function.Name, "output_length", len(res.Output))
 	}
 
 	// tool_response_transform fires here — BEFORE event emission, the
@@ -683,13 +683,13 @@ func (c *call) applyToolResponseTransform(ctx context.Context, payload string, i
 // recorded as an error.
 func (c *call) translateError(ctx context.Context, span trace.Span, err error) *tools.ToolCallResult {
 	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-		slog.Debug("Tool handler canceled by context", "tool", c.tc.Function.Name, "agent", c.a.Name(), "session_id", c.sess.ID)
+		slog.DebugContext(ctx, "Tool handler canceled by context", "tool", c.tc.Function.Name, "agent", c.a.Name(), "session_id", c.sess.ID)
 		span.SetStatus(codes.Ok, "tool handler canceled by user")
 		return tools.ResultError("The tool call was canceled by the user.")
 	}
 	span.RecordError(err)
 	span.SetStatus(codes.Error, "tool handler error")
-	slog.Error("Error calling tool", "tool", c.tc.Function.Name, "error", err)
+	slog.ErrorContext(ctx, "Error calling tool", "tool", c.tc.Function.Name, "error", err)
 	return tools.ResultError(fmt.Sprintf("Error calling tool: %v", err))
 }
 

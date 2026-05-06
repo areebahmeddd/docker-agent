@@ -108,7 +108,7 @@ const (
 // once from agentFilename and shared across requests; every chat completion
 // request gets a fresh session.
 func Run(ctx context.Context, agentFilename string, opts Options, ln net.Listener) error {
-	slog.Debug("Starting chat completions server", "agent", agentFilename, "addr", ln.Addr())
+	slog.DebugContext(ctx, "Starting chat completions server", "agent", agentFilename, "addr", ln.Addr())
 
 	t, err := loadTeam(ctx, agentFilename, opts.RunConfig)
 	if err != nil {
@@ -116,7 +116,7 @@ func Run(ctx context.Context, agentFilename string, opts Options, ln net.Listene
 	}
 	defer func() {
 		if err := t.StopToolSets(ctx); err != nil {
-			slog.Error("Failed to stop tool sets", "error", err)
+			slog.ErrorContext(ctx, "Failed to stop tool sets", "error", err)
 		}
 	}()
 

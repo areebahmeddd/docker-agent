@@ -109,7 +109,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	// in DisplayModel so the sidebar and other UI elements show the user-configured name.
 	modelsStore, err := modelsdev.NewStore()
 	if err != nil {
-		slog.Debug("Failed to create modelsdev store for alias resolution", "error", err)
+		slog.DebugContext(ctx, "Failed to create modelsdev store for alias resolution", "error", err)
 	} else {
 		config.ResolveModelAliases(ctx, cfg, modelsStore)
 	}
@@ -416,7 +416,7 @@ func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir stri
 		tool, err := registry.CreateTool(ctx, toolset, parentDir, runConfig, configName)
 		if err != nil {
 			// Collect error but continue loading other toolsets
-			slog.Warn("Toolset configuration failed; skipping", "type", toolset.Type, "ref", toolset.Ref, "command", toolset.Command, "error", err)
+			slog.WarnContext(ctx, "Toolset configuration failed; skipping", "type", toolset.Type, "ref", toolset.Ref, "command", toolset.Command, "error", err)
 			warnings = append(warnings, fmt.Sprintf("toolset %s failed: %v", toolset.Type, err))
 			continue
 		}
@@ -446,7 +446,7 @@ func getToolsForAgent(ctx context.Context, a *latest.AgentConfig, parentDir stri
 				lspBackends = append(lspBackends, lsp.Backend{LSP: lspTool, Toolset: wrapped})
 				continue
 			}
-			slog.Warn("Toolset configured as type 'lsp' but registry returned unexpected type; treating as regular toolset",
+			slog.WarnContext(ctx, "Toolset configured as type 'lsp' but registry returned unexpected type; treating as regular toolset",
 				"type", fmt.Sprintf("%T", tool), "command", toolset.Command)
 		}
 
