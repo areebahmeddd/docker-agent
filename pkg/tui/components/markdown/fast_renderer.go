@@ -49,66 +49,49 @@ func (s ansiStyle) renderTo(b *strings.Builder, text string) {
 	b.WriteString(s.suffix)
 }
 
-// withBold returns a new style with bold formatting added
-// Bold is applied first, then the parent color, to prevent "bright bold" terminals
-// from overriding the color when bold is enabled.
+// withAttribute returns a new style with the given ANSI attribute layered on
+// top of s while preserving s's color/background. on is the SGR sequence that
+// turns the attribute on (e.g. "\x1b[1m" for bold); off is the matching off
+// sequence (e.g. "\x1b[22m"). When s has no styling the off sequence is
+// replaced with a full reset, matching the behaviour of a fresh style.
+//
+// Format attributes are written before the parent's color/background so that
+// terminals which auto-brighten bold colors do not override our color choice.
+func (s ansiStyle) withAttribute(on, off string) ansiStyle {
+	r := s
+	if s.prefix == "" {
+		r.prefix = on
+		r.suffix = "\x1b[m"
+	} else {
+		r.prefix = on + s.prefix
+		r.suffix = off + s.prefix
+	}
+	return r
+}
+
 func (s ansiStyle) withBold() ansiStyle {
-	if s.prefix == "" {
-		return ansiStyle{prefix: "\x1b[1m", suffix: "\x1b[m", hasBold: true}
-	}
-	return ansiStyle{
-		prefix:    "\x1b[1m" + s.prefix,  // Bold first, then color (prevents bright-bold color override)
-		suffix:    "\x1b[22m" + s.prefix, // Turn off bold, re-apply parent style
-		hasBold:   true,
-		hasStrike: s.hasStrike,
-		hasItalic: s.hasItalic,
-	}
+	r := s.withAttribute("\x1b[1m", "\x1b[22m")
+	r.hasBold = true
+	return r
 }
 
-// withItalic returns a new style with italic formatting added
-// Format attribute applied first, then color, for consistency with withBold.
 func (s ansiStyle) withItalic() ansiStyle {
-	if s.prefix == "" {
-		return ansiStyle{prefix: "\x1b[3m", suffix: "\x1b[m", hasItalic: true}
-	}
-	return ansiStyle{
-		prefix:    "\x1b[3m" + s.prefix,  // Italic first, then color
-		suffix:    "\x1b[23m" + s.prefix, // Turn off italic, re-apply parent style
-		hasBold:   s.hasBold,
-		hasStrike: s.hasStrike,
-		hasItalic: true,
-	}
+	r := s.withAttribute("\x1b[3m", "\x1b[23m")
+	r.hasItalic = true
+	return r
 }
 
-// withBoldItalic returns a new style with bold and italic formatting added
-// Format attributes applied first, then color, to prevent "bright bold" terminals
-// from overriding the color when bold is enabled.
 func (s ansiStyle) withBoldItalic() ansiStyle {
-	if s.prefix == "" {
-		return ansiStyle{prefix: "\x1b[1;3m", suffix: "\x1b[m", hasBold: true, hasItalic: true}
-	}
-	return ansiStyle{
-		prefix:    "\x1b[1;3m" + s.prefix,   // Bold+italic first, then color
-		suffix:    "\x1b[22;23m" + s.prefix, // Turn off bold and italic, re-apply parent style
-		hasBold:   true,
-		hasStrike: s.hasStrike,
-		hasItalic: true,
-	}
+	r := s.withAttribute("\x1b[1;3m", "\x1b[22;23m")
+	r.hasBold = true
+	r.hasItalic = true
+	return r
 }
 
-// withStrikethrough returns a new style with strikethrough formatting added
-// Format attribute applied first, then color, for consistency with withBold.
 func (s ansiStyle) withStrikethrough() ansiStyle {
-	if s.prefix == "" {
-		return ansiStyle{prefix: "\x1b[9m", suffix: "\x1b[m", hasStrike: true}
-	}
-	return ansiStyle{
-		prefix:    "\x1b[9m" + s.prefix,  // Strikethrough first, then color
-		suffix:    "\x1b[29m" + s.prefix, // Turn off strikethrough, re-apply parent style
-		hasBold:   s.hasBold,
-		hasStrike: true,
-		hasItalic: s.hasItalic,
-	}
+	r := s.withAttribute("\x1b[9m", "\x1b[29m")
+	r.hasStrike = true
+	return r
 }
 
 // buildAnsiStyle extracts ANSI codes from a lipgloss style by rendering an empty marker.
@@ -374,35 +357,41 @@ func (p *parser) tryCodeBlock(line string) bool {
 	return true
 }
 
+// headingLevel returns the ATX heading level (1-6) for line, or 0 if line is
+// not a valid ATX heading. A valid heading has 1-6 '#' characters followed by
+// a space, tab, or end of line.
+func headingLevel(line string) int {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level > 6 {
+		return 0
+	}
+	if level == len(line) {
+		return level
+	}
+	if c := line[level]; c == ' ' || c == '\t' {
+		return level
+	}
+	return 0
+}
+
 // tryHeading checks for ATX-style headings (# through ######)
 func (p *parser) tryHeading(line string) bool {
 	trimmed := strings.TrimLeft(line, " \t")
-	if !strings.HasPrefix(trimmed, "#") {
+	level := headingLevel(trimmed)
+	if level == 0 {
 		return false
 	}
 
-	// Count heading level
-	level := 0
-	for i := 0; i < len(trimmed) && trimmed[i] == '#'; i++ {
-		level++
-	}
-	if level > 6 || level == 0 {
-		return false
-	}
-
-	// Must have space after #s or be empty
-	rest := trimmed[level:]
-	if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
-		return false
-	}
-
-	content := strings.TrimSpace(rest)
+	content := strings.TrimSpace(trimmed[level:])
 	// Remove trailing #s
 	content = strings.TrimRight(content, "# \t")
 
-	style := p.headingStyle(level)
-	ansiStyle := p.headingAnsiStyle(level)
-	prefix := p.headingPrefix(level)
+	style := p.styles.headingStyles[level-1]
+	ansiStyle := p.styles.ansiHeadings[level-1]
+	prefix := p.styles.headingPrefixes[level-1]
 
 	// Headings are bold by default. If the entire heading is wrapped in emphasis,
 	// strip the wrapper and only apply italics when requested.
@@ -463,27 +452,6 @@ func (p *parser) tryHeading(line string) bool {
 	p.out.WriteByte('\n')
 	p.lineIdx++
 	return true
-}
-
-func (p *parser) headingStyle(level int) lipgloss.Style {
-	if level >= 1 && level <= 6 {
-		return p.styles.headingStyles[level-1]
-	}
-	return p.styles.headingStyles[0]
-}
-
-func (p *parser) headingAnsiStyle(level int) ansiStyle {
-	if level >= 1 && level <= 6 {
-		return p.styles.ansiHeadings[level-1]
-	}
-	return p.styles.ansiHeadings[0]
-}
-
-func (p *parser) headingPrefix(level int) string {
-	if level >= 1 && level <= 6 {
-		return p.styles.headingPrefixes[level-1]
-	}
-	return ""
 }
 
 // tryHorizontalRule checks for horizontal rules (---, ***, ___)
@@ -1484,6 +1452,9 @@ func (p *parser) renderListBlockquoteCodeBlock(code, lang, indent string, availa
 }
 
 // renderParagraph collects consecutive non-empty lines and renders them as a paragraph.
+// The first line is always consumed: parse() has already verified it isn't a block,
+// so without that guarantee an approximate isBlockStart check could loop forever on
+// inputs like "####### foo" or "#nospace".
 func (p *parser) renderParagraph() {
 	var paraLines []string
 	for p.lineIdx < len(p.lines) {
@@ -1492,21 +1463,8 @@ func (p *parser) renderParagraph() {
 			p.lineIdx++
 			break
 		}
-		// On subsequent lines, stop the paragraph when a new block element starts.
-		// The first iteration always consumes the current line: parse() has already
-		// determined it isn't a block, so the prefix-based check below would otherwise
-		// loop forever on inputs like "####### foo" or "#nospace" that look like a
-		// heading prefix but were rejected by tryHeading.
-		if len(paraLines) > 0 {
-			trimmed := strings.TrimLeft(line, " \t")
-			if strings.HasPrefix(trimmed, "#") ||
-				strings.HasPrefix(trimmed, "```") ||
-				strings.HasPrefix(trimmed, "~~~") ||
-				strings.HasPrefix(trimmed, ">") ||
-				isListStart(trimmed) ||
-				isHorizontalRule(trimmed) {
-				break
-			}
+		if len(paraLines) > 0 && isBlockStart(line) {
+			break
 		}
 		paraLines = append(paraLines, line)
 		p.lineIdx++
@@ -1516,11 +1474,30 @@ func (p *parser) renderParagraph() {
 		return
 	}
 
-	// Join lines and render inline elements
 	text := strings.Join(paraLines, " ")
 	rendered := p.renderInline(text)
 	wrapped := p.wrapText(rendered, p.width)
 	p.out.WriteString(wrapped + "\n\n")
+}
+
+// isBlockStart reports whether line could begin a new block element when
+// encountered inside a paragraph. It mirrors the prefix tests in parse() so a
+// paragraph terminates correctly at the start of the next block.
+func isBlockStart(line string) bool {
+	trimmed := strings.TrimLeft(line, " \t")
+	switch {
+	case headingLevel(trimmed) > 0:
+		return true
+	case strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~"):
+		return true
+	case strings.HasPrefix(trimmed, ">"):
+		return true
+	case isListStart(trimmed):
+		return true
+	case isHorizontalRule(trimmed):
+		return true
+	}
+	return false
 }
 
 func isHorizontalRule(line string) bool {
