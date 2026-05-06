@@ -52,7 +52,7 @@ func asSecretGroup(str string) string {
 }
 
 // rules is the source-form catalogue, kept verbatim from upstream so
-// future updates apply cleanly. [compiledRules] resolves it into the
+// future updates apply cleanly. [compiledRuleSet] resolves it into the
 // regex-compiled form actually used at scan time.
 //
 //nolint:funlen // single-source-of-truth for the ruleset
@@ -570,31 +570,71 @@ var rules = sync.OnceValue(func() []rule {
 	}
 })
 
-// compiledRule is [rule] with its regex pre-compiled and the index
-// of the "secret" named subgroup resolved. Pre-compilation is what
+// compiledRule is [rule] with its regex pre-compiled, the index of
+// the "secret" named subgroup resolved, and its keywords expressed
+// as a bitset over the shared keyword index. Pre-compilation is what
 // makes [Redact] cheap on the hot path — without it every scan would
-// rebuild the entire ruleset's worth of regular expressions.
+// rebuild the entire ruleset's worth of regular expressions — and the
+// bitset lets us decide whether to run a rule's regex with two AND
+// instructions per rule once the AC pre-filter has produced the
+// "keywords found in this input" bitset.
 type compiledRule struct {
 	re        *regexp.Regexp
-	keywords  []string // lower-cased
-	secretIdx int      // -1 when the rule has no (?P<secret>…) subgroup
+	kwBits    [2]uint64 // indices into compiledRuleSet.ac's pattern slice
+	secretIdx int       // -1 when the rule has no (?P<secret>…) subgroup
 }
 
-// compiledRules resolves the source ruleset exactly once.
-var compiledRules = sync.OnceValue(func() []compiledRule {
+// ruleSet bundles the compiled rules with the Aho–Corasick automaton
+// built from their (de-duplicated) keyword set, so that a single
+// pre-filter scan answers "which rules might possibly match here?"
+// for every rule at once.
+type ruleSet struct {
+	rules []compiledRule
+	ac    *acAutomaton
+}
+
+// compiledRuleSet resolves the source ruleset exactly once. The
+// compilation cost — regex compilation, AC table construction — is
+// paid lazily on first use and amortised across every subsequent
+// [Redact]/[ContainsSecrets] call.
+var compiledRuleSet = sync.OnceValue(func() *ruleSet {
 	src := rules()
-	out := make([]compiledRule, len(src))
+
+	// Collect lower-cased keywords across all rules, deduplicating so
+	// each unique string gets exactly one slot in the AC pattern set
+	// (and therefore one bit in the per-rule bitset). The catalogue
+	// reuses keywords like "discord", "bitbucket", and "mailgun"
+	// across several rules; without deduplication the AC would scan
+	// for them more than once.
+	kwIdx := make(map[string]int)
+	uniqKWs := make([]string, 0, 128)
+	for _, r := range src {
+		for _, k := range r.keywords {
+			lk := strings.ToLower(k)
+			if _, ok := kwIdx[lk]; ok {
+				continue
+			}
+			kwIdx[lk] = len(uniqKWs)
+			uniqKWs = append(uniqKWs, lk)
+		}
+	}
+
+	rs := &ruleSet{
+		rules: make([]compiledRule, len(src)),
+		ac:    buildAhoCorasick(uniqKWs),
+	}
 	for i, r := range src {
 		re := regexp.MustCompile(r.expression)
-		kws := make([]string, len(r.keywords))
-		for j, k := range r.keywords {
-			kws[j] = strings.ToLower(k)
+		var bits [2]uint64
+		for _, k := range r.keywords {
+			idx := kwIdx[strings.ToLower(k)]
+			bits[idx>>6] |= 1 << uint(idx&63)
 		}
-		out[i] = compiledRule{
+		rs.rules[i] = compiledRule{
 			re:        re,
-			keywords:  kws,
+			kwBits:    bits,
 			secretIdx: re.SubexpIndex("secret"),
 		}
 	}
-	return out
+	return rs
 })

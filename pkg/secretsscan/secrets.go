@@ -15,9 +15,17 @@ func ContainsSecrets(text string) bool {
 	if text == "" {
 		return false
 	}
-	lower := strings.ToLower(text)
-	for _, r := range compiledRules() {
-		if hasAnyKeyword(lower, r.keywords) && r.re.MatchString(text) {
+	rs := compiledRuleSet()
+	found := rs.ac.scan(text)
+	if found[0]|found[1] == 0 {
+		return false
+	}
+	for i := range rs.rules {
+		r := &rs.rules[i]
+		if found[0]&r.kwBits[0]|found[1]&r.kwBits[1] == 0 {
+			continue
+		}
+		if r.re.MatchString(text) {
 			return true
 		}
 	}
@@ -36,17 +44,21 @@ func Redact(text string) string {
 	if text == "" {
 		return text
 	}
-	// Lower-case once outside the rule loop. The redaction can only
-	// REMOVE keywords from the input (RedactionMarker contains none —
-	// see TestRedactionMarkerIsNotASecret), so the keyword pre-filter
-	// stays correct against the original lower-cased text even after
-	// earlier rules have rewritten part of out: a false-positive on
-	// the filter just means we run a regex that won't match.
-	rules := compiledRules()
-	lower := strings.ToLower(text)
+	// One Aho–Corasick pass over the input gives us a bitset of every
+	// keyword present, so a rule's keyword check collapses to two AND
+	// instructions. The mask is taken from the original input: the
+	// redaction can only REMOVE keywords (RedactionMarker contains
+	// none — see TestRedactionMarkerIsNotASecret) so a stale "yes" on
+	// a rewritten string just means we run a regex that won't match.
+	rs := compiledRuleSet()
+	found := rs.ac.scan(text)
+	if found[0]|found[1] == 0 {
+		return text
+	}
 	out := text
-	for _, r := range rules {
-		if !hasAnyKeyword(lower, r.keywords) {
+	for i := range rs.rules {
+		r := &rs.rules[i]
+		if found[0]&r.kwBits[0]|found[1]&r.kwBits[1] == 0 {
 			continue
 		}
 		out = redactWithRule(r, out)
@@ -54,24 +66,11 @@ func Redact(text string) string {
 	return out
 }
 
-// hasAnyKeyword is the cheap pre-filter that lets us skip the regex
-// hot path on inputs that don't even mention a rule's discriminating
-// keyword. lower must already be lower-cased; rule keywords are
-// stored lower-cased at compile time.
-func hasAnyKeyword(lower string, keywords []string) bool {
-	for _, kw := range keywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
-}
-
 // redactWithRule applies a single compiled rule to text. We can't use
 // [regexp.Regexp.ReplaceAllStringFunc] directly because we need the
 // match indices to slice out the "secret" subgroup while keeping the
 // rest of the match intact.
-func redactWithRule(r compiledRule, text string) string {
+func redactWithRule(r *compiledRule, text string) string {
 	matches := r.re.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
 		return text
