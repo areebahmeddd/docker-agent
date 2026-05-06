@@ -37,7 +37,7 @@ func routableAddr(addr string) string {
 }
 
 func Run(ctx context.Context, agentFilename, agentName string, runConfig *config.RuntimeConfig, ln net.Listener) error {
-	slog.Debug("Starting A2A server", "source", agentFilename, "agent", agentName, "addr", ln.Addr().String())
+	slog.DebugContext(ctx, "Starting A2A server", "source", agentFilename, "agent", agentName, "addr", ln.Addr().String())
 
 	agentSource, err := config.Resolve(agentFilename, nil)
 	if err != nil {
@@ -50,7 +50,7 @@ func Run(ctx context.Context, agentFilename, agentName string, runConfig *config
 	}
 	defer func() {
 		if err := t.StopToolSets(ctx); err != nil {
-			slog.Error("Failed to stop tool sets", "error", err)
+			slog.ErrorContext(ctx, "Failed to stop tool sets", "error", err)
 		}
 	}()
 
@@ -61,7 +61,7 @@ func Run(ctx context.Context, agentFilename, agentName string, runConfig *config
 
 	baseURL := &url.URL{Scheme: "http", Host: routableAddr(ln.Addr().String())}
 
-	slog.Debug("A2A server listening", "url", baseURL.String())
+	slog.DebugContext(ctx, "A2A server listening", "url", baseURL.String())
 
 	name := strings.TrimSuffix(filepath.Base(agentFilename), filepath.Ext(agentFilename))
 
@@ -108,7 +108,7 @@ func Run(ctx context.Context, agentFilename, agentName string, runConfig *config
 	e.POST(agentPath, echo.WrapHandler(a2asrv.NewJSONRPCHandler(a2asrv.NewHandler(executor))))
 
 	if err := e.Server.Serve(ln); err != nil && ctx.Err() == nil {
-		slog.Error("Failed to start server", "error", err)
+		slog.ErrorContext(ctx, "Failed to start server", "error", err)
 		return err
 	}
 

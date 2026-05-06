@@ -308,7 +308,7 @@ func (h *Handler) HandleRun(ctx context.Context, sess *session.Session, toolCall
 	h.wg.Go(func() {
 		defer cancel()
 
-		slog.Debug("Starting background agent task", "task_id", taskID, "agent", params.Agent)
+		slog.DebugContext(ctx, "Starting background agent task", "task_id", taskID, "agent", params.Agent)
 
 		result := h.runner.RunAgent(taskCtx, RunParams{
 			AgentName:      params.Agent,
@@ -321,13 +321,13 @@ func (h *Handler) HandleRun(ctx context.Context, sess *session.Session, toolCall
 		if result.ErrMsg != "" {
 			t.errMsg = result.ErrMsg
 			t.storeStatus(taskFailed)
-			slog.Debug("Background agent task failed", "task_id", taskID, "agent", params.Agent, "error", result.ErrMsg)
+			slog.DebugContext(ctx, "Background agent task failed", "task_id", taskID, "agent", params.Agent, "error", result.ErrMsg)
 			return
 		}
 
 		if taskCtx.Err() != nil && t.loadStatus() == taskRunning {
 			t.storeStatus(taskStopped)
-			slog.Debug("Background agent task stopped", "task_id", taskID)
+			slog.DebugContext(ctx, "Background agent task stopped", "task_id", taskID)
 			return
 		}
 
@@ -335,7 +335,7 @@ func (h *Handler) HandleRun(ctx context.Context, sess *session.Session, toolCall
 		// always see the populated result field.
 		t.result = result.Result
 		if t.casStatus(taskRunning, taskCompleted) {
-			slog.Debug("Background agent task completed", "task_id", taskID, "agent", params.Agent)
+			slog.DebugContext(ctx, "Background agent task completed", "task_id", taskID, "agent", params.Agent)
 		}
 	})
 

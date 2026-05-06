@@ -114,11 +114,11 @@ func RunLLM(ctx context.Context, args LLMArgs) (*Result, error) {
 	if args.ContextLimit <= 0 {
 		return nil, errors.New("compactor: ContextLimit must be > 0")
 	}
-	if args.Agent.Model() == nil {
+	if args.Agent.Model(ctx) == nil {
 		return nil, errors.New("compactor: agent has no model")
 	}
 
-	summaryModel := provider.CloneWithOptions(ctx, args.Agent.Model(),
+	summaryModel := provider.CloneWithOptions(ctx, args.Agent.Model(ctx),
 		options.WithStructuredOutput(nil),
 		options.WithMaxTokens(MaxSummaryTokens),
 	)
