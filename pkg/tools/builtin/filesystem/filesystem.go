@@ -529,12 +529,20 @@ func (t *Tool) resolvePath(path string) string {
 // itself, which has no symlink-creation primitive, so this layered
 // defence is sufficient.
 //
-// PLATFORM NOTE: os.Root behavior varies by platform. On Windows, it
-// additionally blocks access to reserved device names (NUL, COM1, etc.).
-// On js (WASM), os.Root is vulnerable to TOCTOU in symlink validation
-// and cannot guarantee operations stay within the root. On plan9 and js,
-// Root tracks directory names rather than file descriptors, so it does
-// not follow renames. See the os.Root documentation for full details.
+// PLATFORM NOTE: [*os.Root] guarantees vary by GOOS — see the package
+// docs. Notable carve-outs that matter here:
+//
+//   - Linux bind mounts, filesystem boundaries, /proc special files and
+//     Unix device files are NOT blocked by [*os.Root]. An allow-list root
+//     that contains, e.g., a /proc bind mount can still leak.
+//   - On GOOS=js (WASM), [*os.Root] is itself vulnerable to TOCTOU in
+//     symlink validation and cannot guarantee containment. The agent is
+//     not supported on WASM today; this is documented for future ports.
+//   - On GOOS=plan9 and GOOS=js, [*os.Root] tracks a directory name
+//     rather than a file descriptor, so it does not follow renames of
+//     the allow-list root.
+//   - On GOOS=windows, [*os.Root] additionally rejects reserved device
+//     names (NUL, COM1, …), which is a strengthening, not a weakening.
 func (t *Tool) resolveAndCheckPath(path string) (string, error) {
 	if t.sandboxBroken {
 		return "", errors.New("filesystem toolset is disabled due to invalid allow/deny list configuration")
