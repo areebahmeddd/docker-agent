@@ -520,23 +520,14 @@ func (t *Tool) resolvePath(path string) string {
 // The deny-list takes precedence over the allow-list: a path that matches
 // both is rejected.
 //
-// SECURITY NOTE: there is a small TOCTOU window between this check and the
-// subsequent os.* call. A concurrent process running as the same user could
-// in principle replace a directory with a symlink between the two and cause
-// the I/O to escape the allowed area. This is acceptable because:
-//
-//   - The intended threat model is the LLM itself — not another local
-//     process. The LLM exercises the toolset only through the exposed
-//     handlers (read/write/list/etc.) and has no symlink-creation primitive,
-//     so it cannot win this race from inside the agent.
-//   - The toolset still defends against the static cases that matter: pre-
-//     existing symlinks, ".." traversals, absolute paths outside the allow-
-//     list. Those are checked here AND verified through [*os.Root].Lstat
-//     when an [*os.Root] is available.
-//
-// Callers wanting full TOCTOU safety should perform their I/O through the
-// [*os.Root] handles owned by [pathRootSet] rather than via os.* on the
-// returned path.
+// SECURITY NOTE: this static check has a small TOCTOU window before the
+// subsequent os.* call. To close it for paths that fall inside the
+// allow-list, the toolset routes its actual I/O through the [*os.Root]
+// handles owned by [pathRootSet] (see [Tool.readFile], [.writeFile],
+// [.mkdirAll], etc.). Those methods reject ".." and out-of-root symlinks
+// in the kernel, regardless of timing. The threat model is the LLM
+// itself, which has no symlink-creation primitive, so this layered
+// defence is sufficient.
 func (t *Tool) resolveAndCheckPath(path string) (string, error) {
 	if t.sandboxBroken {
 		return "", errors.New("filesystem toolset is disabled due to invalid allow/deny list configuration")
@@ -557,6 +548,129 @@ func (t *Tool) resolveAndCheckPath(path string) (string, error) {
 		return "", fmt.Errorf("path %q is outside the allowed directories (%s)", path, t.allowList.describe())
 	}
 	return resolved, nil
+}
+
+// rootedAccess returns the [*os.Root] handle and rooted (slash-separated)
+// name for resolved when the allow-list is configured.
+//
+//   - No allow-list → (nil, "", nil): callers fall back to plain os.*.
+//   - Path inside an entry whose [*os.Root] is open → (root, rel, nil):
+//     callers MUST use the rooted handle so the kernel re-checks
+//     containment on every component, closing the race.
+//   - Path inside an entry whose [*os.Root] could not be opened (e.g. the
+//     directory did not exist at construction time) → (nil, "", nil):
+//     callers fall back to plain os.* with the lexical guarantee already
+//     enforced by [resolveAndCheckPath].
+//   - Path no longer inside any entry (e.g. a symlink swap moved the real
+//     target out between the static check and the I/O) → (nil, "", err):
+//     callers MUST refuse; falling back to os.* would follow the symlink.
+func (t *Tool) rootedAccess(resolved string) (*os.Root, string, error) {
+	if t.allowList == nil {
+		return nil, "", nil
+	}
+	realPath, err := resolveRealPath(resolved)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolving %q: %w", resolved, err)
+	}
+	entry, rel := t.allowList.entryFor(realPath)
+	if entry == nil {
+		return nil, "", fmt.Errorf("path %q is no longer inside the allow-list (possible symlink swap)", resolved)
+	}
+	return entry.root, rel, nil // entry.root may be nil; caller falls back to os.*
+}
+
+// readFile is a TOCTOU-safe equivalent of [os.ReadFile] for paths that the
+// allow-list contains. When no rooted access is available it falls back to
+// the plain [os.ReadFile]. Callers MUST pass a path that has already been
+// validated by [resolveAndCheckPath].
+func (t *Tool) readFile(resolved string) ([]byte, error) {
+	root, rel, err := t.rootedAccess(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if root != nil {
+		return root.ReadFile(rel)
+	}
+	return os.ReadFile(resolved)
+}
+
+// writeFile is a TOCTOU-safe equivalent of [os.WriteFile]. See [readFile]
+// for the contract. The call is rejected by the kernel when any component
+// of rel is an out-of-root symlink, so an attacker cannot win the swap
+// race between the [resolveAndCheckPath] check and the write.
+func (t *Tool) writeFile(resolved string, data []byte, perm os.FileMode) error {
+	root, rel, err := t.rootedAccess(resolved)
+	if err != nil {
+		return err
+	}
+	if root != nil {
+		return root.WriteFile(rel, data, perm)
+	}
+	return os.WriteFile(resolved, data, perm)
+}
+
+// stat is a TOCTOU-safe equivalent of [os.Stat]. See [readFile] for the
+// contract.
+func (t *Tool) stat(resolved string) (os.FileInfo, error) {
+	root, rel, err := t.rootedAccess(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if root != nil {
+		return root.Stat(rel)
+	}
+	return os.Stat(resolved)
+}
+
+// mkdirAll is a TOCTOU-safe equivalent of [os.MkdirAll]. See [readFile]
+// for the contract. A rooted MkdirAll on "." is a no-op (the root already
+// exists by construction).
+func (t *Tool) mkdirAll(resolved string, perm os.FileMode) error {
+	root, rel, err := t.rootedAccess(resolved)
+	if err != nil {
+		return err
+	}
+	if root != nil {
+		if rel == "." {
+			return nil
+		}
+		return root.MkdirAll(rel, perm)
+	}
+	return os.MkdirAll(resolved, perm)
+}
+
+// readDir is a TOCTOU-safe equivalent of [os.ReadDir]. See [readFile]
+// for the contract. We use [*os.Root].Open + [*os.File].ReadDir because
+// [*os.Root] does not expose ReadDir directly.
+func (t *Tool) readDir(resolved string) ([]os.DirEntry, error) {
+	root, rel, err := t.rootedAccess(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if root != nil {
+		f, err := root.Open(rel)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		return f.ReadDir(-1)
+	}
+	return os.ReadDir(resolved)
+}
+
+// removeDir removes an empty directory at resolved. When a rooted handle
+// is available we use [*os.Root].Remove, which only unlinks the named
+// directory entry and refuses to follow a trailing symlink that escapes
+// the root. Otherwise we fall back to the platform-specific [rmdir].
+func (t *Tool) removeDir(resolved string) error {
+	root, rel, err := t.rootedAccess(resolved)
+	if err != nil {
+		return err
+	}
+	if root != nil {
+		return root.Remove(rel)
+	}
+	return rmdir(resolved)
 }
 
 // initGitignoreMatcher initializes the gitignore matcher for the working directory.
@@ -681,7 +795,7 @@ func (t *Tool) handleEditFile(ctx context.Context, args EditFileArgs) (*tools.To
 		return tools.ResultError(err.Error()), nil
 	}
 
-	content, err := os.ReadFile(resolvedPath)
+	content, err := t.readFile(resolvedPath)
 	if err != nil {
 		return tools.ResultError(fmt.Sprintf("Error reading file: %s", err)), nil
 	}
@@ -698,7 +812,7 @@ func (t *Tool) handleEditFile(ctx context.Context, args EditFileArgs) (*tools.To
 		changes = append(changes, fmt.Sprintf("Edit %d: Replaced %d characters", i+1, len(edit.OldText)))
 	}
 
-	if err := os.WriteFile(resolvedPath, []byte(modifiedContent), 0o644); err != nil {
+	if err := t.writeFile(resolvedPath, []byte(modifiedContent), 0o644); err != nil {
 		return tools.ResultError(fmt.Sprintf("Error writing file: %s", err)), nil
 	}
 
@@ -719,7 +833,7 @@ func (t *Tool) handleListDirectory(_ context.Context, args ListDirectoryArgs) (*
 		return tools.ResultError(err.Error()), nil
 	}
 
-	entries, err := os.ReadDir(resolvedPath)
+	entries, err := t.readDir(resolvedPath)
 	if err != nil {
 		return tools.ResultError(fmt.Sprintf("Error reading directory: %s", err)), nil
 	}
@@ -765,7 +879,7 @@ func (t *Tool) handleReadFile(_ context.Context, args ReadFileArgs) (*tools.Tool
 	}
 
 	// Check if the file exists before any type detection.
-	info, err := os.Stat(resolvedPath)
+	info, err := t.stat(resolvedPath)
 	if err != nil {
 		var errMsg string
 		if errors.Is(err, fs.ErrNotExist) {
@@ -788,7 +902,7 @@ func (t *Tool) handleReadFile(_ context.Context, args ReadFileArgs) (*tools.Tool
 		return t.readImageFile(resolvedPath, args.Path)
 	}
 
-	content, err := os.ReadFile(resolvedPath)
+	content, err := t.readFile(resolvedPath)
 	if err != nil {
 		return &tools.ToolCallResult{
 			Output:  err.Error(),
@@ -812,7 +926,7 @@ func (t *Tool) handleReadFile(_ context.Context, args ReadFileArgs) (*tools.Tool
 // readImageFile reads an image file and returns it as base64-encoded image content.
 // The caller must ensure the file exists (e.g. via os.Stat) before calling this method.
 func (t *Tool) readImageFile(resolvedPath, originalPath string) (*tools.ToolCallResult, error) {
-	data, err := os.ReadFile(resolvedPath)
+	data, err := t.readFile(resolvedPath)
 	if err != nil {
 		errMsg := err.Error()
 		return &tools.ToolCallResult{
@@ -888,7 +1002,7 @@ func (t *Tool) handleReadMultipleFiles(ctx context.Context, args ReadMultipleFil
 			continue
 		}
 
-		content, err := os.ReadFile(resolvedPath)
+		content, err := t.readFile(resolvedPath)
 		if err != nil {
 			errMsg := err.Error()
 			if errors.Is(err, fs.ErrNotExist) {
@@ -1061,11 +1175,11 @@ func (t *Tool) handleWriteFile(ctx context.Context, args WriteFileArgs) (*tools.
 
 	// Create parent directory structure if it doesn't exist
 	dir := filepath.Dir(resolvedPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := t.mkdirAll(dir, 0o755); err != nil {
 		return tools.ResultError(fmt.Sprintf("Error creating directory structure: %s", err)), nil
 	}
 
-	if err := os.WriteFile(resolvedPath, []byte(args.Content), 0o644); err != nil {
+	if err := t.writeFile(resolvedPath, []byte(args.Content), 0o644); err != nil {
 		return tools.ResultError(fmt.Sprintf("Error writing file: %s", err)), nil
 	}
 
@@ -1083,7 +1197,7 @@ func (t *Tool) handleCreateDirectory(_ context.Context, args CreateDirectoryArgs
 		if err != nil {
 			return tools.ResultError(err.Error()), nil
 		}
-		if err := os.MkdirAll(resolvedPath, 0o755); err != nil {
+		if err := t.mkdirAll(resolvedPath, 0o755); err != nil {
 			return tools.ResultError(fmt.Sprintf("Error creating directory %s: %s", path, err)), nil
 		}
 		results = append(results, "Directory created successfully: "+path)
@@ -1100,7 +1214,7 @@ func (t *Tool) handleRemoveDirectory(_ context.Context, args RemoveDirectoryArgs
 			return tools.ResultError(err.Error()), nil
 		}
 
-		if err := rmdir(resolvedPath); err != nil {
+		if err := t.removeDir(resolvedPath); err != nil {
 			return tools.ResultError(fmt.Sprintf("Error removing directory %s: %s", path, err)), nil
 		}
 		results = append(results, "Directory removed successfully: "+path)
