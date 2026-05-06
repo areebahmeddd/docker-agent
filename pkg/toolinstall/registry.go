@@ -13,7 +13,8 @@ import (
 	"sync"
 
 	"github.com/goccy/go-yaml"
-	"github.com/natefinch/atomic"
+
+	"github.com/docker/docker-agent/pkg/atomicfile"
 )
 
 // githubToken returns a GitHub personal access token from the environment,
@@ -226,7 +227,7 @@ func (r *Registry) fetchIndex(ctx context.Context) (*registryIndex, error) {
 	} else {
 		// Best-effort: persist to disk for future fallback.
 		_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
-		_ = atomic.WriteFile(cachePath, bytes.NewReader(data))
+		_ = atomicfile.Write(cachePath, bytes.NewReader(data), 0o644)
 	}
 
 	var index registryIndex
