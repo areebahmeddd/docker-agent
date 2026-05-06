@@ -94,14 +94,15 @@ func TestDecide(t *testing.T) {
 			wantStrategy: attachment.StrategyB64,
 		},
 		{
-			name: "txt office doc (always allowed)",
+			name: "drop office doc (DOCX is binary, not supported without models.dev office modality)",
 			doc: chat.Document{
 				Name:     "report.docx",
 				MimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-				Source:   chat.DocumentSource{InlineText: "content here"},
+				Source:   chat.DocumentSource{InlineData: []byte{0x50, 0x4B}}, // ZIP magic bytes
 			},
-			caps:         textOnlyCaps(),
-			wantStrategy: attachment.StrategyTXT,
+			caps:          visionCaps(), // even full caps can't send DOCX — no modality
+			wantStrategy:  attachment.StrategyDrop,
+			wantReasonHas: "does not support MIME type",
 		},
 		{
 			name: "b64 wins over txt when both inline sources present",

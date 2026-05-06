@@ -93,15 +93,17 @@ func TestLoadFromStore_ModelNotFound(t *testing.T) {
 	}
 }
 
-func TestLoadFromStore_OfficeDocsAlwaysAllowed(t *testing.T) {
-	// Even a text-only model must allow Office document MIMEs (they'll be TXT-enveloped).
+func TestLoadFromStore_OfficeDocsNotAllowed(t *testing.T) {
+	// Office document MIMEs (DOCX, XLSX, etc.) are ZIP-based binaries and
+	// cannot be naively TXT-enveloped. models.dev has no "office" or
+	// "document" modality, so they must return false for all models.
 	store := buildStore(map[string]modelsdev.Provider{
 		"openai": {
 			Models: map[string]modelsdev.Model{
 				"gpt-4o": {
 					Name: "GPT-4o",
 					Modalities: modelsdev.Modalities{
-						Input:  []string{"text"},
+						Input:  []string{"text", "image", "pdf"},
 						Output: []string{"text"},
 					},
 				},
@@ -111,9 +113,17 @@ func TestLoadFromStore_OfficeDocsAlwaysAllowed(t *testing.T) {
 
 	mc := modelcaps.LoadFromStore(store, "openai/gpt-4o")
 
-	officeMIME := "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	if !mc.Supports(officeMIME) {
-		t.Errorf("expected office MIME %q to always be supported", officeMIME)
+	for _, officeMIME := range []string{
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"application/msword",
+		"application/vnd.ms-excel",
+		"application/rtf",
+	} {
+		if mc.Supports(officeMIME) {
+			t.Errorf("expected Office MIME %q NOT to be supported (models.dev has no document modality)", officeMIME)
+		}
 	}
 }
 
@@ -132,11 +142,11 @@ func TestCapsWith(t *testing.T) {
 	}
 }
 
-// TestSupports_AudioVideoRejected verifies that audio/video MIMEs are NOT
-// allowed by default — they require explicit model support declarations
-// which Phase 1 does not implement.
+// TestSupports_AudioVideoRejected verifies that audio/video MIMEs and Office
+// document binaries are NOT allowed — they require explicit model support
+// declarations which Phase 1 does not implement (models.dev has no such modality).
 func TestSupports_AudioVideoRejected(t *testing.T) {
-	// Even a vision+pdf capable model should reject audio/video.
+	// Even a vision+pdf capable model should reject audio/video/office.
 	mc := modelcaps.CapsWith(true, true)
 
 	for _, mime := range []string{
@@ -146,6 +156,9 @@ func TestSupports_AudioVideoRejected(t *testing.T) {
 		"video/mp4",
 		"video/webm",
 		"application/octet-stream",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/msword",
 	} {
 		if mc.Supports(mime) {
 			t.Errorf("expected %q to NOT be supported (not in Phase 1 allowlist)", mime)

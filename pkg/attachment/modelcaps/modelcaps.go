@@ -24,11 +24,10 @@ type ModelCapabilities struct {
 	modelFound bool
 }
 
-// isKnownDocMIME returns true for non-text/* MIME types that are universally
-// sendable as TXT envelopes: Office documents and a few other structured formats.
-// Notably, video/*, audio/* and other media types are NOT included — they require
-// explicit model capability declarations.
-func isKnownDocMIME(mt string) bool {
+// isOfficeMIME returns true for Office document binary formats
+// (OOXML, legacy Office, RTF). These are ZIP-based or binary formats
+// that cannot be naively TXT-enveloped and require explicit model support.
+func isOfficeMIME(mt string) bool {
 	switch mt {
 	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -47,11 +46,14 @@ func isKnownDocMIME(mt string) bool {
 // MIME type.
 //
 // Resolution rules (in order):
-//  1. image/* → requires supportsImage
-//  2. application/pdf → requires supportsPDF
-//  3. text/* → always supported (TXT envelope works universally for text)
-//  4. Known Office/document MIMEs → always supported via TXT envelope
-//  5. Everything else (audio/*, video/*, unknown binary) → not supported in Phase 1
+//  1. image/* → requires supportsImage (models.dev "image" modality)
+//  2. application/pdf → requires supportsPDF (models.dev "pdf" modality)
+//  3. text/* → always supported (plain text; TXT envelope is universally safe)
+//  4. Office/binary document MIMEs (DOCX, XLSX, PPTX, etc.) → not supported unless
+//     models.dev explicitly declares a document modality. models.dev currently has
+//     no "document" or "office" modality field, so these return false for all
+//     models until the schema is extended.
+//  5. Everything else (audio/*, video/*, unknown binary) → false
 func (mc ModelCapabilities) Supports(mimeType string) bool {
 	mt := strings.ToLower(mimeType)
 	if strings.HasPrefix(mt, "image/") {
@@ -60,15 +62,19 @@ func (mc ModelCapabilities) Supports(mimeType string) bool {
 	if mt == "application/pdf" {
 		return mc.supportsPDF
 	}
-	// text/* MIMEs are always supported via TXT envelope.
+	// text/* MIMEs (text/plain, text/markdown, text/html, text/csv, …) are always
+	// supported — they are actual text and TXT envelope works universally.
 	if strings.HasPrefix(mt, "text/") {
 		return true
 	}
-	// Known Office document formats can be safely TXT-enveloped.
-	if isKnownDocMIME(mt) {
-		return true
+	// Office document formats (DOCX, XLSX, PPTX, etc.) are ZIP-based binaries;
+	// they cannot be naively TXT-enveloped. models.dev does not yet declare an
+	// "office" or "document" modality, so we conservatively return false until
+	// the schema provides explicit capability data.
+	if isOfficeMIME(mt) {
+		return false
 	}
-	// audio/*, video/*, and unknown binary types are not supported in Phase 1.
+	// audio/*, video/*, and all other unknown binary types are not supported.
 	return false
 }
 
