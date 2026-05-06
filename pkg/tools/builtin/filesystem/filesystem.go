@@ -528,6 +528,13 @@ func (t *Tool) resolvePath(path string) string {
 // in the kernel, regardless of timing. The threat model is the LLM
 // itself, which has no symlink-creation primitive, so this layered
 // defence is sufficient.
+//
+// PLATFORM NOTE: os.Root behavior varies by platform. On Windows, it
+// additionally blocks access to reserved device names (NUL, COM1, etc.).
+// On js (WASM), os.Root is vulnerable to TOCTOU in symlink validation
+// and cannot guarantee operations stay within the root. On plan9 and js,
+// Root tracks directory names rather than file descriptors, so it does
+// not follow renames. See the os.Root documentation for full details.
 func (t *Tool) resolveAndCheckPath(path string) (string, error) {
 	if t.sandboxBroken {
 		return "", errors.New("filesystem toolset is disabled due to invalid allow/deny list configuration")
