@@ -1,130 +1,113 @@
 package secretsscan
 
-// acAutomaton is an Aho–Corasick automaton matching a fixed set of
-// byte patterns against an input. It serves as the keyword
-// pre-filter for [Redact] and [ContainsSecrets]: a single linear
-// pass over the input yields a bitset of which keywords occur, after
-// which each rule can decide cheaply whether to run its (relatively
-// expensive) regular expression. The previous implementation called
-// [strings.Contains] once per keyword per rule — O(N · K) — which
-// dominated runtime on the hot "no secret in sight" path.
-//
-// The automaton folds ASCII upper-case bytes to lower-case during
-// the scan so callers don't need to allocate a lower-cased copy of
-// the input. Patterns must therefore be supplied lower-cased.
-//
-// Up to 128 patterns are supported; the per-state accept set is
-// stored as a fixed [2]uint64 bitset so the inner loop stays
-// branch-free. Today's catalogue uses ~108 unique keywords; the
-// limit is enforced at build time so a future addition that exceeds
-// it surfaces as an immediate panic rather than a silent miscompare.
+// kwMask is a fixed-size bitset over keyword indices, used to record
+// which patterns occurred in a scanned input and which keywords each
+// rule subscribes to. Storing it as a small array keeps every test
+// branch-free; the cap of 128 indices accommodates today's catalogue
+// of ~108 unique keywords with comfortable headroom.
+type kwMask [2]uint64
+
+func (m *kwMask) empty() bool                { return m[0]|m[1] == 0 }
+func (m *kwMask) overlaps(other kwMask) bool { return m[0]&other[0]|m[1]&other[1] != 0 }
+func (m *kwMask) set(idx int)                { m[idx>>6] |= 1 << uint(idx&63) }
+
+// acAutomaton is an Aho–Corasick keyword pre-filter for [Redact] and
+// [ContainsSecrets]. A single linear pass over the input yields a
+// [kwMask] of every keyword that occurs, after which each rule can
+// decide whether to run its (relatively expensive) regex with two
+// AND instructions instead of one [strings.Contains] call per
+// keyword. ASCII upper-case bytes are folded on the fly so callers
+// don't need to lower-case the input.
 type acAutomaton struct {
-	// next is the dense state-transition table, laid out as
-	// next[state*acAlphabet + byte]. Storing it flat (rather than as
-	// [][acAlphabet]int32) keeps every transition one indirection
-	// away and friendlier to the CPU prefetcher.
+	// next is the dense (state, byte) → state table laid out as
+	// next[state*256 + byte]. Storing it flat keeps every transition
+	// one indirection away from a register.
 	next []int32
-	// accept[s] is the bitset of pattern indices accepted at state s,
-	// already merged with the accept sets of every state reachable
-	// via fail links — so the scan loop never has to walk them.
-	accept [][2]uint64
+	// accept[s] records which patterns match in state s, already
+	// merged with patterns reachable via fail links so the scan loop
+	// never has to walk them.
+	accept []kwMask
 }
 
-const acAlphabet = 256
-
 // buildAhoCorasick compiles patterns into an automaton. Patterns
-// must be lower-cased ASCII; the [acAutomaton.scan] method folds the
-// input on the fly so we don't need a lower-cased copy.
+// must be lower-cased ASCII.
 func buildAhoCorasick(patterns []string) *acAutomaton {
 	if len(patterns) > 128 {
-		panic("secretsscan: too many AC patterns for [2]uint64 accept bitset")
+		panic("secretsscan: too many AC patterns for kwMask")
 	}
-	type node struct {
+
+	// Stage 1: build the trie sparsely. Each node knows its children
+	// and which patterns terminate there.
+	type tnode struct {
 		children map[byte]int32
-		fail     int32
-		accept   [2]uint64
+		terms    kwMask
 	}
-	nodes := []*node{{children: map[byte]int32{}}}
+	trie := []*tnode{{children: map[byte]int32{}}}
 	for idx, p := range patterns {
 		cur := int32(0)
 		for i := range len(p) {
 			c := p[i]
-			child, ok := nodes[cur].children[c]
+			child, ok := trie[cur].children[c]
 			if !ok {
-				child = int32(len(nodes))
-				nodes = append(nodes, &node{children: map[byte]int32{}})
-				nodes[cur].children[c] = child
+				child = int32(len(trie))
+				trie = append(trie, &tnode{children: map[byte]int32{}})
+				trie[cur].children[c] = child
 			}
 			cur = child
 		}
-		nodes[cur].accept[idx>>6] |= 1 << uint(idx&63)
+		trie[cur].terms.set(idx)
 	}
 
-	// BFS over the trie to compute fail links and propagate accept
-	// bits along them. Children of the root always fail back to the
-	// root itself.
-	queue := make([]int32, 0, len(nodes))
-	for _, child := range nodes[0].children {
-		nodes[child].fail = 0
-		queue = append(queue, child)
+	// Stage 2: materialise the dense delta(state, byte) table by BFS
+	// over the trie. Visiting in depth order means a state's fail
+	// target is fully populated by the time we reach it, so we can
+	// inherit its transitions wholesale and then overwrite the slots
+	// for which the current state has its own children.
+	n := len(trie)
+	next := make([]int32, n*256)
+	accept := make([]kwMask, n)
+	fail := make([]int32, n)
+
+	accept[0] = trie[0].terms
+	for c, child := range trie[0].children {
+		next[c] = child
+	}
+
+	queue := make([]int32, 0, n)
+	for _, child := range trie[0].children {
+		queue = append(queue, child) // fail[child] = 0 (root) by zero-init
 	}
 	for head := 0; head < len(queue); head++ {
 		s := queue[head]
-		for c, u := range nodes[s].children {
-			f := nodes[s].fail
-			for {
-				if v, ok := nodes[f].children[c]; ok && v != u {
-					nodes[u].fail = v
-					break
-				}
-				if f == 0 {
-					nodes[u].fail = 0
-					break
-				}
-				f = nodes[f].fail
-			}
-			nodes[u].accept[0] |= nodes[nodes[u].fail].accept[0]
-			nodes[u].accept[1] |= nodes[nodes[u].fail].accept[1]
+		fs := fail[s]
+		accept[s] = trie[s].terms
+		accept[s][0] |= accept[fs][0]
+		accept[s][1] |= accept[fs][1]
+
+		base, fbase := int(s)*256, int(fs)*256
+		copy(next[base:base+256], next[fbase:fbase+256])
+		for c, u := range trie[s].children {
+			// fail[u] is "what fs would do on c", which we read
+			// before overwriting the slot for our own child.
+			fail[u] = next[fbase+int(c)]
+			next[base+int(c)] = u
 			queue = append(queue, u)
 		}
 	}
 
-	// Materialise the dense delta(state, byte) table. For every byte
-	// not present as a child of state, follow the fail chain to find
-	// a state that does have it, defaulting to root.
-	next := make([]int32, len(nodes)*acAlphabet)
-	accept := make([][2]uint64, len(nodes))
-	for i, n := range nodes {
-		accept[i] = n.accept
-		for c := range acAlphabet {
-			s := int32(i)
-			for {
-				if v, ok := nodes[s].children[byte(c)]; ok {
-					next[i*acAlphabet+c] = v
-					break
-				}
-				if s == 0 {
-					next[i*acAlphabet+c] = 0
-					break
-				}
-				s = nodes[s].fail
-			}
-		}
-	}
 	return &acAutomaton{next: next, accept: accept}
 }
 
-// scan returns a bitset of every pattern index that occurs at least
-// once in text. Bytes 'A'..'Z' are folded to 'a'..'z' on the fly so
-// callers do not have to lower-case the input first.
-func (a *acAutomaton) scan(text string) (mask [2]uint64) {
+// scan returns a kwMask of every pattern that occurs at least once
+// in text. Bytes 'A'..'Z' are folded to 'a'..'z' on the fly.
+func (a *acAutomaton) scan(text string) (mask kwMask) {
 	s := int32(0)
 	for i := range len(text) {
 		c := text[i]
 		if c >= 'A' && c <= 'Z' {
 			c += 'a' - 'A'
 		}
-		s = a.next[int(s)*acAlphabet+int(c)]
+		s = a.next[int(s)*256+int(c)]
 		mask[0] |= a.accept[s][0]
 		mask[1] |= a.accept[s][1]
 	}

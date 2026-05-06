@@ -15,14 +15,14 @@ func ContainsSecrets(text string) bool {
 	if text == "" {
 		return false
 	}
-	found := keywordPrefilter().scan(text)
-	if found[0]|found[1] == 0 {
+	rs := compiledRuleSet()
+	found := rs.ac.scan(text)
+	if found.empty() {
 		return false
 	}
-	rs := compiledRuleSet()
 	for i := range rs.rules {
 		r := &rs.rules[i]
-		if found[0]&r.kwBits[0]|found[1]&r.kwBits[1] == 0 {
+		if !found.overlaps(r.kwBits) {
 			continue
 		}
 		re, _ := r.compile()
@@ -45,26 +45,21 @@ func Redact(text string) string {
 	if text == "" {
 		return text
 	}
-	// One Aho–Corasick pass over the input gives us a bitset of every
-	// keyword present, so a rule's keyword check collapses to two AND
-	// instructions. The mask is taken from the original input: the
+	// One Aho–Corasick pass over the input gives us a mask of every
+	// keyword present, so each rule's keyword check collapses to two
+	// AND instructions. The mask is taken from the original input:
 	// redaction can only REMOVE keywords (RedactionMarker contains
-	// none — see TestRedactionMarkerIsNotASecret) so a stale "yes" on
-	// a rewritten string just means we run a regex that won't match.
-	//
-	// On a clean input the AC scan returns an empty mask and we
-	// short-circuit before touching [compiledRuleSet] — no rule
-	// regexes are compiled, ever, in a process that only sees clean
-	// text.
-	found := keywordPrefilter().scan(text)
-	if found[0]|found[1] == 0 {
+	// none — see TestRedactionMarkerIsNotASecret), so a stale "yes"
+	// after rewriting just means we run a regex that won't match.
+	rs := compiledRuleSet()
+	found := rs.ac.scan(text)
+	if found.empty() {
 		return text
 	}
-	rs := compiledRuleSet()
 	out := text
 	for i := range rs.rules {
 		r := &rs.rules[i]
-		if found[0]&r.kwBits[0]|found[1]&r.kwBits[1] == 0 {
+		if !found.overlaps(r.kwBits) {
 			continue
 		}
 		out = redactWithRule(r, out)
@@ -72,9 +67,9 @@ func Redact(text string) string {
 	return out
 }
 
-// redactWithRule applies a single compiled rule to text. We can't use
-// [regexp.Regexp.ReplaceAllStringFunc] directly because we need the
-// match indices to slice out the "secret" subgroup while keeping the
+// redactWithRule applies a single rule to text. We can't reach for
+// [regexp.Regexp.ReplaceAllStringFunc] because we need the match
+// indices to slice out the (?P<secret>…) subgroup while keeping the
 // rest of the match intact.
 func redactWithRule(r *compiledRule, text string) string {
 	re, secretIdx := r.compile()
