@@ -242,7 +242,7 @@ func (c *Config) Save() error {
 }
 
 func (c *Config) saveTo(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -254,7 +254,12 @@ func (c *Config) saveTo(path string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	return atomic.WriteFile(path, bytes.NewReader(data))
+	if err := atomic.WriteFile(path, bytes.NewReader(data)); err != nil {
+		return err
+	}
+	// natefinch/atomic does not allow specifying a file mode; the config
+	// may contain a credential helper command, so restrict it to the user.
+	return os.Chmod(path, 0o600)
 }
 
 // GetAlias retrieves the alias configuration for a given name.
