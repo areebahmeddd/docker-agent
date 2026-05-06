@@ -46,7 +46,7 @@ rag:
     docs: ["./docs"]
     strategies:
       - type: chunked-embeddings
-        model: openai/text-embedding-3-small
+        embedding_model: openai/text-embedding-3-small
 
 # 6. MCPs — reusable MCP server definitions (optional)
 mcps:
