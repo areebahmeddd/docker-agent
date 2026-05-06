@@ -156,6 +156,7 @@ type LocalRuntime struct {
 	workingDir           string   // Working directory for hooks execution
 	env                  []string // Environment variables for hooks execution
 	modelSwitcherCfg     *ModelSwitcherConfig
+	snapshotsEnabled     bool
 
 	// hooksRegistry is the runtime-private hooks.Registry used to build
 	// every Executor. It carries the runtime-owned builtin hooks

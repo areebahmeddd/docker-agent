@@ -247,6 +247,29 @@ func (m *appModel) handleCopyLastResponseToClipboard() (tea.Model, tea.Cmd) {
 	return m, copyToClipboard(lastResponse, "Last response copied to clipboard.")
 }
 
+func (m *appModel) handleUndoSnapshot() (tea.Model, tea.Cmd) {
+	if m.chatPage.IsWorking() {
+		return m, notification.WarningCmd("Wait for the current response to finish before undoing")
+	}
+	result, err := m.application.UndoLastSnapshot(context.Background())
+	if err != nil {
+		if errors.Is(err, app.ErrNothingToUndo) {
+			return m, notification.InfoCmd("No snapshot to undo")
+		}
+		return m, notification.ErrorCmd(fmt.Sprintf("Failed to undo snapshot: %v", err))
+	}
+
+	text := fmt.Sprintf("Restored %d file%s from the last snapshot", result.RestoredFiles, plural(result.RestoredFiles))
+	return m, notification.SuccessCmd(text)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 // copyToClipboard returns a sequenced command that copies text to the system
 // clipboard using both the OSC 52 escape sequence (for SSH/tmux compatibility)
 // and the platform-native clipboard API, then shows a success notification.

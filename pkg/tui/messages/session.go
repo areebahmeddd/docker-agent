@@ -47,6 +47,9 @@ type (
 	// CopyLastResponseToClipboardMsg copies the last assistant response to clipboard.
 	CopyLastResponseToClipboardMsg struct{}
 
+	// UndoSnapshotMsg restores files from the latest snapshot.
+	UndoSnapshotMsg struct{}
+
 	// ExportSessionMsg exports the session to the specified file.
 	ExportSessionMsg struct{ Filename string }
 

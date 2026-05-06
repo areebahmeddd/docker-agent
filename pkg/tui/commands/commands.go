@@ -96,6 +96,17 @@ func builtInSessionCommands() []Item {
 			},
 		},
 		{
+			ID:           "session.undo",
+			Label:        "Undo",
+			SlashCommand: "/undo",
+			Description:  "Restore file changes from the latest snapshot",
+			Category:     "Session",
+			Immediate:    true,
+			Execute: func(string) tea.Cmd {
+				return core.CmdHandler(messages.UndoSnapshotMsg{})
+			},
+		},
+		{
 			ID:           "session.cost",
 			Label:        "Cost",
 			SlashCommand: "/cost",
