@@ -5,7 +5,9 @@ package modelcaps
 
 import (
 	"context"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
@@ -22,14 +24,34 @@ type ModelCapabilities struct {
 	modelFound bool
 }
 
+// isKnownDocMIME returns true for non-text/* MIME types that are universally
+// sendable as TXT envelopes: Office documents and a few other structured formats.
+// Notably, video/*, audio/* and other media types are NOT included — they require
+// explicit model capability declarations.
+func isKnownDocMIME(mt string) bool {
+	switch mt {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"application/vnd.ms-excel",
+		"application/vnd.ms-powerpoint",
+		"application/msword",
+		"application/rtf",
+		"text/rtf":
+		return true
+	}
+	return false
+}
+
 // Supports returns true when the model can accept an attachment with the given
 // MIME type.
 //
 // Resolution rules (in order):
 //  1. image/* → requires supportsImage
 //  2. application/pdf → requires supportsPDF
-//  3. All other types (text/*, application/vnd.openxmlformats-officedocument.*,
-//     etc.) → always supported; a TXT envelope works universally.
+//  3. text/* → always supported (TXT envelope works universally for text)
+//  4. Known Office/document MIMEs → always supported via TXT envelope
+//  5. Everything else (audio/*, video/*, unknown binary) → not supported in Phase 1
 func (mc ModelCapabilities) Supports(mimeType string) bool {
 	mt := strings.ToLower(mimeType)
 	if strings.HasPrefix(mt, "image/") {
@@ -38,10 +60,21 @@ func (mc ModelCapabilities) Supports(mimeType string) bool {
 	if mt == "application/pdf" {
 		return mc.supportsPDF
 	}
-	// All other MIME types are text-based or can be safely wrapped in a TXT
-	// envelope, so we allow them unconditionally.
-	return true
+	// text/* MIMEs are always supported via TXT envelope.
+	if strings.HasPrefix(mt, "text/") {
+		return true
+	}
+	// Known Office document formats can be safely TXT-enveloped.
+	if isKnownDocMIME(mt) {
+		return true
+	}
+	// audio/*, video/*, and unknown binary types are not supported in Phase 1.
+	return false
 }
+
+// loadTimeout is the maximum time allowed for a models.dev capability lookup.
+// If the fetch takes longer, Load falls back to conservative text-only caps.
+const loadTimeout = 10 * time.Second
 
 // Load fetches (or returns from cache) the capability record for the given
 // model ID.  The model ID should be in "provider/model" format as used by
@@ -51,17 +84,23 @@ func (mc ModelCapabilities) Supports(mimeType string) bool {
 // conservative capability set that only allows text MIME types.  The returned
 // error is always nil; capability detection failures are silent and safe.
 func Load(modelID string) (ModelCapabilities, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	defer cancel()
+
 	store, err := modelsdev.NewStore()
 	if err != nil {
-		// Cannot load the store at all — return text-only conservative caps.
+		slog.Warn("modelcaps: failed to load models.dev store, using conservative caps",
+			"error", err, "model", modelID)
 		return ModelCapabilities{modelFound: false}, nil
 	}
 
-	// Use a background context for the lookup; capability detection is best-effort
-	// and should not block the main request flow.
-	model, err := store.GetModel(context.Background(), modelID)
+	model, err := store.GetModel(ctx, modelID)
 	if err != nil {
-		// Model not found or other error — conservative: text-only.
+		if ctx.Err() != nil {
+			slog.Warn("modelcaps: models.dev lookup timed out, using conservative caps",
+				"model", modelID, "timeout", loadTimeout)
+		}
+		// Model not found or context cancelled — conservative: text-only.
 		return ModelCapabilities{modelFound: false}, nil
 	}
 
@@ -91,7 +130,10 @@ func CapsWith(supportsImage, supportsPDF bool) ModelCapabilities {
 // LoadFromStore is like Load but accepts an explicit *modelsdev.Store, making
 // it convenient for tests that inject a pre-populated in-memory store.
 func LoadFromStore(store *modelsdev.Store, modelID string) ModelCapabilities {
-	model, err := store.GetModel(context.Background(), modelID)
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	defer cancel()
+
+	model, err := store.GetModel(ctx, modelID)
 	if err != nil {
 		return ModelCapabilities{modelFound: false}
 	}

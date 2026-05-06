@@ -131,3 +131,24 @@ func TestCapsWith(t *testing.T) {
 		t.Error("expected image/png NOT to be supported")
 	}
 }
+
+// TestSupports_AudioVideoRejected verifies that audio/video MIMEs are NOT
+// allowed by default — they require explicit model support declarations
+// which Phase 1 does not implement.
+func TestSupports_AudioVideoRejected(t *testing.T) {
+	// Even a vision+pdf capable model should reject audio/video.
+	mc := modelcaps.CapsWith(true, true)
+
+	for _, mime := range []string{
+		"audio/mp3",
+		"audio/wav",
+		"audio/ogg",
+		"video/mp4",
+		"video/webm",
+		"application/octet-stream",
+	} {
+		if mc.Supports(mime) {
+			t.Errorf("expected %q to NOT be supported (not in Phase 1 allowlist)", mime)
+		}
+	}
+}

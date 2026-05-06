@@ -478,7 +478,7 @@ func extractMediaType(prefix string) string {
 // convertUserMultiContent converts user message multi-content parts to Anthropic content blocks.
 // It handles text and images (base64 and URL). File uploads are NOT supported in the non-Beta API
 // and will return an error - callers should use hasFileAttachments() to route to the Beta API.
-func (c *Client) convertUserMultiContent(_ context.Context, parts []chat.MessagePart) ([]anthropic.ContentBlockParamUnion, error) {
+func (c *Client) convertUserMultiContent(ctx context.Context, parts []chat.MessagePart) ([]anthropic.ContentBlockParamUnion, error) {
 	contentBlocks := make([]anthropic.ContentBlockParamUnion, 0, len(parts))
 
 	for _, part := range parts {
@@ -519,6 +519,15 @@ func (c *Client) convertUserMultiContent(_ context.Context, parts []chat.Message
 			// Return a clear error if we somehow get here.
 			return nil, fmt.Errorf("file attachments require the Beta API; use hasFileAttachments() to route correctly (path=%q, file_id=%q)",
 				part.File.Path, part.File.FileID)
+
+		case chat.MessagePartTypeDocument:
+			if part.Document != nil {
+				docBlocks, err := convertDocument(ctx, *part.Document, c.ModelConfig.Model)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert document attachment %q: %w", part.Document.Name, err)
+				}
+				contentBlocks = append(contentBlocks, docBlocks...)
+			}
 		}
 	}
 

@@ -277,11 +277,11 @@ func (c *Client) convertBetaUserMultiContent(ctx context.Context, parts []chat.M
 
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docBlocks, err := convertDocument(ctx, *part.Document, c.ModelConfig.Model)
+				stdBlocks, err := convertDocument(ctx, *part.Document, c.ModelConfig.Model)
 				if err != nil {
 					return nil, fmt.Errorf("failed to convert document attachment %q: %w", part.Document.Name, err)
 				}
-				contentBlocks = append(contentBlocks, docBlocks...)
+				contentBlocks = append(contentBlocks, stdBlocksToBeta(stdBlocks)...)
 			}
 		}
 	}
@@ -391,4 +391,44 @@ func applyBetaMessageCacheControl(messages []anthropic.BetaMessageParam) {
 			block.OfDocument.CacheControl = cacheCtrl
 		}
 	}
+}
+
+// stdBlocksToBeta converts standard Anthropic SDK content blocks to their Beta
+// API equivalents. The beta path (convertBetaUserMultiContent) requires
+// BetaContentBlockParamUnion, but convertDocument produces the standard type.
+// The two types are structurally identical for the block kinds we produce
+// (text, image, document), so we field-map them here.
+func stdBlocksToBeta(blocks []anthropic.ContentBlockParamUnion) []anthropic.BetaContentBlockParamUnion {
+	out := make([]anthropic.BetaContentBlockParamUnion, 0, len(blocks))
+	for _, b := range blocks {
+		switch {
+		case b.OfText != nil:
+			out = append(out, anthropic.BetaContentBlockParamUnion{
+				OfText: &anthropic.BetaTextBlockParam{Text: b.OfText.Text},
+			})
+		case b.OfImage != nil && b.OfImage.Source.OfBase64 != nil:
+			out = append(out, anthropic.BetaContentBlockParamUnion{
+				OfImage: &anthropic.BetaImageBlockParam{
+					Source: anthropic.BetaImageBlockParamSourceUnion{
+						OfBase64: &anthropic.BetaBase64ImageSourceParam{
+							Data:      b.OfImage.Source.OfBase64.Data,
+							MediaType: anthropic.BetaBase64ImageSourceMediaType(b.OfImage.Source.OfBase64.MediaType),
+						},
+					},
+				},
+			})
+		case b.OfDocument != nil && b.OfDocument.Source.OfBase64 != nil:
+			out = append(out, anthropic.BetaContentBlockParamUnion{
+				OfDocument: &anthropic.BetaRequestDocumentBlockParam{
+					Source: anthropic.BetaRequestDocumentBlockSourceUnionParam{
+						OfBase64: &anthropic.BetaBase64PDFSourceParam{
+							Data: b.OfDocument.Source.OfBase64.Data,
+						},
+					},
+				},
+			})
+		}
+		// Unknown block kinds are dropped (should never happen in Phase 1).
+	}
+	return out
 }

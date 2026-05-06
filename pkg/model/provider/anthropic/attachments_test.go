@@ -18,7 +18,7 @@ var minJPEG = []byte{0xFF, 0xD8, 0xFF, 0xE0}
 var minPDF = []byte{0x25, 0x50, 0x44, 0x46, 0x2D} // %PDF-
 
 // TestConvertDocumentAnthropic_StrategyB64_Image verifies that an image document
-// with InlineData and a vision-capable model produces a native BetaImageBlockParam.
+// with InlineData and a vision-capable model produces a native ImageBlockParam.
 func TestConvertDocumentAnthropic_StrategyB64_Image(t *testing.T) {
 	doc := chat.Document{
 		Name:     "photo.jpg",
