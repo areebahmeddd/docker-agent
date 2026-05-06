@@ -414,6 +414,72 @@ func TestFetchTool_BlockedDomainsAppearInInstructions(t *testing.T) {
 	assert.Contains(t, instructions, "169.254.169.254")
 }
 
+func TestFetchTool_WithHeadersOption(t *testing.T) {
+	headers := map[string]string{
+		"Authorization": "Bearer secret-token",
+		"X-Api-Key":     "key-123",
+	}
+	tool := NewFetchTool(WithHeaders(headers))
+
+	assert.Equal(t, headers, tool.handler.headers)
+}
+
+func TestFetch_Headers_SentOnRequest(t *testing.T) {
+	var gotAuthorization, gotAPIKey string
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		gotAuthorization = r.Header.Get("Authorization")
+		gotAPIKey = r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "ok")
+	})
+
+	tool := NewFetchTool(WithHeaders(map[string]string{
+		"Authorization": "Bearer secret-token",
+		"X-Api-Key":     "key-123",
+	}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/page"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Successfully fetched")
+	assert.Equal(t, "Bearer secret-token", gotAuthorization)
+	assert.Equal(t, "key-123", gotAPIKey)
+}
+
+// TestFetch_Headers_OverrideDefaults pins the precedence rule: caller-supplied
+// headers win over the default User-Agent and the format-driven Accept header.
+func TestFetch_Headers_OverrideDefaults(t *testing.T) {
+	var gotUserAgent, gotAccept string
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		gotUserAgent = r.Header.Get("User-Agent")
+		gotAccept = r.Header.Get("Accept")
+		fmt.Fprint(w, "ok")
+	})
+
+	tool := NewFetchTool(WithHeaders(map[string]string{
+		"User-Agent": "CustomAgent/1.0",
+		"Accept":     "application/json",
+	}))
+
+	_, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/page"},
+		Format: "text", // would normally set a text/plain Accept header
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "CustomAgent/1.0", gotUserAgent)
+	assert.Equal(t, "application/json", gotAccept)
+}
+
 func TestMatchesDomain(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -643,4 +709,133 @@ func TestMatchesDomain_EdgeCases(t *testing.T) {
 			assert.Equal(t, tc.want, matchesDomain(tc.host, tc.pattern))
 		})
 	}
+}
+
+// TestFetch_Headers_StrippedOnCrossHostRedirect verifies that custom headers
+// configured on the fetch tool are NOT leaked when a request redirects to a
+// different host. We test with `X-Api-Key` because Go's stdlib already strips
+// `Authorization` on cross-domain redirects automatically — using a non-stdlib
+// header guarantees the test exercises the toolset's own CheckRedirect logic
+// rather than passing accidentally on stdlib behaviour.
+func TestFetch_Headers_StrippedOnCrossHostRedirect(t *testing.T) {
+	var gotAPIKeyOnInitial, gotAPIKeyOnRedirect string
+	var redirectURL string
+
+	// Server 1: initial target that redirects to server 2.
+	url1 := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		gotAPIKeyOnInitial = r.Header.Get("X-Api-Key")
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+	})
+
+	// Server 2: redirect target on a different host (different port, so
+	// req.URL.Host differs).
+	url2 := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		gotAPIKeyOnRedirect = r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "redirected content")
+	})
+
+	redirectURL = url2 + "/target"
+
+	tool := NewFetchTool(WithHeaders(map[string]string{
+		"X-Api-Key": "secret-key-must-not-leak",
+	}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url1 + "/start"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "redirected content")
+
+	assert.Equal(t, "secret-key-must-not-leak", gotAPIKeyOnInitial,
+		"custom header should reach the initial host")
+	assert.Empty(t, gotAPIKeyOnRedirect,
+		"custom header MUST NOT leak to a redirect target on a different host")
+}
+
+// TestFetch_Headers_PreservedOnSameHostRedirect verifies that headers ARE
+// preserved when redirecting within the same host (e.g., http -> https upgrade,
+// or path-only redirects).
+func TestFetch_Headers_PreservedOnSameHostRedirect(t *testing.T) {
+	var gotAuthOnInitial, gotAuthOnRedirect string
+
+	url := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == "/start" {
+			gotAuthOnInitial = r.Header.Get("Authorization")
+			// Redirect to a different path on the same host
+			http.Redirect(w, r, "/target", http.StatusFound)
+			return
+		}
+		gotAuthOnRedirect = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "same-host redirect")
+	})
+
+	tool := NewFetchTool(WithHeaders(map[string]string{
+		"Authorization": "Bearer secret-token",
+	}))
+
+	result, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{url + "/start"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "same-host redirect")
+
+	// Verify the Authorization header was sent to both requests (same host)
+	assert.Equal(t, "Bearer secret-token", gotAuthOnInitial)
+	assert.Equal(t, "Bearer secret-token", gotAuthOnRedirect,
+		"Authorization header should be preserved for same-host redirects")
+}
+
+// TestFetch_Headers_StrippedOnRobotsCrossHostRedirect is a regression test for
+// a header-leak through robots.txt: the toolset fetches `/robots.txt` first,
+// and an attacker controlling that file (or whose host is allow-listed) could
+// redirect the robots fetch to a third-party host. Because robots.txt sends
+// the same custom headers as the main request, those credentials must be
+// stripped on cross-host redirects too.
+func TestFetch_Headers_StrippedOnRobotsCrossHostRedirect(t *testing.T) {
+	var leaked string
+
+	// External host that observes any leaked credential.
+	externalURL := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Get("X-Api-Key")
+		fmt.Fprint(w, "")
+	})
+
+	// Origin whose robots.txt 302-redirects to the external host.
+	originURL := runHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.Redirect(w, r, externalURL+"/robots.txt", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "page content")
+	})
+
+	tool := NewFetchTool(WithHeaders(map[string]string{
+		"X-Api-Key": "secret-key-must-not-leak",
+	}))
+
+	_, err := tool.handler.CallTool(t.Context(), FetchToolArgs{
+		URLs:   []string{originURL + "/page"},
+		Format: "text",
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, leaked,
+		"custom header MUST NOT leak via a robots.txt cross-host redirect")
 }

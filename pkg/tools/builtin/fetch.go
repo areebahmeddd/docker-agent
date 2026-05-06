@@ -39,6 +39,7 @@ type fetchHandler struct {
 	timeout        time.Duration
 	allowedDomains []string
 	blockedDomains []string
+	headers        map[string]string
 }
 
 type FetchToolArgs struct {
@@ -62,6 +63,20 @@ func (h *fetchHandler) CallTool(ctx context.Context, params FetchToolArgs) (*too
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
+			}
+			// Strip caller-supplied headers when redirecting to a different
+			// host so credentials (Authorization, X-Api-Key, ...) never leak
+			// to a third-party host. Go's stdlib already strips a small
+			// allow-list (Authorization, WWW-Authenticate, Cookie) on cross-
+			// domain redirects but does NOT strip arbitrary custom headers,
+			// so we strip everything the operator configured. via[0] is the
+			// original request; comparing req.URL.Host against it (rather
+			// than the previous hop) guarantees that headers cannot reappear
+			// after a chain like A -> B -> A.
+			if origHost := via[0].URL.Host; origHost != req.URL.Host {
+				for k := range h.headers {
+					req.Header.Del(k)
+				}
 			}
 			return h.checkDomainAllowed(req.URL)
 		},
@@ -150,23 +165,19 @@ func (h *fetchHandler) fetchURL(ctx context.Context, client *http.Client, urlStr
 		return result
 	}
 
+	fmtHandler := formatHandlerFor(format)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, http.NoBody)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to create request: %v", err)
 		return result
 	}
-
 	req.Header.Set("User-Agent", useragent.Header)
-
-	switch format {
-	case "markdown":
-		req.Header.Set("Accept", "text/markdown;q=1.0, text/plain;q=0.9, text/html;q=0.7, */*;q=0.1")
-	case "html":
-		req.Header.Set("Accept", "text/html;q=1.0, text/plain;q=0.8, */*;q=0.1")
-	case "text":
-		req.Header.Set("Accept", "text/plain;q=1.0,  text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1")
-	default:
-		req.Header.Set("Accept", "text/plain;q=1.0, */*;q=0.1")
+	req.Header.Set("Accept", fmtHandler.accept)
+	// Apply caller-configured headers last so an operator-supplied
+	// Authorization, User-Agent, Accept, ... wins over the defaults set above.
+	for k, v := range h.headers {
+		req.Header.Set(k, v)
 	}
 
 	// Execute request
@@ -189,27 +200,10 @@ func (h *fetchHandler) fetchURL(ctx context.Context, client *http.Client, urlStr
 		return result
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-
-	switch format {
-	case "markdown":
-		if strings.Contains(contentType, "text/html") {
-			result.Body = htmlToMarkdown(string(body))
-		} else {
-			result.Body = string(body)
-		}
-	case "html":
-		result.Body = string(body)
-	case "text":
-		if strings.Contains(contentType, "text/html") {
-			result.Body = htmlToText(string(body))
-		} else {
-			result.Body = string(body)
-		}
-	default:
-		result.Body = string(body)
+	result.Body = string(body)
+	if fmtHandler.convertFromHTML != nil && strings.Contains(result.ContentType, "text/html") {
+		result.Body = fmtHandler.convertFromHTML(result.Body)
 	}
-
 	result.ContentLength = len(result.Body)
 
 	return result
@@ -218,6 +212,16 @@ func (h *fetchHandler) fetchURL(ctx context.Context, client *http.Client, urlStr
 // fetchRobots fetches and parses robots.txt for the given URL's host.
 // Returns nil (allow all) if robots.txt is missing or unreachable.
 // Returns an error if the server returns a non-OK status or the content cannot be read/parsed.
+//
+// We deliberately reuse the caller-supplied client (rather than building a
+// separate one) so that robots.txt requests inherit the same CheckRedirect
+// policy as the main fetch:
+//   - allowed_domains / blocked_domains are re-evaluated on every redirect,
+//     so an allow-listed origin's robots.txt cannot redirect into a denied
+//     host (e.g. cloud-metadata IPs) to bypass the policy.
+//   - caller-supplied headers (Authorization, X-Api-Key, ...) are stripped
+//     when crossing host boundaries, so credentials never leak to a
+//     third-party host that handles a robots.txt redirect.
 func (h *fetchHandler) fetchRobots(ctx context.Context, client *http.Client, targetURL *url.URL, userAgent string) (*robotstxt.RobotsData, error) {
 	// Build robots.txt URL
 	robotsURL := &url.URL{
@@ -234,16 +238,19 @@ func (h *fetchHandler) fetchRobots(ctx context.Context, client *http.Client, tar
 	}
 
 	req.Header.Set("User-Agent", userAgent)
-
-	// Create robots client with same timeout and transport as main client
-	robotsClient := &http.Client{
-		Timeout:   client.Timeout,   // Same timeout as main client
-		Transport: client.Transport, // Inherit proxy/transport settings
+	// Apply custom headers to robots.txt requests too, so authenticated
+	// endpoints that also protect robots.txt work correctly. Cross-host
+	// leaks are prevented by the shared client's CheckRedirect.
+	for k, v := range h.headers {
+		req.Header.Set(k, v)
 	}
 
-	resp, err := robotsClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		// If robots.txt is unreachable, allow the fetch
+		// If robots.txt is unreachable, allow the fetch. This also covers the
+		// case where CheckRedirect blocks a robots.txt redirect into a denied
+		// host: we treat it as "no robots.txt available" and proceed with the
+		// main fetch, which itself runs through the same allow/deny checks.
 		return nil, nil
 	}
 	defer resp.Body.Close()
@@ -386,6 +393,42 @@ func matchesDomain(host, pattern string) bool {
 	return host == pattern || strings.HasSuffix(host, "."+pattern)
 }
 
+// formatHandler describes how a fetch output format negotiates with the
+// server (`Accept` header) and how an HTML response body is post-processed
+// into that format. A nil convertFromHTML means the body is returned as-is.
+type formatHandler struct {
+	accept          string
+	convertFromHTML func(string) string
+}
+
+var formatHandlers = map[string]formatHandler{
+	"markdown": {
+		accept:          "text/markdown;q=1.0, text/plain;q=0.9, text/html;q=0.7, */*;q=0.1",
+		convertFromHTML: htmlToMarkdown,
+	},
+	"html": {
+		accept: "text/html;q=1.0, text/plain;q=0.8, */*;q=0.1",
+	},
+	"text": {
+		accept:          "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1",
+		convertFromHTML: htmlToText,
+	},
+}
+
+// defaultFormatHandler is used when the caller passes an unknown / empty
+// format string. The JSON schema enums to text|markdown|html, but we keep a
+// safe fallback for forwards compatibility and direct (non-tool) callers.
+var defaultFormatHandler = formatHandler{
+	accept: "text/plain;q=1.0, */*;q=0.1",
+}
+
+func formatHandlerFor(format string) formatHandler {
+	if h, ok := formatHandlers[format]; ok {
+		return h
+	}
+	return defaultFormatHandler
+}
+
 func htmlToMarkdown(html string) string {
 	markdown, err := htmltomarkdown.ConvertString(html)
 	if err != nil {
@@ -435,6 +478,16 @@ func WithAllowedDomains(domains []string) FetchToolOption {
 func WithBlockedDomains(domains []string) FetchToolOption {
 	return func(t *FetchTool) {
 		t.handler.blockedDomains = domains
+	}
+}
+
+// WithHeaders sets static HTTP headers attached to every fetch request.
+// Typical use is supplying credentials such as `Authorization: Bearer ...`.
+// These are applied last, so they override the default User-Agent and the
+// format-driven Accept header. An empty or nil map is a no-op.
+func WithHeaders(headers map[string]string) FetchToolOption {
+	return func(t *FetchTool) {
+		t.handler.headers = headers
 	}
 }
 
