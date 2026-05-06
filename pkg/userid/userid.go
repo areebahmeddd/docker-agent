@@ -85,7 +85,11 @@ func filePath() string {
 }
 
 func save(file, id string) error {
-	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+	// Use 0o700 on the directory to match the 0o600 protection on the
+	// file itself: the per-install UUID is forwarded as `X-Cagent-Id`
+	// on every gateway request, so even directory-level enumeration on
+	// a shared host is a mild privacy leak we'd like to avoid.
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return err
 	}
 	return os.WriteFile(file, []byte(id), 0o600)
