@@ -1106,7 +1106,7 @@ func (t *Tool) handleSearchFilesContent(_ context.Context, args SearchFilesConte
 			return nil
 		}
 
-		content, err := os.ReadFile(path)
+		content, err := t.readFile(path)
 		if err != nil {
 			return nil
 		}
