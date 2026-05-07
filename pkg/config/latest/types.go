@@ -232,6 +232,14 @@ type ProviderConfig struct {
 	APIType string `json:"api_type,omitempty"`
 	// BaseURL is the base URL for the provider's API endpoint
 	BaseURL string `json:"base_url,omitempty"`
+	// UnloadAPI is the path (or absolute URL) to the provider's
+	// model-unload endpoint. When the agent wires the [unload] builtin
+	// into its `on_agent_switch` hook chain, the previous agent's
+	// models are POSTed `{"model": "<id>"}` here at every switch.
+	// Cloud providers should leave this unset.
+	//
+	// [unload]: https://pkg.go.dev/github.com/docker/docker-agent/pkg/runtime#BuiltinUnload
+	UnloadAPI string `json:"unload_api,omitempty"`
 	// TokenKey is the environment variable name containing the API token
 	TokenKey string `json:"token_key,omitempty"`
 	// Temperature is the default sampling temperature for models using this provider
@@ -654,6 +662,14 @@ func (m *ModelConfig) Clone() *ModelConfig {
 // otherwise falls back to Model.
 func (m *ModelConfig) DisplayOrModel() string {
 	return cmp.Or(m.DisplayModel, m.Model)
+}
+
+// UnloadAPI returns the unload endpoint inherited from the model's
+// provider config, or "" when no `unload_api` was set. Populated by
+// the provider-config merge step from [ProviderConfig.UnloadAPI].
+func (m *ModelConfig) UnloadAPI() string {
+	v, _ := m.ProviderOpts["unload_api"].(string)
+	return v
 }
 
 // FlexibleModelConfig wraps ModelConfig to support both shorthand and full syntax.

@@ -437,6 +437,14 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
 	}
 
+	// unload is registered alongside cache_response for the same
+	// reason: it needs to walk Input.FromAgent up to the previous agent's
+	// configured models and dispatch to provider.Unloader implementations,
+	// which the runtime owns through the team.
+	if err := hooksRegistry.RegisterBuiltin(BuiltinUnload, r.unloadBuiltin); err != nil {
+		return nil, fmt.Errorf("register %q builtin: %w", BuiltinUnload, err)
+	}
+
 	// stripUnsupportedModalitiesTransform captures the runtime closure to
 	// resolve the agent from Input.AgentName, so it lives here rather
 	// than as a stateless builtin in pkg/hooks/builtins. It drops image
