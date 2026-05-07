@@ -18,6 +18,8 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/cli"
 	"github.com/docker/docker-agent/pkg/config"
+	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/permissions"
@@ -68,6 +70,16 @@ type runExecFlags struct {
 	// from user config settings. Nil when no global permissions are configured.
 	globalPermissions *permissions.Checker
 	snapshotsEnabled  bool
+
+	// snapshotController is the [builtins.SnapshotController] for the
+	// initial App: it is wired into the initial runtime as an
+	// auto-injector and into the App via app.WithSnapshotController so
+	// /undo, /snapshots, /reset drive the same instance that captures
+	// the checkpoints. Sub-runtimes created by [createSessionSpawner]
+	// build their own controller (and registry) so each spawned
+	// session has independent snapshot state; that controller is local
+	// to the spawner closure and never reaches this field.
+	snapshotController builtins.SnapshotController
 }
 
 func newRunCmd() *cobra.Command {
@@ -319,10 +331,33 @@ func (f *runExecFlags) runtimeOpts(loadResult *teamloader.LoadResult, runConfig 
 		runtime.WithTracer(otel.Tracer(AppName)),
 		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
 	}
-	if f.snapshotsEnabled {
-		opts = append(opts, runtime.WithSnapshots(true))
-	}
 	return opts
+}
+
+// snapshotRuntimeOpts wires the snapshot builtin into a runtime.
+// Returns the [runtime.Opt]s that hand the registry and the
+// [builtins.SnapshotController] auto-injector to the runtime, plus
+// the controller itself for the embedder to pass to the App via
+// [app.WithSnapshotController]. When snapshots aren't enabled,
+// returns no opts and a nil controller so callers don't have to
+// branch on f.snapshotsEnabled themselves.
+//
+// A fresh registry is created here rather than reused across runtimes
+// so the spawner-created sub-runtimes get their own snapshot state
+// (each spawned session has independent /undo history).
+func (f *runExecFlags) snapshotRuntimeOpts() ([]runtime.Opt, builtins.SnapshotController, error) {
+	if !f.snapshotsEnabled {
+		return nil, nil, nil
+	}
+	reg := hooks.NewRegistry()
+	ctrl, err := builtins.RegisterSnapshot(reg, true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("register snapshot builtin: %w", err)
+	}
+	return []runtime.Opt{
+		runtime.WithHooksRegistry(reg),
+		runtime.WithAutoInjector(ctrl),
+	}, ctrl, nil
 }
 
 func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req CreateSessionRequest) (runtime.Runtime, *session.Session, error) {
@@ -350,10 +385,16 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		return nil, nil, fmt.Errorf("creating session store: %w", err)
 	}
 
-	localRt, err := runtime.New(t, f.runtimeOpts(loadResult, &f.runConfig, sessStore, agentName)...)
+	rtOpts, ctrl, err := f.snapshotRuntimeOpts()
+	if err != nil {
+		return nil, nil, err
+	}
+	runtimeOpts := append(f.runtimeOpts(loadResult, &f.runConfig, sessStore, agentName), rtOpts...)
+	localRt, err := runtime.New(t, runtimeOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating runtime: %w", err)
 	}
+	f.snapshotController = ctrl
 
 	var sess *session.Session
 	if req.ResumeSessionID != "" {
@@ -463,6 +504,9 @@ func (f *runExecFlags) buildAppOpts(args []string) ([]app.Opt, error) {
 	if f.exitAfterResponse {
 		opts = append(opts, app.WithExitAfterFirstResponse())
 	}
+	if f.snapshotController != nil {
+		opts = append(opts, app.WithSnapshotController(f.snapshotController))
+	}
 	return opts, nil
 }
 
@@ -504,7 +548,12 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 			t.SetPermissions(permissions.Merge(t.Permissions(), f.globalPermissions))
 		}
 
-		localRt, err := runtime.New(t, f.runtimeOpts(loadResult, runConfigCopy, sessStore, agt.Name())...)
+		rtOpts, ctrl, err := f.snapshotRuntimeOpts()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		runtimeOpts := append(f.runtimeOpts(loadResult, runConfigCopy, sessStore, agt.Name()), rtOpts...)
+		localRt, err := runtime.New(t, runtimeOpts...)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -524,6 +573,9 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 		var appOpts []app.Opt
 		if gen := localRt.TitleGenerator(); gen != nil {
 			appOpts = append(appOpts, app.WithTitleGenerator(gen))
+		}
+		if ctrl != nil {
+			appOpts = append(appOpts, app.WithSnapshotController(ctrl))
 		}
 
 		a := app.New(spawnCtx, localRt, newSess, appOpts...)

@@ -21,8 +21,7 @@ func TestRegisterInstallsAllBuiltins(t *testing.T) {
 	t.Parallel()
 
 	r := hooks.NewRegistry()
-	_, err := builtins.Register(r)
-	require.NoError(t, err)
+	require.NoError(t, builtins.Register(r))
 
 	for _, name := range []string{
 		builtins.AddDate,
@@ -34,7 +33,6 @@ func TestRegisterInstallsAllBuiltins(t *testing.T) {
 		builtins.AddUserInfo,
 		builtins.AddRecentCommits,
 		builtins.MaxIterations,
-		builtins.Snapshot,
 		builtins.RedactSecrets,
 		builtins.HTTPPost,
 	} {
@@ -177,8 +175,7 @@ func TestAddPromptFilesNoArgsIsNoop(t *testing.T) {
 func lookup(t *testing.T, name string) hooks.BuiltinFunc {
 	t.Helper()
 	r := hooks.NewRegistry()
-	_, err := builtins.Register(r)
-	require.NoError(t, err)
+	require.NoError(t, builtins.Register(r))
 	fn, ok := r.LookupBuiltin(name)
 	require.True(t, ok, "builtin %q must be registered", name)
 	require.NotNil(t, fn)
@@ -221,13 +218,57 @@ func TestApplyAgentDefaultsInjectsExpectedEvents(t *testing.T) {
 	assert.Equal(t, builtins.AddEnvironmentInfo, cfg.SessionStart[0].Command)
 }
 
-// TestApplyAgentDefaultsInjectsSnapshotHooks verifies the global snapshot
-// default wires turn-boundary capture plus session_end shadow-repo cleanup.
-func TestApplyAgentDefaultsInjectsSnapshotHooks(t *testing.T) {
+// TestRegisterSnapshotInstallsBuiltin verifies that the dedicated
+// snapshot entry point installs the snapshot builtin and returns a
+// controller wired up to the registered hook.
+func TestRegisterSnapshotInstallsBuiltin(t *testing.T) {
 	t.Parallel()
 
-	cfg := builtins.ApplyAgentDefaults(nil, builtins.AgentDefaults{Snapshot: true})
-	require.NotNil(t, cfg)
+	r := hooks.NewRegistry()
+	ctrl, err := builtins.RegisterSnapshot(r, true)
+	require.NoError(t, err)
+	require.NotNil(t, ctrl)
+	assert.True(t, ctrl.Enabled())
+
+	fn, ok := r.LookupBuiltin(builtins.Snapshot)
+	assert.True(t, ok, "snapshot must be registered by RegisterSnapshot")
+	assert.NotNil(t, fn)
+}
+
+// TestRegisterSnapshotDisabledStillExposesController verifies that an
+// embedder can install the snapshot builtin without auto-injection, in
+// which case the controller still exists (so /undo etc. work for hooks
+// the user wired manually) but Enabled() reports false.
+func TestRegisterSnapshotDisabledStillExposesController(t *testing.T) {
+	t.Parallel()
+
+	r := hooks.NewRegistry()
+	ctrl, err := builtins.RegisterSnapshot(r, false)
+	require.NoError(t, err)
+	require.NotNil(t, ctrl)
+	assert.False(t, ctrl.Enabled())
+
+	_, ok := r.LookupBuiltin(builtins.Snapshot)
+	assert.True(t, ok)
+}
+
+// TestSnapshotControllerAutoInjectWiresFourEvents verifies that the
+// controller's AutoInject mounts the snapshot hook on session_start,
+// turn_start, turn_end, and session_end — the four boundaries needed
+// to bracket every session and every turn. Per-tool capture stays
+// opt-in via YAML.
+func TestSnapshotControllerAutoInjectWiresFourEvents(t *testing.T) {
+	t.Parallel()
+
+	r := hooks.NewRegistry()
+	ctrl, err := builtins.RegisterSnapshot(r, true)
+	require.NoError(t, err)
+
+	inj, ok := ctrl.(builtins.AutoInjector)
+	require.True(t, ok, "controller must satisfy AutoInjector")
+
+	cfg := &hooks.Config{}
+	inj.AutoInject(cfg)
 	require.Len(t, cfg.SessionStart, 1)
 	require.Len(t, cfg.TurnStart, 1)
 	require.Len(t, cfg.TurnEnd, 1)
@@ -236,6 +277,25 @@ func TestApplyAgentDefaultsInjectsSnapshotHooks(t *testing.T) {
 	assert.Equal(t, builtins.Snapshot, cfg.TurnStart[0].Command)
 	assert.Equal(t, builtins.Snapshot, cfg.TurnEnd[0].Command)
 	assert.Equal(t, builtins.Snapshot, cfg.SessionEnd[0].Command)
+}
+
+// TestSnapshotControllerAutoInjectDisabledIsNoop verifies that a
+// controller constructed with enabled=false makes no changes to cfg,
+// so an embedder can pass it unconditionally to the runtime as an
+// AutoInjector and rely on the bool to gate auto-injection.
+func TestSnapshotControllerAutoInjectDisabledIsNoop(t *testing.T) {
+	t.Parallel()
+
+	r := hooks.NewRegistry()
+	ctrl, err := builtins.RegisterSnapshot(r, false)
+	require.NoError(t, err)
+
+	inj, ok := ctrl.(builtins.AutoInjector)
+	require.True(t, ok)
+
+	cfg := &hooks.Config{}
+	inj.AutoInject(cfg)
+	assert.True(t, cfg.IsEmpty(), "disabled controller must not inject any hooks")
 }
 
 func TestApplyAgentDefaultsAppendsToUserHooks(t *testing.T) {

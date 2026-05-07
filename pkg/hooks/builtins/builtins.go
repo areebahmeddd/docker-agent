@@ -15,7 +15,9 @@
 //   - snapshot              (session_start,
 //     turn_start, turn_end,
 //     pre_tool_use, post_tool_use,
-//     session_end) — shadow-git snapshots
+//     session_end) — shadow-git snapshots. Installed via
+//     [RegisterSnapshot] (separate entry point) so the embedder receives
+//     a [SnapshotController] to drive /undo, /snapshots, /reset.
 //   - redact_secrets        (pre_tool_use,
 //     before_llm_call,
 //     tool_response_transform) — scrub secrets
@@ -28,11 +30,10 @@
 // Reference any of them from a hook YAML entry as
 // `{type: builtin, command: "<name>"}`. The runtime additionally
 // auto-injects add_date / add_environment_info / add_prompt_files /
-// redact_secrets from the matching agent flags, and snapshot from
-// global user config. Setting redact_secrets at the agent level is
-// exactly equivalent to writing
-// the three matching hook entries by hand —
-// [ApplyAgentDefaults] performs the auto-injection.
+// redact_secrets from the matching agent flags via [ApplyAgentDefaults].
+// snapshot auto-injection lives on the controller returned by
+// [RegisterSnapshot] and is plumbed into the runtime as an
+// [AutoInjector], not as another bool on [AgentDefaults].
 //
 // turn_start builtins recompute every turn (date, git state).
 // session_start builtins run once per session for context that's
@@ -53,13 +54,13 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 )
 
-// Register installs the stock builtin hooks on r and returns the
-// shared [*Snapshots] tracker so the caller (typically the runtime)
-// can drive /undo, /list-snapshots, and /reset against the same
-// in-memory checkpoint history the snapshot hook is writing to.
-func Register(r *hooks.Registry) (*Snapshots, error) {
-	snapshots := NewSnapshots()
-	if err := errors.Join(
+// Register installs the stock builtin hooks on r.
+//
+// Note: the snapshot builtin is NOT installed by Register. It ships
+// its own entry point ([RegisterSnapshot]) so the embedder receives a
+// [SnapshotController] for driving /undo, /snapshots, /reset.
+func Register(r *hooks.Registry) error {
+	return errors.Join(
 		r.RegisterBuiltin(AddDate, addDate),
 		r.RegisterBuiltin(AddEnvironmentInfo, addEnvironmentInfo),
 		r.RegisterBuiltin(AddPromptFiles, addPromptFiles),
@@ -69,17 +70,13 @@ func Register(r *hooks.Registry) (*Snapshots, error) {
 		r.RegisterBuiltin(AddUserInfo, addUserInfo),
 		r.RegisterBuiltin(AddRecentCommits, addRecentCommits),
 		r.RegisterBuiltin(MaxIterations, maxIterations),
-		r.RegisterBuiltin(Snapshot, snapshots.Hook),
 		r.RegisterBuiltin(RedactSecrets, redactSecrets),
 		r.RegisterBuiltin(HTTPPost, httpPost),
-	); err != nil {
-		return nil, err
-	}
-	return snapshots, nil
+	)
 }
 
 // AgentDefaults captures defaults that map onto stock builtin hook entries.
-// Pass each AgentConfig.AddXxx flag as-is; Snapshot comes from runtime/global config.
+// Pass each AgentConfig.AddXxx flag as-is.
 type AgentDefaults struct {
 	AddDate            bool
 	AddEnvironmentInfo bool
@@ -91,15 +88,29 @@ type AgentDefaults struct {
 	// makes the auto-injection idempotent against an explicit YAML
 	// entry that already names the same builtin.
 	RedactSecrets bool
-	// Snapshot auto-injects shadow-git snapshots at
-	// turn boundaries. session_end is included to garbage-collect the
-	// shadow repository; undo history remains available after a response stops.
-	Snapshot bool
+}
+
+// AutoInjector adds default hooks to an agent's hook configuration.
+// The runtime invokes AutoInject for every registered injector when
+// it builds per-agent executors, so a builtin that wants to be
+// auto-wired only needs to ship its own AutoInjector and let the
+// embedder plumb it in via runtime.WithAutoInjector.
+//
+// The snapshot controller returned by [RegisterSnapshot] satisfies
+// this interface and is the canonical use case today; future builtins
+// can opt in the same way without growing the central
+// [ApplyAgentDefaults] table.
+type AutoInjector interface {
+	AutoInject(cfg *hooks.Config)
 }
 
 // ApplyAgentDefaults appends the stock builtin hook entries implied by
 // d to cfg. A nil cfg is treated as empty. Returns nil iff no hook
 // (user-configured or auto-injected) is present.
+//
+// Snapshot auto-injection is handled separately via [SnapshotController]
+// (an [AutoInjector]) so it can be configured by the embedder rather
+// than by another bool on AgentDefaults.
 func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 	if cfg == nil {
 		cfg = &hooks.Config{}
@@ -112,12 +123,6 @@ func ApplyAgentDefaults(cfg *hooks.Config, d AgentDefaults) *hooks.Config {
 	}
 	if d.AddEnvironmentInfo {
 		cfg.SessionStart = append(cfg.SessionStart, builtinHook(AddEnvironmentInfo))
-	}
-	if d.Snapshot {
-		cfg.SessionStart = append(cfg.SessionStart, builtinHook(Snapshot))
-		cfg.TurnStart = append(cfg.TurnStart, builtinHook(Snapshot))
-		cfg.TurnEnd = append(cfg.TurnEnd, builtinHook(Snapshot))
-		cfg.SessionEnd = append(cfg.SessionEnd, builtinHook(Snapshot))
 	}
 	if d.RedactSecrets {
 		// Wire all three legs at once. The same builtin handles each

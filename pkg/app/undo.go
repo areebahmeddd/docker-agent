@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/docker/docker-agent/pkg/hooks/builtins"
-	"github.com/docker/docker-agent/pkg/session"
+	"os"
 )
 
 var ErrNothingToUndo = errors.New("nothing to undo")
@@ -15,50 +13,30 @@ type UndoSnapshotResult struct {
 	RestoredFiles int
 }
 
-// snapshotRuntime is the subset of the runtime API that the App needs to
-// drive snapshot commands. Runtimes that don't capture snapshots (e.g.
-// remote runtimes) simply don't implement this interface and the related
-// commands are then disabled in the UI.
-type snapshotRuntime interface {
-	SnapshotsEnabled() bool
-	UndoLastSnapshot(ctx context.Context, sess *session.Session) (files int, ok bool, err error)
-	ListSnapshots(sess *session.Session) []builtins.SnapshotInfo
-	ResetSnapshot(ctx context.Context, sess *session.Session, keep int) (files int, ok bool, err error)
-}
-
-// snapshotRuntime returns the runtime's snapshot interface, or nil when the
-// runtime doesn't support snapshots at all (e.g. remote runtimes).
-func (a *App) snapshotRuntime() snapshotRuntime {
-	r, _ := a.runtime.(snapshotRuntime)
-	return r
-}
-
-// SnapshotsEnabled reports whether automatic shadow-git snapshots are active
-// for the current runtime. The answer doesn't depend on having an active
-// session: it's a runtime/configuration capability check.
+// SnapshotsEnabled reports whether automatic shadow-git snapshots are
+// active. The answer is a controller-level capability check and does
+// not depend on having an active session attached.
 func (a *App) SnapshotsEnabled() bool {
-	r := a.snapshotRuntime()
-	return r != nil && r.SnapshotsEnabled()
+	return a.snapshotController != nil && a.snapshotController.Enabled()
 }
 
-// UndoLastSnapshot restores the files captured in the most recent snapshot.
+// UndoLastSnapshot restores the files captured in the most recent
+// snapshot checkpoint for the current session.
 func (a *App) UndoLastSnapshot(ctx context.Context) (UndoSnapshotResult, error) {
-	r := a.snapshotRuntime()
-	if r == nil || a.session == nil {
+	if a.snapshotController == nil || a.session == nil {
 		return UndoSnapshotResult{}, ErrNothingToUndo
 	}
-	return snapshotResult(r.UndoLastSnapshot(ctx, a.session))
+	return snapshotResult(a.snapshotController.UndoLast(ctx, a.session.ID, a.snapshotCwd()))
 }
 
-// ListSnapshots returns the file count of every snapshot captured during the
-// current session, oldest first. Returns nil when no snapshots exist or when
-// the runtime doesn't support them.
+// ListSnapshots returns the file count of every snapshot captured during
+// the current session, oldest first. Returns nil when no snapshots exist
+// or when no controller is configured.
 func (a *App) ListSnapshots() []int {
-	r := a.snapshotRuntime()
-	if r == nil || a.session == nil {
+	if a.snapshotController == nil || a.session == nil {
 		return nil
 	}
-	infos := r.ListSnapshots(a.session)
+	infos := a.snapshotController.List(a.session.ID)
 	counts := make([]int, len(infos))
 	for i, info := range infos {
 		counts[i] = info.Files
@@ -67,14 +45,26 @@ func (a *App) ListSnapshots() []int {
 }
 
 // ResetSnapshot reverts every checkpoint past index keep so the workspace
-// returns to the state captured at that snapshot. keep == 0 resets to the
-// original pre-agent state.
+// returns to the state captured at that snapshot. keep == 0 resets to
+// the original pre-agent state.
 func (a *App) ResetSnapshot(ctx context.Context, keep int) (UndoSnapshotResult, error) {
-	r := a.snapshotRuntime()
-	if r == nil || a.session == nil {
+	if a.snapshotController == nil || a.session == nil {
 		return UndoSnapshotResult{}, ErrNothingToUndo
 	}
-	return snapshotResult(r.ResetSnapshot(ctx, a.session, keep))
+	return snapshotResult(a.snapshotController.Reset(ctx, a.session.ID, a.snapshotCwd(), keep))
+}
+
+// snapshotCwd resolves the working directory the snapshot operations
+// should run against. Sessions carry their own WorkingDir (set by the
+// embedder when the session is constructed); if it's empty we fall
+// back to os.Getwd so snapshot commands keep working in setups that
+// don't propagate a working dir on the session.
+func (a *App) snapshotCwd() string {
+	if a.session != nil && a.session.WorkingDir != "" {
+		return a.session.WorkingDir
+	}
+	cwd, _ := os.Getwd()
+	return cwd
 }
 
 // snapshotResult adapts the (files, ok, err) tuple returned by snapshot

@@ -22,6 +22,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/cli"
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
@@ -41,10 +42,11 @@ type App struct {
 	events                 chan tea.Msg
 	throttleDuration       time.Duration
 	cancel                 context.CancelFunc
-	currentAgentModel      string                  // Tracks the current agent's model ID from AgentInfoEvent
-	exitAfterFirstResponse bool                    // Exit TUI after first assistant response completes
-	titleGenerating        atomic.Bool             // True when title generation is in progress
-	titleGen               *sessiontitle.Generator // Title generator for local runtime (nil for remote)
+	currentAgentModel      string                      // Tracks the current agent's model ID from AgentInfoEvent
+	exitAfterFirstResponse bool                        // Exit TUI after first assistant response completes
+	titleGenerating        atomic.Bool                 // True when title generation is in progress
+	titleGen               *sessiontitle.Generator     // Title generator for local runtime (nil for remote)
+	snapshotController     builtins.SnapshotController // Drives /undo, /snapshots, /reset; nil for runtimes that don't capture snapshots
 
 	subsMu     sync.Mutex
 	subs       []chan tea.Msg
@@ -89,6 +91,19 @@ func WithQueuedMessages(msgs []string) Opt {
 func WithTitleGenerator(gen *sessiontitle.Generator) Opt {
 	return func(a *App) {
 		a.titleGen = gen
+	}
+}
+
+// WithSnapshotController plumbs in the [builtins.SnapshotController]
+// the App uses to drive /undo, /snapshots, /reset. Pass the same
+// controller to the runtime via runtime.WithAutoInjector so the
+// instance that captures the checkpoints is the one the TUI commands
+// drive. Pass nil (or omit the option) for runtimes that don't capture
+// snapshots; the App then reports SnapshotsEnabled()==false and the
+// related commands silently no-op.
+func WithSnapshotController(c builtins.SnapshotController) Opt {
+	return func(a *App) {
+		a.snapshotController = c
 	}
 }
 

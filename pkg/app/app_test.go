@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
@@ -18,12 +19,13 @@ import (
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
 )
 
-// mockRuntime is a minimal mock for testing App without a real runtime
+// mockRuntime is a minimal mock for testing App without a real runtime.
+// Snapshot operations are NOT modeled here: they are driven through a
+// [builtins.SnapshotController] passed to the App via WithSnapshotController,
+// so the mock runtime stays small and focused on the runtime.Runtime
+// surface.
 type mockRuntime struct {
-	store     session.Store
-	undoFiles int
-	undoOK    bool
-	undoErr   error
+	store session.Store
 }
 
 func (m *mockRuntime) CurrentAgentInfo(ctx context.Context) runtime.CurrentAgentInfo {
@@ -80,17 +82,34 @@ func (m *mockRuntime) Stop()                                     {}
 func (m *mockRuntime) Steer(_ runtime.QueuedMessage) error       { return nil }
 func (m *mockRuntime) FollowUp(_ runtime.QueuedMessage) error    { return nil }
 func (m *mockRuntime) TogglePause(context.Context) (bool, error) { return false, nil }
-func (m *mockRuntime) UndoLastSnapshot(context.Context, *session.Session) (int, bool, error) {
-	return m.undoFiles, m.undoOK, m.undoErr
-}
-func (m *mockRuntime) SnapshotsEnabled() bool                                 { return true }
-func (m *mockRuntime) ListSnapshots(*session.Session) []builtins.SnapshotInfo { return nil }
-func (m *mockRuntime) ResetSnapshot(context.Context, *session.Session, int) (int, bool, error) {
-	return m.undoFiles, m.undoOK, m.undoErr
-}
 
 // Verify mockRuntime implements runtime.Runtime
 var _ runtime.Runtime = (*mockRuntime)(nil)
+
+// stubSnapshotController is a tiny SnapshotController used by the app
+// tests to drive /undo without spinning up a real shadow-git
+// repository. enabled gates SnapshotsEnabled(), and the (files, ok,
+// err) tuple is returned verbatim from UndoLast / Reset so each test
+// can assert the result-shaping logic in [snapshotResult].
+type stubSnapshotController struct {
+	enabled bool
+	files   int
+	ok      bool
+	err     error
+}
+
+func (s *stubSnapshotController) Enabled() bool { return s.enabled }
+func (s *stubSnapshotController) UndoLast(context.Context, string, string) (int, bool, error) {
+	return s.files, s.ok, s.err
+}
+
+func (s *stubSnapshotController) List(string) []builtins.SnapshotInfo { return nil }
+func (s *stubSnapshotController) Reset(context.Context, string, string, int) (int, bool, error) {
+	return s.files, s.ok, s.err
+}
+func (s *stubSnapshotController) AutoInject(*hooks.Config) {}
+
+var _ builtins.SnapshotController = (*stubSnapshotController)(nil)
 
 func TestApp_NewSession_PreservesToolsApproved(t *testing.T) {
 	t.Parallel()
@@ -247,7 +266,9 @@ func TestApp_UndoLastSnapshot(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
-	app := New(ctx, &mockRuntime{undoFiles: 2, undoOK: true}, session.New())
+	app := New(ctx, &mockRuntime{}, session.New(),
+		WithSnapshotController(&stubSnapshotController{enabled: true, files: 2, ok: true}),
+	)
 	result, err := app.UndoLastSnapshot(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.RestoredFiles)
@@ -257,17 +278,36 @@ func TestApp_UndoLastSnapshot_NoSnapshot(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
-	app := New(ctx, &mockRuntime{}, session.New())
+	app := New(ctx, &mockRuntime{}, session.New(),
+		WithSnapshotController(&stubSnapshotController{enabled: true}),
+	)
 	_, err := app.UndoLastSnapshot(ctx)
 	assert.ErrorIs(t, err, ErrNothingToUndo)
+}
+
+func TestApp_UndoLastSnapshot_NoController(t *testing.T) {
+	t.Parallel()
+
+	// Without a SnapshotController the App reports nothing to undo,
+	// so the same UI affordance can light up regardless of which
+	// runtime the embedder paired the App with.
+	ctx := t.Context()
+	app := New(ctx, &mockRuntime{}, session.New())
+	_, err := app.UndoLastSnapshot(ctx)
+	require.ErrorIs(t, err, ErrNothingToUndo)
+	assert.False(t, app.SnapshotsEnabled())
 }
 
 func TestApp_SnapshotsEnabled_DoesNotRequireSession(t *testing.T) {
 	t.Parallel()
 
-	// SnapshotsEnabled answers a runtime-capability question; it must not
-	// silently return false just because no session is attached.
-	app := &App{runtime: &mockRuntime{}, session: nil}
+	// SnapshotsEnabled answers a controller-capability question; it
+	// must not silently return false just because no session is attached.
+	app := &App{
+		runtime:            &mockRuntime{},
+		session:            nil,
+		snapshotController: &stubSnapshotController{enabled: true},
+	}
 	assert.True(t, app.SnapshotsEnabled())
 }
 
