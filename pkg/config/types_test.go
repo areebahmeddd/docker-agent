@@ -1,4 +1,4 @@
-package v7
+package config
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 )
 
@@ -40,7 +41,7 @@ func TestThinkingBudget_MarshalUnmarshal_String(t *testing.T) {
 	// Test string effort level
 	input := []byte(`thinking_budget: minimal`)
 	var config struct {
-		ThinkingBudget *ThinkingBudget `yaml:"thinking_budget"`
+		ThinkingBudget *latest.ThinkingBudget `yaml:"thinking_budget"`
 	}
 
 	// Unmarshal
@@ -62,7 +63,7 @@ func TestThinkingBudget_MarshalUnmarshal_Integer(t *testing.T) {
 	// Test integer token budget
 	input := []byte(`thinking_budget: 8192`)
 	var config struct {
-		ThinkingBudget *ThinkingBudget `yaml:"thinking_budget"`
+		ThinkingBudget *latest.ThinkingBudget `yaml:"thinking_budget"`
 	}
 
 	// Unmarshal
@@ -84,7 +85,7 @@ func TestThinkingBudget_MarshalUnmarshal_NegativeInteger(t *testing.T) {
 	// Test negative integer token budget (e.g., -1 for Gemini dynamic thinking)
 	input := []byte(`thinking_budget: -1`)
 	var config struct {
-		ThinkingBudget *ThinkingBudget `yaml:"thinking_budget"`
+		ThinkingBudget *latest.ThinkingBudget `yaml:"thinking_budget"`
 	}
 
 	// Unmarshal
@@ -106,7 +107,7 @@ func TestThinkingBudget_MarshalUnmarshal_Zero(t *testing.T) {
 	// Test zero token budget (e.g., 0 for Gemini no thinking)
 	input := []byte(`thinking_budget: 0`)
 	var config struct {
-		ThinkingBudget *ThinkingBudget `yaml:"thinking_budget"`
+		ThinkingBudget *latest.ThinkingBudget `yaml:"thinking_budget"`
 	}
 
 	// Unmarshal
@@ -127,16 +128,16 @@ func TestThinkingBudget_IsDisabled(t *testing.T) {
 
 	for _, tt := range []struct {
 		name string
-		b    *ThinkingBudget
+		b    *latest.ThinkingBudget
 		want bool
 	}{
 		{"nil", nil, false},
-		{"zero tokens", &ThinkingBudget{Tokens: 0}, true},
-		{"none effort", &ThinkingBudget{Effort: "none"}, true},
-		{"positive tokens", &ThinkingBudget{Tokens: 8192}, false},
-		{"medium effort", &ThinkingBudget{Effort: "medium"}, false},
-		{"adaptive effort", &ThinkingBudget{Effort: "adaptive"}, false},
-		{"negative tokens (dynamic)", &ThinkingBudget{Tokens: -1}, false},
+		{"zero tokens", &latest.ThinkingBudget{Tokens: 0}, true},
+		{"none effort", &latest.ThinkingBudget{Effort: "none"}, true},
+		{"positive tokens", &latest.ThinkingBudget{Tokens: 8192}, false},
+		{"medium effort", &latest.ThinkingBudget{Effort: "medium"}, false},
+		{"adaptive effort", &latest.ThinkingBudget{Effort: "adaptive"}, false},
+		{"negative tokens (dynamic)", &latest.ThinkingBudget{Tokens: -1}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -158,7 +159,7 @@ func TestThinkingBudget_UnmarshalYAML_InvalidEffort(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var config struct {
-				ThinkingBudget *ThinkingBudget `yaml:"thinking_budget"`
+				ThinkingBudget *latest.ThinkingBudget `yaml:"thinking_budget"`
 			}
 			err := yaml.Unmarshal([]byte(tt.input), &config)
 			require.Error(t, err)
@@ -179,12 +180,13 @@ func TestThinkingBudget_UnmarshalYAML_AdaptiveWithEffort(t *testing.T) {
 		{"adaptive/low", `thinking_budget: adaptive/low`, "adaptive/low"},
 		{"adaptive/medium", `thinking_budget: adaptive/medium`, "adaptive/medium"},
 		{"adaptive/high", `thinking_budget: adaptive/high`, "adaptive/high"},
+		{"adaptive/xhigh", `thinking_budget: adaptive/xhigh`, "adaptive/xhigh"},
 		{"adaptive/max", `thinking_budget: adaptive/max`, "adaptive/max"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var config struct {
-				ThinkingBudget *ThinkingBudget `yaml:"thinking_budget"`
+				ThinkingBudget *latest.ThinkingBudget `yaml:"thinking_budget"`
 			}
 			err := yaml.Unmarshal([]byte(tt.input), &config)
 			require.NoError(t, err)
@@ -200,7 +202,7 @@ func TestThinkingBudget_UnmarshalJSON_InvalidEffort(t *testing.T) {
 
 	data := []byte(`{"thinking_budget": "adaptative"}`)
 	var config struct {
-		ThinkingBudget *ThinkingBudget `json:"thinking_budget"`
+		ThinkingBudget *latest.ThinkingBudget `json:"thinking_budget"`
 	}
 
 	err := json.Unmarshal(data, &config)
@@ -213,17 +215,18 @@ func TestThinkingBudget_IsAdaptive(t *testing.T) {
 
 	for _, tt := range []struct {
 		name string
-		b    *ThinkingBudget
+		b    *latest.ThinkingBudget
 		want bool
 	}{
 		{"nil", nil, false},
-		{"adaptive", &ThinkingBudget{Effort: "adaptive"}, true},
-		{"adaptive/high", &ThinkingBudget{Effort: "adaptive/high"}, true},
-		{"adaptive/low", &ThinkingBudget{Effort: "adaptive/low"}, true},
-		{"adaptive/medium", &ThinkingBudget{Effort: "adaptive/medium"}, true},
-		{"adaptive/max", &ThinkingBudget{Effort: "adaptive/max"}, true},
-		{"medium", &ThinkingBudget{Effort: "medium"}, false},
-		{"tokens", &ThinkingBudget{Tokens: 8192}, false},
+		{"adaptive", &latest.ThinkingBudget{Effort: "adaptive"}, true},
+		{"adaptive/high", &latest.ThinkingBudget{Effort: "adaptive/high"}, true},
+		{"adaptive/low", &latest.ThinkingBudget{Effort: "adaptive/low"}, true},
+		{"adaptive/medium", &latest.ThinkingBudget{Effort: "adaptive/medium"}, true},
+		{"adaptive/xhigh", &latest.ThinkingBudget{Effort: "adaptive/xhigh"}, true},
+		{"adaptive/max", &latest.ThinkingBudget{Effort: "adaptive/max"}, true},
+		{"medium", &latest.ThinkingBudget{Effort: "medium"}, false},
+		{"tokens", &latest.ThinkingBudget{Tokens: 8192}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -237,18 +240,19 @@ func TestThinkingBudget_AdaptiveEffort(t *testing.T) {
 
 	for _, tt := range []struct {
 		name       string
-		b          *ThinkingBudget
+		b          *latest.ThinkingBudget
 		wantEffort string
 		wantOK     bool
 	}{
 		{"nil", nil, "", false},
-		{"adaptive defaults to high", &ThinkingBudget{Effort: "adaptive"}, "high", true},
-		{"adaptive/low", &ThinkingBudget{Effort: "adaptive/low"}, "low", true},
-		{"adaptive/medium", &ThinkingBudget{Effort: "adaptive/medium"}, "medium", true},
-		{"adaptive/high", &ThinkingBudget{Effort: "adaptive/high"}, "high", true},
-		{"adaptive/max", &ThinkingBudget{Effort: "adaptive/max"}, "max", true},
-		{"not adaptive", &ThinkingBudget{Effort: "medium"}, "", false},
-		{"tokens", &ThinkingBudget{Tokens: 8192}, "", false},
+		{"adaptive defaults to high", &latest.ThinkingBudget{Effort: "adaptive"}, "high", true},
+		{"adaptive/low", &latest.ThinkingBudget{Effort: "adaptive/low"}, "low", true},
+		{"adaptive/medium", &latest.ThinkingBudget{Effort: "adaptive/medium"}, "medium", true},
+		{"adaptive/high", &latest.ThinkingBudget{Effort: "adaptive/high"}, "high", true},
+		{"adaptive/xhigh", &latest.ThinkingBudget{Effort: "adaptive/xhigh"}, "xhigh", true},
+		{"adaptive/max", &latest.ThinkingBudget{Effort: "adaptive/max"}, "max", true},
+		{"not adaptive", &latest.ThinkingBudget{Effort: "medium"}, "", false},
+		{"tokens", &latest.ThinkingBudget{Tokens: 8192}, "", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -264,19 +268,19 @@ func TestThinkingBudget_EffortTokens(t *testing.T) {
 
 	for _, tt := range []struct {
 		name       string
-		b          *ThinkingBudget
+		b          *latest.ThinkingBudget
 		wantTokens int
 		wantOK     bool
 	}{
 		{"nil", nil, 0, false},
-		{"minimal", &ThinkingBudget{Effort: "minimal"}, 1024, true},
-		{"low", &ThinkingBudget{Effort: "low"}, 2048, true},
-		{"medium", &ThinkingBudget{Effort: "medium"}, 8192, true},
-		{"high", &ThinkingBudget{Effort: "high"}, 16384, true},
-		{"adaptive", &ThinkingBudget{Effort: "adaptive"}, 0, false},
-		{"none", &ThinkingBudget{Effort: "none"}, 0, false},
-		{"explicit tokens", &ThinkingBudget{Tokens: 4096}, 0, false},
-		{"empty effort", &ThinkingBudget{}, 0, false},
+		{"minimal", &latest.ThinkingBudget{Effort: "minimal"}, 1024, true},
+		{"low", &latest.ThinkingBudget{Effort: "low"}, 2048, true},
+		{"medium", &latest.ThinkingBudget{Effort: "medium"}, 8192, true},
+		{"high", &latest.ThinkingBudget{Effort: "high"}, 16384, true},
+		{"adaptive", &latest.ThinkingBudget{Effort: "adaptive"}, 0, false},
+		{"none", &latest.ThinkingBudget{Effort: "none"}, 0, false},
+		{"explicit tokens", &latest.ThinkingBudget{Tokens: 4096}, 0, false},
+		{"empty effort", &latest.ThinkingBudget{}, 0, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -292,14 +296,14 @@ func TestAgents_UnmarshalYAML_RejectsUnknownFields(t *testing.T) {
 
 	// "instructions" (plural) is not a valid field; the correct field is "instruction" (singular).
 	// Agents.UnmarshalYAML must reject it so that typos don't silently drop config.
-	input := []byte(`version: "5"
-agents:
+	input := []byte(`agents:
   root:
     model: openai/gpt-4o
     instructions: "You are a helpful assistant."
 `)
 
-	_, err := parse(input)
+	var cfg latest.Config
+	err := yaml.UnmarshalWithOptions(input, &cfg, yaml.Strict())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "instructions")
 }
@@ -307,14 +311,14 @@ agents:
 func TestAgents_UnmarshalYAML_AcceptsValidConfig(t *testing.T) {
 	t.Parallel()
 
-	input := []byte(`version: "5"
-agents:
+	input := []byte(`agents:
   root:
     model: openai/gpt-4o
     instruction: "You are a helpful assistant."
 `)
 
-	cfg, err := parse(input)
+	var cfg latest.Config
+	err := yaml.UnmarshalWithOptions(input, &cfg, yaml.Strict())
 	require.NoError(t, err)
 	require.Len(t, cfg.Agents, 1)
 	require.Equal(t, "root", cfg.Agents[0].Name)
@@ -332,7 +336,7 @@ threshold: 0.5
 vector_dimensions: 768
 `)
 
-	var strategy RAGStrategyConfig
+	var strategy latest.RAGStrategyConfig
 
 	// Unmarshal
 	err := yaml.Unmarshal(input, &strategy)
@@ -358,7 +362,7 @@ vector_dimensions: 768
 	require.NotContains(t, outputStr, "params:")
 
 	// Unmarshal again to verify round-trip
-	var strategy2 RAGStrategyConfig
+	var strategy2 latest.RAGStrategyConfig
 	err = yaml.Unmarshal(output, &strategy2)
 	require.NoError(t, err)
 	require.Equal(t, strategy.Type, strategy2.Type)
@@ -377,7 +381,7 @@ database: ./test.db
 model: test-model
 `)
 
-	var strategy RAGStrategyConfig
+	var strategy latest.RAGStrategyConfig
 	err := yaml.Unmarshal(input, &strategy)
 	require.NoError(t, err)
 
@@ -393,7 +397,7 @@ model: test-model
 	require.NotContains(t, outputStr, "params:") // Should be flattened
 }
 
-func mustGetDBString(t *testing.T, db RAGDatabaseConfig) string {
+func mustGetDBString(t *testing.T, db latest.RAGDatabaseConfig) string {
 	t.Helper()
 	str, err := db.AsString()
 	require.NoError(t, err)

@@ -1,16 +1,18 @@
-package v8
+package config
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/config/latest"
 )
 
 func TestAuthConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name        string
-		auth        *AuthConfig
+		auth        *latest.AuthConfig
 		provider    string
 		errContains string
 	}{
@@ -20,22 +22,22 @@ func TestAuthConfig_Validate(t *testing.T) {
 		},
 		{
 			name:        "missing type",
-			auth:        &AuthConfig{},
+			auth:        &latest.AuthConfig{},
 			errContains: "auth.type is required",
 		},
 		{
 			name:        "unknown type",
-			auth:        &AuthConfig{Type: "oauth"},
+			auth:        &latest.AuthConfig{Type: "oauth"},
 			errContains: "unsupported auth.type",
 		},
 		{
 			name: "wif on non-anthropic provider",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
 					OrganizationID:   "org",
-					IdentityToken:    &IdentityTokenSourceConfig{File: "/t"},
+					IdentityToken:    &latest.IdentityTokenSourceConfig{File: "/t"},
 				},
 			},
 			provider:    "openai",
@@ -43,18 +45,18 @@ func TestAuthConfig_Validate(t *testing.T) {
 		},
 		{
 			name:        "wif requires federation block",
-			auth:        &AuthConfig{Type: AuthTypeWorkloadIdentityFederation},
+			auth:        &latest.AuthConfig{Type: latest.AuthTypeWorkloadIdentityFederation},
 			provider:    "anthropic",
 			errContains: "workload_identity_federation block is required",
 		},
 		{
 			name:     "wif federation_rule_id required",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					OrganizationID: "org",
-					IdentityToken:  &IdentityTokenSourceConfig{File: "/t"},
+					IdentityToken:  &latest.IdentityTokenSourceConfig{File: "/t"},
 				},
 			},
 			errContains: "federation_rule_id is required",
@@ -62,12 +64,12 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "wif federation_rule_id prefix",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "bogus",
 					OrganizationID:   "org",
-					IdentityToken:    &IdentityTokenSourceConfig{File: "/t"},
+					IdentityToken:    &latest.IdentityTokenSourceConfig{File: "/t"},
 				},
 			},
 			errContains: `must start with "fdrl_"`,
@@ -75,11 +77,11 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "wif organization_id required",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
-					IdentityToken:    &IdentityTokenSourceConfig{File: "/t"},
+					IdentityToken:    &latest.IdentityTokenSourceConfig{File: "/t"},
 				},
 			},
 			errContains: "organization_id is required",
@@ -87,13 +89,13 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "wif service_account_id prefix when set",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
 					OrganizationID:   "org",
 					ServiceAccountID: "bogus",
-					IdentityToken:    &IdentityTokenSourceConfig{File: "/t"},
+					IdentityToken:    &latest.IdentityTokenSourceConfig{File: "/t"},
 				},
 			},
 			errContains: `must start with "svac_"`,
@@ -101,9 +103,9 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "identity_token required",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
 					OrganizationID:   "org",
 				},
@@ -113,12 +115,12 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "identity_token requires exactly one source",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
 					OrganizationID:   "org",
-					IdentityToken:    &IdentityTokenSourceConfig{},
+					IdentityToken:    &latest.IdentityTokenSourceConfig{},
 				},
 			},
 			errContains: "requires exactly one of",
@@ -126,12 +128,12 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "identity_token rejects multiple sources",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
 					OrganizationID:   "org",
-					IdentityToken:    &IdentityTokenSourceConfig{File: "/t", Env: "X"},
+					IdentityToken:    &latest.IdentityTokenSourceConfig{File: "/t", Env: "X"},
 				},
 			},
 			errContains: "must set exactly one",
@@ -139,12 +141,12 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "headers without url is rejected",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
 					OrganizationID:   "org",
-					IdentityToken: &IdentityTokenSourceConfig{
+					IdentityToken: &latest.IdentityTokenSourceConfig{
 						File:    "/t",
 						Headers: map[string]string{"X": "Y"},
 					},
@@ -155,12 +157,12 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "response_field without url is rejected",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
 					OrganizationID:   "org",
-					IdentityToken: &IdentityTokenSourceConfig{
+					IdentityToken: &latest.IdentityTokenSourceConfig{
 						Env:           "X",
 						ResponseField: "value",
 					},
@@ -171,12 +173,12 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "command rejects empty arg",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_x",
 					OrganizationID:   "org",
-					IdentityToken: &IdentityTokenSourceConfig{
+					IdentityToken: &latest.IdentityTokenSourceConfig{
 						Command: []string{"sh", ""},
 					},
 				},
@@ -186,12 +188,12 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "valid file source",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_abc",
 					OrganizationID:   "org",
-					IdentityToken: &IdentityTokenSourceConfig{
+					IdentityToken: &latest.IdentityTokenSourceConfig{
 						File: "/var/run/secrets/anthropic/token",
 					},
 				},
@@ -200,13 +202,13 @@ func TestAuthConfig_Validate(t *testing.T) {
 		{
 			name:     "valid url source with headers",
 			provider: "anthropic",
-			auth: &AuthConfig{
-				Type: AuthTypeWorkloadIdentityFederation,
-				Federation: &FederationAuthConfig{
+			auth: &latest.AuthConfig{
+				Type: latest.AuthTypeWorkloadIdentityFederation,
+				Federation: &latest.FederationAuthConfig{
 					FederationRuleID: "fdrl_abc",
 					OrganizationID:   "org",
 					ServiceAccountID: "svac_abc",
-					IdentityToken: &IdentityTokenSourceConfig{
+					IdentityToken: &latest.IdentityTokenSourceConfig{
 						URL:           "https://example.com/token",
 						Headers:       map[string]string{"Authorization": "bearer ${TOKEN}"},
 						ResponseField: "value",
@@ -218,7 +220,7 @@ func TestAuthConfig_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.auth.validate(tt.provider)
+			err := tt.auth.Validate(tt.provider)
 			if tt.errContains == "" {
 				assert.NoError(t, err)
 				return
@@ -234,35 +236,35 @@ func TestAuthConfig_Validate(t *testing.T) {
 // user at the offending block.
 func TestConfigValidate_AuthErrorsAreScoped(t *testing.T) {
 	t.Run("provider auth", func(t *testing.T) {
-		cfg := Config{
-			Providers: map[string]ProviderConfig{
+		cfg := latest.Config{
+			Providers: map[string]latest.ProviderConfig{
 				"anthropic-wif": {
 					Provider: "anthropic",
-					Auth:     &AuthConfig{Type: "oauth"},
+					Auth:     &latest.AuthConfig{Type: "oauth"},
 				},
 			},
 		}
-		err := cfg.validate()
+		err := cfg.Validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "providers.anthropic-wif")
 	})
 
 	t.Run("model auth", func(t *testing.T) {
-		cfg := Config{
-			Models: map[string]ModelConfig{
+		cfg := latest.Config{
+			Models: map[string]latest.ModelConfig{
 				"claude": {
 					Provider: "anthropic",
-					Auth: &AuthConfig{
-						Type: AuthTypeWorkloadIdentityFederation,
-						Federation: &FederationAuthConfig{
+					Auth: &latest.AuthConfig{
+						Type: latest.AuthTypeWorkloadIdentityFederation,
+						Federation: &latest.FederationAuthConfig{
 							OrganizationID: "org",
-							IdentityToken:  &IdentityTokenSourceConfig{File: "/t"},
+							IdentityToken:  &latest.IdentityTokenSourceConfig{File: "/t"},
 						},
 					},
 				},
 			},
 		}
-		err := cfg.validate()
+		err := cfg.Validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "models.claude")
 		assert.Contains(t, err.Error(), "federation_rule_id is required")
@@ -273,48 +275,48 @@ func TestConfigValidate_AuthErrorsAreScoped(t *testing.T) {
 		// underlying type is "anthropic". Validation must look through that
 		// indirection rather than comparing the auth.type against the raw
 		// provider key on the model.
-		cfg := Config{
-			Providers: map[string]ProviderConfig{
+		cfg := latest.Config{
+			Providers: map[string]latest.ProviderConfig{
 				"my-anthropic": {Provider: "anthropic"},
 			},
-			Models: map[string]ModelConfig{
+			Models: map[string]latest.ModelConfig{
 				"claude": {
 					Provider: "my-anthropic",
-					Auth: &AuthConfig{
-						Type: AuthTypeWorkloadIdentityFederation,
-						Federation: &FederationAuthConfig{
+					Auth: &latest.AuthConfig{
+						Type: latest.AuthTypeWorkloadIdentityFederation,
+						Federation: &latest.FederationAuthConfig{
 							FederationRuleID: "fdrl_x",
 							OrganizationID:   "org",
-							IdentityToken:    &IdentityTokenSourceConfig{File: "/t"},
+							IdentityToken:    &latest.IdentityTokenSourceConfig{File: "/t"},
 						},
 					},
 				},
 			},
 		}
-		err := cfg.validate()
+		err := cfg.Validate()
 		assert.NoError(t, err)
 	})
 
 	t.Run("model auth rejected when referenced provider is not anthropic", func(t *testing.T) {
-		cfg := Config{
-			Providers: map[string]ProviderConfig{
+		cfg := latest.Config{
+			Providers: map[string]latest.ProviderConfig{
 				"my-openai": {Provider: "openai"},
 			},
-			Models: map[string]ModelConfig{
+			Models: map[string]latest.ModelConfig{
 				"gpt": {
 					Provider: "my-openai",
-					Auth: &AuthConfig{
-						Type: AuthTypeWorkloadIdentityFederation,
-						Federation: &FederationAuthConfig{
+					Auth: &latest.AuthConfig{
+						Type: latest.AuthTypeWorkloadIdentityFederation,
+						Federation: &latest.FederationAuthConfig{
 							FederationRuleID: "fdrl_x",
 							OrganizationID:   "org",
-							IdentityToken:    &IdentityTokenSourceConfig{File: "/t"},
+							IdentityToken:    &latest.IdentityTokenSourceConfig{File: "/t"},
 						},
 					},
 				},
 			},
 		}
-		err := cfg.validate()
+		err := cfg.Validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "only supported with the anthropic provider")
 	})

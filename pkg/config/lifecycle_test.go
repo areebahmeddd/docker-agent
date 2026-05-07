@@ -1,4 +1,4 @@
-package latest_test
+package config
 
 import (
 	"testing"
