@@ -65,8 +65,8 @@ func TestConvertDocumentResponseInput_StrategyTXT(t *testing.T) {
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfInputText)
 	text := parts[0].OfInputText.Text
-	assert.Contains(t, text, "spec.md")
-	assert.Contains(t, text, "text/markdown")
+	assert.Contains(t, text, "spec-md")
+	assert.Contains(t, text, "text-markdown")
 	assert.Contains(t, text, "## API Spec")
 }
 
@@ -83,7 +83,6 @@ func TestConvertDocumentResponseInput_StrategyTXT_Envelope(t *testing.T) {
 	require.NotNil(t, parts[0].OfInputText)
 	text := parts[0].OfInputText.Text
 	assert.True(t, strings.HasPrefix(text, "<document"), "should be wrapped in envelope")
-	assert.Contains(t, text, `name="data.csv"`)
 }
 
 func TestConvertDocumentResponseInput_Drop_NoContent(t *testing.T) {

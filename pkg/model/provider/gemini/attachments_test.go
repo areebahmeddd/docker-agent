@@ -58,8 +58,8 @@ func TestConvertDocumentGemini_StrategyTXT(t *testing.T) {
 	part, err := convertDocument(t.Context(), doc, "")
 	require.NoError(t, err)
 	require.NotNil(t, part)
-	assert.Contains(t, part.Text, "readme.md")
-	assert.Contains(t, part.Text, "text/markdown")
+	assert.Contains(t, part.Text, "readme-md")
+	assert.Contains(t, part.Text, "text-markdown")
 	assert.Contains(t, part.Text, "# Read Me")
 }
 
@@ -74,7 +74,6 @@ func TestConvertDocumentGemini_StrategyTXT_Envelope(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, part)
 	assert.True(t, strings.HasPrefix(part.Text, "<document"), "should be wrapped in envelope")
-	assert.Contains(t, part.Text, `name="data.csv"`)
 }
 
 func TestConvertDocumentGemini_Drop_NoContent(t *testing.T) {

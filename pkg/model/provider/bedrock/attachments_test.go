@@ -84,8 +84,8 @@ func TestConvertDocumentBedrock_StrategyTXT(t *testing.T) {
 	require.Len(t, blocks, 1)
 	textBlock, ok := blocks[0].(*types.ContentBlockMemberText)
 	require.True(t, ok, "expected text block for TXT strategy")
-	assert.Contains(t, textBlock.Value, "notes.md")
-	assert.Contains(t, textBlock.Value, "text/markdown")
+	assert.Contains(t, textBlock.Value, "notes-md")
+	assert.Contains(t, textBlock.Value, "text-markdown")
 	assert.Contains(t, textBlock.Value, "## Notes")
 }
 
@@ -102,7 +102,6 @@ func TestConvertDocumentBedrock_StrategyTXT_Envelope(t *testing.T) {
 	textBlock, ok := blocks[0].(*types.ContentBlockMemberText)
 	require.True(t, ok, "expected text block")
 	assert.True(t, strings.HasPrefix(textBlock.Value, "<document"), "should be wrapped in envelope")
-	assert.Contains(t, textBlock.Value, `name="data.csv"`)
 }
 
 func TestConvertDocumentBedrock_Drop_NoContent(t *testing.T) {

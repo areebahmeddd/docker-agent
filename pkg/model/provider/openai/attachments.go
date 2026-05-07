@@ -54,13 +54,14 @@ func convertDocumentToResponseInputWithCaps(ctx context.Context, doc chat.Docume
 		}
 
 		if mime == "application/pdf" {
-			// The Responses API has a native file input block; use it for PDFs.
+			// The Responses API file block expects raw base64-encoded bytes in FileData
+			// (not a data URI). See ResponseInputFileParam.FileData godoc:
+			// "The base64-encoded data of the file to be sent to the model."
 			b64Data := base64.StdEncoding.EncodeToString(doc.Source.InlineData)
-			dataURI := fmt.Sprintf("data:%s;base64,%s", doc.MimeType, b64Data)
 			return []responses.ResponseInputContentUnionParam{
 				{
 					OfInputFile: &responses.ResponseInputFileParam{
-						FileData: param.NewOpt(dataURI),
+						FileData: param.NewOpt(b64Data),
 						Filename: param.NewOpt(doc.Name),
 					},
 				},

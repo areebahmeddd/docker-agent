@@ -64,8 +64,8 @@ func TestConvertDocument_StrategyTXT(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
-	assert.Contains(t, parts[0].OfText.Text, "readme.md")
-	assert.Contains(t, parts[0].OfText.Text, "text/markdown")
+	assert.Contains(t, parts[0].OfText.Text, "readme-md")
+	assert.Contains(t, parts[0].OfText.Text, "text-markdown")
 	assert.Contains(t, parts[0].OfText.Text, "# Hello World")
 }
 
@@ -82,8 +82,6 @@ func TestConvertDocument_StrategyTXT_Envelope(t *testing.T) {
 	require.NotNil(t, parts[0].OfText)
 	text := parts[0].OfText.Text
 	assert.True(t, strings.HasPrefix(text, "<document"), "should be wrapped in document envelope")
-	assert.Contains(t, text, `name="data.csv"`)
-	assert.Contains(t, text, `mime-type="text/csv"`)
 }
 
 func TestConvertDocument_Drop_NoContent(t *testing.T) {

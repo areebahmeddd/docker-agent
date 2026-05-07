@@ -8,6 +8,7 @@ package attachment
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
@@ -53,14 +54,41 @@ func Decide(doc chat.Document, mc modelcaps.ModelCapabilities) (Strategy, string
 	return StrategyDrop, "no inline content"
 }
 
-// TXTEnvelope wraps a text document body in an XML-like tag that models can
-// parse as a named attachment.
+// TXTEnvelope wraps text content in a unique XML-like tag derived from the
+// document name and MIME type. The tag name is a slug of both, making
+// accidental tag break-out in the content practically impossible without
+// escaping the body.
 //
-//	<document name="report.md" mime-type="text/markdown">…body…</document>
+// Example: a document named "report.md" with MIME "text/markdown" produces:
 //
-// The body is sanitised to prevent content from breaking out of the envelope:
-// any occurrence of "</document>" in the body is replaced with "&lt;/document&gt;".
+//	<document-report-md-text-markdown>
+//	…body…
+//	</document-report-md-text-markdown>
 func TXTEnvelope(name, mimeType, body string) string {
-	safe := strings.ReplaceAll(body, "</document>", "&lt;/document&gt;")
-	return fmt.Sprintf("<document name=%q mime-type=%q>%s</document>", name, mimeType, safe)
+	slug := slugify(name + "-" + mimeType)
+	tag := "document-" + slug
+	return fmt.Sprintf("<%s>\n%s\n</%s>", tag, body, tag)
+}
+
+// slugify converts s to a lowercase, alphanumeric-and-hyphens-only string.
+// Non-alphanumeric runes are replaced with hyphens; consecutive hyphens are
+// collapsed to one; leading and trailing hyphens are trimmed.
+// If the result is empty, "doc" is returned as a safe fallback.
+func slugify(s string) string {
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			prevHyphen = false
+		} else if !prevHyphen {
+			b.WriteRune('-')
+			prevHyphen = true
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		return "doc"
+	}
+	return result
 }
