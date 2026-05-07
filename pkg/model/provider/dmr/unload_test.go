@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -191,5 +192,28 @@ func TestClientUnload(t *testing.T) {
 		t.Parallel()
 		c := newClient("", nil, latest.ModelConfig{Model: "ai/qwen3"})
 		require.NoError(t, c.Unload(t.Context()))
+	})
+
+	t.Run("drains success body so connection can be reused", func(t *testing.T) {
+		t.Parallel()
+
+		// httptest's default server uses keep-alive; a non-drained body would
+		// force a fresh TCP connection on the second call. We assert that the
+		// underlying transport saw a single connection across two POSTs.
+		var seen sync.Map
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen.Store(r.RemoteAddr, struct{}{})
+			// Write a non-trivial body so the drain actually has work to do.
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}))
+		defer server.Close()
+
+		c := newClient(server.URL+"/engines/v1", server.Client(), latest.ModelConfig{Model: "ai/qwen3"})
+		require.NoError(t, c.Unload(t.Context()))
+		require.NoError(t, c.Unload(t.Context()))
+
+		count := 0
+		seen.Range(func(_, _ any) bool { count++; return true })
+		assert.Equal(t, 1, count, "both POSTs must reuse the same TCP connection")
 	})
 }

@@ -95,5 +95,9 @@ func postUnloadModel(ctx context.Context, client *http.Client, endpoint, modelID
 		return fmt.Errorf("unload endpoint returned %d: %s",
 			resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+	// Drain the success-path body so the underlying transport can reuse
+	// the connection (Go's http.Client only re-pools a connection whose
+	// body has been read to EOF and closed).
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
