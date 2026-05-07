@@ -117,18 +117,29 @@ func TestHTTPPostSwallowsErrors(t *testing.T) {
 	}
 }
 
-// TestHTTPPostMalformedURLReturnsError: an unparseable URL is the
-// one error path that surfaces, so `on_error: warn` flags the
-// misconfig.
-func TestHTTPPostMalformedURLReturnsError(t *testing.T) {
+// TestHTTPPostRejectsNonHTTPSchemes: file://, ftp://, javascript: and
+// scheme-less or host-less inputs all surface as a config error
+// rather than being silently dispatched to a transport.
+func TestHTTPPostRejectsNonHTTPSchemes(t *testing.T) {
 	t.Parallel()
 
 	fn := lookup(t, builtins.HTTPPost)
 
-	out, err := fn(t.Context(), &hooks.Input{SessionID: "s"}, []string{"http://\x7f\x00.example", "{}"})
-	require.Error(t, err)
-	assert.Nil(t, out)
-	assert.Contains(t, err.Error(), "http_post:")
+	cases := []string{
+		"file:///etc/passwd",
+		"ftp://example.com/",
+		"javascript:alert(1)",
+		"not-a-url",
+		"http://",
+		"http://\x7f\x00.example",
+	}
+	for _, raw := range cases {
+		out, err := fn(t.Context(), &hooks.Input{SessionID: "s"}, []string{raw, "{}"})
+		require.Errorf(t, err, "input %q must be rejected", raw)
+		assert.Nil(t, out)
+		assert.Contains(t, err.Error(), "http_post:")
+		assert.Contains(t, err.Error(), "http(s)")
+	}
 }
 
 // TestHTTPPostHonoursContextCancellation: the request returns
