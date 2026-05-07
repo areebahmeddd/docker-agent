@@ -508,9 +508,20 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"dockerc"},
 		},
 		{
-			// docker pat
-			expression: `(?i)(dckr_pat_[-0-9a-zA-Z]{27})`,
-			keywords:   []string{"dckr_pat"},
+			// docker-hub-personal-access-token. The `dckr_pat_` prefix
+			// is followed by a strictly alphanumeric 27-char body —
+			// per Docker's PAT issuance, no dashes / dots / underscores
+			// appear in the body, so the char class stays tight.
+			expression: `dckr_pat_[A-Za-z0-9]{27}`,
+			keywords:   []string{"dckr_pat_"},
+		},
+		{
+			// docker-hub-organization-access-token. Issued from the
+			// Docker Hub admin console for organization-scoped API
+			// access; same `<prefix>_<27 alnum>` shape as the PAT but
+			// with the `dckr_oat_` prefix.
+			expression: `dckr_oat_[A-Za-z0-9]{27}`,
+			keywords:   []string{"dckr_oat_"},
 		},
 
 		// --- Patterns added on top of the upstream Trivy / mcp-gateway
@@ -826,6 +837,167 @@ var rules = sync.OnceValue(func() []rule {
 			// ability to issue certificates for any zone in the account.
 			expression: `v1\.0-[a-f0-9]{32}-[A-Za-z0-9+/=]{146}`,
 			keywords:   []string{"v1.0-"},
+		},
+
+		// --- Third batch of additions: vendor-prefixed credentials
+		// confirmed against gitleaks default rules and vendor docs.
+		// Each format embeds a unique prefix that keeps the keyword
+		// pre-filter cheap and the regex tight enough to match without
+		// surrounding-context anchors.
+
+		{
+			// 1password-service-account-token. Service-account tokens
+			// always start with `ops_eyJ` — the `eyJ` is the base64
+			// prefix of `{"`, since the body is a JWT-style envelope
+			// over a 1Password macaroon. The literal `ops_eyJ` keyword
+			// keeps the AC pre-filter extremely selective. The 1000-char
+			// upper bound covers the longest 1Password tokens observed
+			// in the wild (and is RE2's hard cap on a single quantifier)
+			// while preventing the regex from absorbing arbitrary
+			// trailing alphanumeric content if a token is not
+			// whitespace-terminated.
+			expression: `ops_eyJ[A-Za-z0-9+/=_-]{250,1000}`,
+			keywords:   []string{"ops_eyJ"},
+		},
+		{
+			// openrouter-api-key. OpenRouter (LLM router) keys carry
+			// the documented `sk-or-v1-` prefix followed by a 64-char
+			// lowercase-hex body.
+			expression: `sk-or-v1-[a-f0-9]{64}`,
+			keywords:   []string{"sk-or-v1-"},
+		},
+		{
+			// sonar-token. SonarQube / SonarCloud user (`squ_`),
+			// project (`sqp_`), and global-analysis (`sqa_`) tokens
+			// share a 40-char hex body. The prefix is mandatory —
+			// gitleaks' upstream rule treats it as optional, but doing
+			// so flags any 40-char hex blob and is too noisy for our
+			// agent-output use case.
+			expression: `(squ|sqp|sqa)_[a-f0-9]{40}`,
+			keywords:   []string{"squ_", "sqp_", "sqa_"},
+		},
+		{
+			// pinecone-api-key. Pinecone vector-DB keys carry the
+			// `pckey_` prefix; the body is a `<label>_<token>` pair of
+			// base64url-ish segments. Both segments are bounded so the
+			// regex can't swallow neighbouring identifiers when a key
+			// abuts other text without a separator.
+			expression: `pckey_[A-Za-z0-9]{1,40}_[A-Za-z0-9_-]{24,80}`,
+			keywords:   []string{"pckey_"},
+		},
+		{
+			// supabase-secret-key. The 2024 `sb_publishable_` /
+			// `sb_secret_` rotation introduced prefixed keys; only the
+			// secret variant bypasses Row-Level Security and is worth
+			// redacting. Body is base64url-ish, observed at ~56 chars;
+			// the 80-char ceiling keeps the regex from absorbing trailing
+			// text when the key isn't whitespace-terminated.
+			expression: `sb_secret_[A-Za-z0-9_-]{40,80}`,
+			keywords:   []string{"sb_secret_"},
+		},
+		{
+			// tailscale-auth-key. Used to enroll new nodes into a
+			// Tailnet without an interactive login. The `tskey-auth-`
+			// prefix is documented; the body is a `<id>-<secret>` pair
+			// of alphanumeric segments. Both segments are bounded so
+			// the regex can't swallow adjacent text.
+			expression: `tskey-auth-[A-Za-z0-9]{10,30}-[A-Za-z0-9]{20,80}`,
+			keywords:   []string{"tskey-auth-"},
+		},
+		{
+			// tailscale-api-access-token. Grants programmatic access
+			// to the Tailscale control plane (devices, ACLs, keys).
+			// Same `<id>-<secret>` body shape as the auth-key form
+			// with the same upper bounds.
+			expression: `tskey-api-[A-Za-z0-9]{10,30}-[A-Za-z0-9]{20,80}`,
+			keywords:   []string{"tskey-api-"},
+		},
+		{
+			// vercel-token. The 2023 token-format change introduced
+			// three prefixed shapes that share a common alphanumeric
+			// body: `vcp_` (personal access tokens), `vck_` (CLI /
+			// deploy tokens), and `vci_` (integration tokens). Real
+			// tokens are 24 chars; the 80-char ceiling stops the regex
+			// from absorbing trailing text when the token isn't
+			// whitespace-terminated.
+			expression: `vc[kpi]_[A-Za-z0-9]{20,80}`,
+			keywords:   []string{"vcp_", "vck_", "vci_"},
+		},
+
+		// --- Fourth batch of additions: payment processors, AI / data
+		// platforms, and infra tokens. Each entry is anchored on a
+		// vendor-issued prefix that is documented in vendor docs or
+		// gitleaks default rules. Body lengths are tuned tight enough
+		// to keep the false-positive rate low without missing real
+		// tokens (we err on the conservative side rather than allow
+		// open-ended quantifiers that could swallow neighbouring text).
+
+		{
+			// razorpay-key-id. Razorpay payment-API public key IDs are
+			// shaped `rzp_(test|live)_<14 alnum>`. The matching account
+			// secret is opaque (no prefix) so we can only redact the
+			// key-id span, but leakage of the pair lets an attacker
+			// authenticate against the Razorpay API — still worth
+			// scrubbing the half we can identify.
+			expression: `rzp_(test|live)_[A-Za-z0-9]{14}`,
+			keywords:   []string{"rzp_test_", "rzp_live_"},
+		},
+		{
+			// adyen-api-key. Adyen merchant API keys carry the `AQE`
+			// prefix followed by a long base64 body (typically 200+
+			// chars including `=` padding). The 100-char floor and
+			// 400-char ceiling cover every observed shape while
+			// preventing the regex from absorbing arbitrary trailing
+			// alphanumeric content if a key isn't whitespace-terminated.
+			expression: `AQE[A-Za-z0-9+/=]{100,400}`,
+			keywords:   []string{"AQE"},
+		},
+		{
+			// plaid-access-token. Plaid item access tokens have the
+			// shape `access-(sandbox|development|production)-<UUID>`.
+			// The environment segment plus the strict UUID body keeps
+			// the rule extremely specific.
+			expression: `access-(sandbox|development|production)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`,
+			keywords:   []string{"access-sandbox-", "access-development-", "access-production-"},
+		},
+		{
+			// posthog-personal-api-token. PostHog issues personal API
+			// tokens shaped `phx_<43 alnum>`. The body length is fixed
+			// per their issuance, so the regex stays tight.
+			expression: `phx_[A-Za-z0-9]{43}`,
+			keywords:   []string{"phx_"},
+		},
+		{
+			// render-api-key. Render's REST-API tokens carry the `rnd_`
+			// prefix and a ~32-char alphanumeric body — leakage grants
+			// full account access (deployments, env vars, services).
+			// The 80-char ceiling stops the regex from absorbing trailing
+			// text when the token isn't whitespace-terminated.
+			expression: `rnd_[A-Za-z0-9_-]{30,80}`,
+			keywords:   []string{"rnd_"},
+		},
+		{
+			// honeycomb-api-key. Honeycomb v2 keys carry distinctive
+			// prefixes — `hcaik_` for ingest keys (high blast: write
+			// telemetry) and `hcaic_` for configuration keys (read /
+			// modify dataset settings). Both share a 58-char
+			// alphanumeric body.
+			expression: `hca(ik|ic)_[A-Za-z0-9]{58}`,
+			keywords:   []string{"hcaik_", "hcaic_"},
+		},
+		{
+			// akamai-edgegrid-client-token. Akamai EdgeGrid API client
+			// tokens follow the `akab-<16 alnum>-<16 alnum>` shape
+			// documented for `.edgerc` config files.
+			expression: `akab-[a-z0-9]{16}-[a-z0-9]{16}`,
+			keywords:   []string{"akab-"},
+		},
+		{
+			// adafruit-io-key. Adafruit IO keys carry the `aio_` prefix
+			// and a 28-character alphanumeric body — leakage allows
+			// reading / writing IoT feeds attached to the account.
+			expression: `aio_[A-Za-z0-9]{28}`,
+			keywords:   []string{"aio_"},
 		},
 	}
 })
