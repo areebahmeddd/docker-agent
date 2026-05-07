@@ -820,6 +820,9 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.CopyLastResponseToClipboardMsg:
 		return m.handleCopyLastResponseToClipboard()
 
+	case messages.UndoSnapshotMsg:
+		return m.handleUndoSnapshot()
+
 	case messages.EvalSessionMsg:
 		return m.handleEvalSession(msg.Filename)
 

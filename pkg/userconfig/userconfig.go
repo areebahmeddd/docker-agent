@@ -61,6 +61,8 @@ type Settings struct {
 	// SoundThreshold is the minimum duration in seconds a task must run
 	// before a success sound is played. Defaults to 5 seconds.
 	SoundThreshold int `yaml:"sound_threshold,omitempty"`
+	// Snapshot enables automatic shadow-git snapshots globally when true.
+	Snapshot *bool `yaml:"snapshot,omitempty"`
 	// Permissions defines global permission patterns applied across all sessions
 	// and agents. These act as user-wide defaults; session-level and agent-level
 	// permissions override them.
@@ -103,6 +105,11 @@ func (s *Settings) GetSplitDiffView() bool {
 		return true
 	}
 	return *s.SplitDiffView
+}
+
+// SnapshotsEnabled returns whether global snapshot auto-injection is enabled.
+func (s *Settings) SnapshotsEnabled() bool {
+	return s != nil && s.Snapshot != nil && *s.Snapshot
 }
 
 // CredentialHelper contains configuration for a credential helper command

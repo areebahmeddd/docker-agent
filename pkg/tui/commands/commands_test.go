@@ -98,6 +98,15 @@ func TestParseSlashCommand_OtherCommands(t *testing.T) {
 		assert.True(t, ok)
 	})
 
+	t.Run("undo command", func(t *testing.T) {
+		t.Parallel()
+		cmd := parser.Parse("/undo")
+		require.NotNil(t, cmd)
+		msg := cmd()
+		_, ok := msg.(messages.UndoSnapshotMsg)
+		assert.True(t, ok)
+	})
+
 	t.Run("unknown command returns nil", func(t *testing.T) {
 		t.Parallel()
 		cmd := parser.Parse("/unknown")
