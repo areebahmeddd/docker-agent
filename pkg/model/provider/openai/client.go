@@ -759,7 +759,7 @@ func (c *Client) convertMessagesToResponseInput(ctx context.Context, messages []
 		}
 	}
 	for callID := range pendingCalls {
-		slog.Warn("Injecting placeholder output for orphaned function call", "call_id", callID)
+		slog.WarnContext(ctx, "Injecting placeholder output for orphaned function call", "call_id", callID)
 		input = append(input, responses.ResponseInputItemUnionParam{
 			OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
 				CallID: callID,
