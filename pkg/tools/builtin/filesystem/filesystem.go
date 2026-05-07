@@ -165,17 +165,17 @@ func (t *Tool) Instructions() string {
 }
 
 type DirectoryTreeArgs struct {
-	Path string `json:"path" jsonschema:"The directory path to traverse (relative to working directory)"`
+	Path string `json:"path" jsonschema:"Directory to traverse"`
 }
 
 type WriteFileArgs struct {
-	Path    string `json:"path" jsonschema:"The file path to write"`
-	Content string `json:"content" jsonschema:"The content to write to the file"`
+	Path    string `json:"path" jsonschema:"File to write"`
+	Content string `json:"content" jsonschema:"File content"`
 }
 
 type ReadMultipleFilesArgs struct {
-	Paths []string `json:"paths" jsonschema:"Array of file paths to read"`
-	JSON  bool     `json:"json,omitempty" jsonschema:"Whether to return the result as JSON"`
+	Paths []string `json:"paths" jsonschema:"Files to read"`
+	JSON  bool     `json:"json,omitempty" jsonschema:"Return result as JSON"`
 }
 
 type ReadMultipleFilesMeta struct {
@@ -183,10 +183,10 @@ type ReadMultipleFilesMeta struct {
 }
 
 type SearchFilesContentArgs struct {
-	Path            string   `json:"path" jsonschema:"The starting directory path"`
-	Query           string   `json:"query" jsonschema:"The text or regex pattern to search for"`
-	IsRegex         bool     `json:"is_regex,omitempty" jsonschema:"If true, treat query as regex; otherwise literal text"`
-	ExcludePatterns []string `json:"excludePatterns,omitempty" jsonschema:"Patterns to exclude from search"`
+	Path            string   `json:"path" jsonschema:"Starting directory"`
+	Query           string   `json:"query" jsonschema:"Text or regex to search"`
+	IsRegex         bool     `json:"is_regex,omitempty" jsonschema:"Treat query as regex"`
+	ExcludePatterns []string `json:"excludePatterns,omitempty" jsonschema:"Patterns to exclude"`
 }
 
 type SearchFilesContentMeta struct {
@@ -195,15 +195,15 @@ type SearchFilesContentMeta struct {
 }
 
 type ListDirectoryArgs struct {
-	Path string `json:"path" jsonschema:"The directory path to list"`
+	Path string `json:"path" jsonschema:"Directory to list"`
 }
 
 type CreateDirectoryArgs struct {
-	Paths []string `json:"paths" jsonschema:"Array of directory paths to create"`
+	Paths []string `json:"paths" jsonschema:"Directories to create"`
 }
 
 type RemoveDirectoryArgs struct {
-	Paths []string `json:"paths" jsonschema:"Array of directory paths to remove"`
+	Paths []string `json:"paths" jsonschema:"Directories to remove"`
 }
 
 type ListDirectoryMeta struct {
@@ -219,7 +219,7 @@ type DirectoryTreeMeta struct {
 }
 
 type ReadFileArgs struct {
-	Path string `json:"path" jsonschema:"The file path to read"`
+	Path string `json:"path" jsonschema:"File to read"`
 }
 
 type ReadFileMeta struct {
@@ -230,13 +230,13 @@ type ReadFileMeta struct {
 }
 
 type Edit struct {
-	OldText string `json:"oldText" jsonschema:"The exact text to replace"`
-	NewText string `json:"newText" jsonschema:"The replacement text"`
+	OldText string `json:"oldText" jsonschema:"Exact text to replace"`
+	NewText string `json:"newText" jsonschema:"Replacement text"`
 }
 
 type EditFileArgs struct {
-	Path  string `json:"path" jsonschema:"The file path to edit"`
-	Edits []Edit `json:"edits" jsonschema:"Array of edit operations"`
+	Path  string `json:"path" jsonschema:"File to edit"`
+	Edits []Edit `json:"edits" jsonschema:"Edits to apply"`
 }
 
 // ParseEditFileArgs parses LLM-generated edit_file arguments, handling two
