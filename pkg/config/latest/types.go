@@ -864,6 +864,21 @@ type Toolset struct {
 	// `allowed_domains`.
 	BlockedDomains []string `json:"blocked_domains,omitempty" yaml:"blocked_domains,omitempty"`
 
+	// For the `fetch` tool — opt in to dialling non-public IP addresses.
+	//
+	// By default the fetch tool refuses connections (after DNS resolution,
+	// so DNS rebinding is also blocked) to loopback (127/8, ::1), RFC1918
+	// private ranges, link-local — including the cloud metadata endpoint
+	// at 169.254.169.254 — multicast and the unspecified address. Set this
+	// to true to permit those addresses, which is required when an agent
+	// legitimately needs to call internal services.
+	//
+	// `allowed_domains` and `blocked_domains` are evaluated independently
+	// of this flag: even with `allow_private_ips: true`, an entry in
+	// `blocked_domains` (or absence from `allowed_domains`) still rejects
+	// the request before any network call.
+	AllowPrivateIPs bool `json:"allow_private_ips,omitempty" yaml:"allow_private_ips,omitempty"`
+
 	// For the `rag` tool
 	RAGConfig *RAGConfig `json:"rag_config,omitempty" yaml:"rag_config,omitempty"`
 

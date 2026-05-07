@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/js"
-	"github.com/docker/docker-agent/pkg/remote"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/upstream"
 	"github.com/docker/docker-agent/pkg/useragent"
@@ -23,6 +23,10 @@ import (
 type Tool struct {
 	config   latest.APIToolConfig
 	expander *js.Expander
+
+	// unsafe disables SSRF dial-time protection. Only set by the test-only
+	// constructor in api_test.go (httptest.NewServer binds to 127.0.0.1).
+	unsafe bool
 }
 
 // Verify interface compliance
@@ -32,10 +36,7 @@ var (
 )
 
 func (t *Tool) callTool(ctx context.Context, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
-	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: remote.NewTransport(ctx),
-	}
+	client := httpclient.NewSafeClient(30*time.Second, t.unsafe)
 
 	endpoint := t.config.Endpoint
 	var reqBody io.Reader = http.NoBody

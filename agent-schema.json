@@ -1544,6 +1544,10 @@
             ["169.254.0.0/16", "10.0.0.0/8"]
           ]
         },
+        "allow_private_ips": {
+          "type": "boolean",
+          "description": "Opt in to dialling non-public IP addresses (only valid for type 'fetch'). By default the fetch tool refuses connections — after DNS resolution, so DNS rebinding is also blocked — to loopback, RFC1918 private ranges, link-local (including the cloud metadata endpoint at 169.254.169.254), multicast and the unspecified address. Set this to true when an agent legitimately needs to call internal services. 'allowed_domains' / 'blocked_domains' are evaluated independently and still apply."
+        },
         "url": {
           "type": "string",
           "description": "URL for the a2a or openapi tool",
