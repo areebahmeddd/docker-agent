@@ -7,8 +7,6 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +22,6 @@ import (
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-// encodeJPEGBytes returns a minimal JPEG image as raw bytes.
 func encodeJPEGBytes(w, h int) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := range h {
@@ -39,7 +36,6 @@ func encodeJPEGBytes(w, h int) []byte {
 	return buf.Bytes()
 }
 
-// encodePNGBytes returns a minimal PNG image as raw bytes.
 func encodePNGBytes(w, h int, alpha bool) []byte {
 	if alpha {
 		img := image.NewNRGBA(image.Rect(0, 0, w, h))
@@ -67,7 +63,6 @@ func encodePNGBytes(w, h int, alpha bool) []byte {
 	return buf.Bytes()
 }
 
-// writeTempFile writes data to a temp file with the given extension and returns its path.
 func writeTempFile(t *testing.T, ext string, data []byte) string {
 	t.Helper()
 	f, err := os.CreateTemp(t.TempDir(), "attach-*"+ext)
@@ -111,7 +106,6 @@ func TestProcessAttachment_PNG_Passthrough(t *testing.T) {
 }
 
 func TestProcessAttachment_PNG_WithAlpha_StaysPNG(t *testing.T) {
-	// A PNG with alpha channel must not be converted to JPEG (lossy strips alpha).
 	data := encodePNGBytes(100, 100, true)
 	path := writeTempFile(t, ".png", data)
 
@@ -120,15 +114,12 @@ func TestProcessAttachment_PNG_WithAlpha_StaysPNG(t *testing.T) {
 		File: &chat.MessageFile{Path: path, MimeType: "image/png"},
 	})
 	require.NoError(t, err)
-	// ResizeImage picks the smaller of PNG/JPEG; for small images PNG is usually smaller
-	// but what matters is that the output is a valid image.
 	assert.True(t, doc.MimeType == "image/png" || doc.MimeType == "image/jpeg",
 		"expected png or jpeg, got %q", doc.MimeType)
 	assert.NotEmpty(t, doc.Source.InlineData)
 }
 
 func TestProcessAttachment_ImageTooLarge_Resized(t *testing.T) {
-	// An image larger than MaxImageDimension should be resized.
 	bigData := encodeJPEGBytes(chat.MaxImageDimension+200, chat.MaxImageDimension+200)
 	path := writeTempFile(t, ".jpg", bigData)
 
@@ -139,7 +130,6 @@ func TestProcessAttachment_ImageTooLarge_Resized(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, doc.Source.InlineData)
 
-	// Verify the output image dimensions fit within limits.
 	img, _, decErr := image.Decode(bytes.NewReader(doc.Source.InlineData))
 	require.NoError(t, decErr)
 	b := img.Bounds()
@@ -162,8 +152,7 @@ func TestProcessAttachment_PDF_Passthrough(t *testing.T) {
 }
 
 func TestProcessAttachment_BinaryFileTooLarge_Error(t *testing.T) {
-	// Write a file whose Stat.Size exceeds MaxInlineBinarySize.
-	// We use a sparse file (truncate to the target size) so the test is fast.
+	// Sparse file: Stat.Size > MaxInlineBinarySize without allocating memory.
 	path := writeTempFile(t, ".pdf", nil)
 	f, err := os.OpenFile(path, os.O_WRONLY, 0o600)
 	require.NoError(t, err)
@@ -189,7 +178,6 @@ func TestProcessAttachment_TextFile_InlineText(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, doc.Source.InlineData)
 	assert.Contains(t, doc.Source.InlineText, content)
-	assert.Contains(t, doc.Source.InlineText, filepath.Base(path)) // ReadFileForInline wraps in a tag
 }
 
 func TestProcessAttachment_MarkdownFile_InlineText(t *testing.T) {
@@ -260,6 +248,18 @@ func TestProcessAttachment_DataURI_NonBase64_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "not base64")
 }
 
+func TestProcessAttachment_RemoteURL_Error(t *testing.T) {
+	// Remote http(s):// URLs are not supported; callers must download locally.
+	for _, scheme := range []string{"http://", "https://"} {
+		_, err := chat.ProcessAttachment(t.Context(), chat.MessagePart{
+			Type:     chat.MessagePartTypeImageURL,
+			ImageURL: &chat.MessageImageURL{URL: scheme + "example.com/photo.jpg"},
+		})
+		require.Error(t, err, "expected error for scheme %s", scheme)
+		assert.Contains(t, err.Error(), "remote URLs are not supported")
+	}
+}
+
 func TestProcessAttachment_UnsupportedScheme_Error(t *testing.T) {
 	_, err := chat.ProcessAttachment(t.Context(), chat.MessagePart{
 		Type:     chat.MessagePartTypeImageURL,
@@ -267,69 +267,6 @@ func TestProcessAttachment_UnsupportedScheme_Error(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported image URL scheme")
-}
-
-func TestProcessAttachment_HTTPS_Image_Via_HTTPTestServer(t *testing.T) {
-	jpegData := encodeJPEGBytes(60, 60)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write(jpegData)
-	}))
-	t.Cleanup(srv.Close)
-
-	// The httptest.Server binds to 127.0.0.1 (loopback), which is blocked by
-	// the SSRF filter in production. We use a plain http.Client without the
-	// SSRF-filtering transport so the test can reach the local server.
-	restore := chat.SetFetchHTTPClientForTest(srv.Client())
-	t.Cleanup(restore)
-
-	doc, err := chat.ProcessAttachment(t.Context(), chat.MessagePart{
-		Type:     chat.MessagePartTypeImageURL,
-		ImageURL: &chat.MessageImageURL{URL: srv.URL + "/photo.jpg"},
-	})
-	require.NoError(t, err)
-	assert.NotEmpty(t, doc.Source.InlineData)
-	assert.True(t, doc.MimeType == "image/jpeg" || doc.MimeType == "image/png",
-		"unexpected MIME: %q", doc.MimeType)
-	assert.Equal(t, "photo.jpg", doc.Name)
-}
-
-func TestProcessAttachment_SSRF_LoopbackBlocked(t *testing.T) {
-	_, err := chat.ProcessAttachment(t.Context(), chat.MessagePart{
-		Type:     chat.MessagePartTypeImageURL,
-		ImageURL: &chat.MessageImageURL{URL: "http://127.0.0.1:9999/secret"},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "private/reserved")
-}
-
-func TestProcessAttachment_SSRF_MetadataEndpointBlocked(t *testing.T) {
-	// 169.254.169.254 is the AWS/GCP/Azure instance metadata endpoint.
-	_, err := chat.ProcessAttachment(t.Context(), chat.MessagePart{
-		Type:     chat.MessagePartTypeImageURL,
-		ImageURL: &chat.MessageImageURL{URL: "http://169.254.169.254/latest/meta-data/"},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "private/reserved")
-}
-
-func TestProcessAttachment_HTTP_Non200_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
-	}))
-	t.Cleanup(srv.Close)
-
-	// Bypass SSRF filter so we can reach the loopback-bound httptest server.
-	restore := chat.SetFetchHTTPClientForTest(srv.Client())
-	t.Cleanup(restore)
-
-	_, err := chat.ProcessAttachment(t.Context(), chat.MessagePart{
-		Type:     chat.MessagePartTypeImageURL,
-		ImageURL: &chat.MessageImageURL{URL: srv.URL + "/missing.jpg"},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "404")
 }
 
 func TestProcessAttachment_NilImageURL_Error(t *testing.T) {

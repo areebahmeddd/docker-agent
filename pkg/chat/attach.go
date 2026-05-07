@@ -17,127 +17,16 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
-	"mime"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 const (
-	// attachHTTPTimeout is the maximum time allowed to fetch a remote image URL.
-	attachHTTPTimeout = 10 * time.Second
-
-	// attachMaxRemoteBytes is the maximum number of bytes read from a remote URL.
-	attachMaxRemoteBytes = 20 * 1024 * 1024 // 20 MB
-
-	// MaxInlineBinarySize is the maximum byte size of a binary file (PDF, etc.)
-	// that will be read into memory for inline attachment. Matches the remote
-	// fetch cap so local and remote paths behave consistently.
+	// MaxInlineBinarySize is the maximum byte size of a binary file (PDF, image,
+	// etc.) that will be read into memory for inline attachment.
 	MaxInlineBinarySize = 20 * 1024 * 1024 // 20 MB
 )
-
-// privateIPNets lists address ranges that must not be dialled by the
-// attach-time URL fetcher. Blocking these prevents SSRF attacks against
-// cloud metadata services, internal APIs, and loopback services.
-var privateIPNets = func() []*net.IPNet {
-	blocks := []string{
-		// Loopback
-		"127.0.0.0/8",
-		"::1/128",
-		// Link-local — covers AWS/GCP/Azure metadata endpoints (169.254.169.254)
-		"169.254.0.0/16",
-		"fe80::/10",
-		// RFC-1918 private ranges
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		// IPv6 unique-local
-		"fc00::/7",
-	}
-	nets := make([]*net.IPNet, 0, len(blocks))
-	for _, b := range blocks {
-		_, ipNet, err := net.ParseCIDR(b)
-		if err != nil {
-			panic("attachment: invalid built-in CIDR " + b + ": " + err.Error())
-		}
-		nets = append(nets, ipNet)
-	}
-	return nets
-}()
-
-// isPrivateIP reports whether ip falls in any of the blocked address ranges.
-func isPrivateIP(ip net.IP) bool {
-	for _, block := range privateIPNets {
-		if block.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// checkSafeHostCtx resolves host to IP addresses and returns an error if any
-// resolved address is in a private/reserved range. This is called both at
-// dial time (where a context is available) and on redirect destinations.
-func checkSafeHostCtx(ctx context.Context, host string) error {
-	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
-	if err != nil {
-		return fmt.Errorf("attachment: cannot resolve host %q: %w", host, err)
-	}
-	for _, addr := range addrs {
-		ip := net.ParseIP(addr)
-		if ip == nil {
-			continue
-		}
-		if isPrivateIP(ip) {
-			return fmt.Errorf("attachment: URL resolves to private/reserved address %s (SSRF protection)", addr)
-		}
-	}
-	return nil
-}
-
-// safeHTTPClient is a shared HTTP client used by fetchRemoteImage.
-// It enforces SSRF protection by refusing connections to private and
-// reserved IP ranges at both dial time and on each redirect hop.
-//
-// Tests may override this variable to inject a custom client that bypasses
-// SSRF filtering (e.g. to reach httptest.Server on loopback). Only do this
-// in test code guarded by a t.Cleanup restore.
-var safeHTTPClient = newSafeHTTPClient()
-
-func newSafeHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: attachHTTPTimeout,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				host, _, err := net.SplitHostPort(addr)
-				if err != nil {
-					return nil, fmt.Errorf("attachment: malformed dial address %q: %w", addr, err)
-				}
-				if err := checkSafeHostCtx(ctx, host); err != nil {
-					return nil, err
-				}
-				return (&net.Dialer{}).DialContext(ctx, network, addr)
-			},
-		},
-		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-			return checkSafeHostCtx(req.Context(), req.URL.Hostname())
-		},
-	}
-}
-
-// SetFetchHTTPClientForTest replaces the HTTP client used by fetchRemoteImage
-// and returns a restore function. Only for use in tests.
-//
-//	defer chat.SetFetchHTTPClientForTest(t, myClient)()
-func SetFetchHTTPClientForTest(client *http.Client) (restore func()) {
-	prev := safeHTTPClient
-	safeHTTPClient = client
-	return func() { safeHTTPClient = prev }
-}
 
 // ProcessAttachment converts a raw [MessagePart] into a [Document] with fully
 // resolved Source.InlineData or Source.InlineText. It is called once when a
@@ -150,19 +39,16 @@ func SetFetchHTTPClientForTest(client *http.Client) (restore func()) {
 //     binary bytes (images are transcoded+resized via [ResizeImage]; PDFs and
 //     other supported types are read verbatim).
 //
-//   - [MessagePartTypeImageURL]: handles data: URIs (decoded inline) and
-//     http(s):// URLs (fetched with a 10-second timeout). The image bytes are
-//     then passed through [ResizeImage] to normalise to JPEG or PNG.
+//   - [MessagePartTypeImageURL]: handles data: URIs (decoded inline). Remote
+//     http(s):// URLs are not supported; callers should download the file
+//     locally first and pass it as a [MessagePartTypeFile] instead.
 //
 //   - [MessagePartTypeDocument]: if Source.InlineData or Source.InlineText is
 //     already set, the document is returned as-is after applying image
 //     transcoding to any image/* InlineData. A Document with no inline content
 //     is an error.
-//
-// The context is forwarded to any network operations; filesystem and image
-// decoding operations are not yet context-aware.
-func ProcessAttachment(ctx context.Context, part MessagePart) (Document, error) {
-	doc, _, err := ProcessAttachmentWithMetadata(ctx, part)
+func ProcessAttachment(_ context.Context, part MessagePart) (Document, error) {
+	doc, _, err := ProcessAttachmentWithMetadata(part)
 	return doc, err
 }
 
@@ -173,12 +59,12 @@ func ProcessAttachment(ctx context.Context, part MessagePart) (Document, error) 
 // Callers that need to emit a dimension note (for model coordinate-mapping)
 // should use this variant and call [FormatDimensionNote] on the returned
 // metadata.
-func ProcessAttachmentWithMetadata(ctx context.Context, part MessagePart) (Document, *ImageResizeResult, error) {
+func ProcessAttachmentWithMetadata(part MessagePart) (Document, *ImageResizeResult, error) {
 	switch part.Type {
 	case MessagePartTypeFile:
 		return processFilePart(part)
 	case MessagePartTypeImageURL:
-		return processImageURLPart(ctx, part)
+		return processImageURLPart(part)
 	case MessagePartTypeDocument:
 		return processDocumentPart(part)
 	default:
@@ -271,48 +157,34 @@ func processFilePart(part MessagePart) (Document, *ImageResizeResult, error) {
 }
 
 // processImageURLPart handles MessagePartTypeImageURL.
-// Supports:
-//   - data: URIs (data:<mime>;base64,<payload>)
-//   - http:// and https:// URLs (fetched with attachHTTPTimeout)
-func processImageURLPart(ctx context.Context, part MessagePart) (Document, *ImageResizeResult, error) {
+// Only data: URIs are supported; remote http(s):// URLs are rejected.
+// Callers with a remote URL should download the file locally first and
+// pass it as a MessagePartTypeFile instead.
+func processImageURLPart(part MessagePart) (Document, *ImageResizeResult, error) {
 	if part.ImageURL == nil {
 		return Document{}, nil, errors.New("ProcessAttachment: image-url part has nil ImageURL field")
 	}
 	rawURL := part.ImageURL.URL
 
-	var (
-		data     []byte
-		mimeType string
-		name     string
-		err      error
-	)
-
 	switch {
 	case strings.HasPrefix(rawURL, "data:"):
-		mimeType, data, err = parseDataURI(rawURL)
+		mimeType, data, err := parseDataURI(rawURL)
 		if err != nil {
 			return Document{}, nil, fmt.Errorf("ProcessAttachment: parse data URI: %w", err)
 		}
-		name = "image"
+		// When content detection returns an image type, prefer it over the
+		// declared MIME. (Only image types are trusted from the sniffer.)
+		if detected := DetectMimeTypeByContent(data); IsImageMimeType(detected) {
+			mimeType = detected
+		}
+		return transcodeImageWithMeta("image", data, mimeType)
 
 	case strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://"):
-		data, mimeType, name, err = fetchRemoteImage(ctx, rawURL)
-		if err != nil {
-			return Document{}, nil, fmt.Errorf("ProcessAttachment: fetch remote image %q: %w", rawURL, err)
-		}
+		return Document{}, nil, errors.New("attachment: remote URLs are not supported; download the file locally first")
 
 	default:
-		return Document{}, nil, fmt.Errorf("ProcessAttachment: unsupported image URL scheme (must be data: or http(s)://): %q", rawURL)
+		return Document{}, nil, fmt.Errorf("attachment: unsupported image URL scheme: %q", rawURL)
 	}
-
-	// When content detection returns an image type, prefer it over whatever
-	// the URI or Content-Type header said. (Only image types are trusted from
-	// the sniffer to avoid promoting an unknown binary to a valid MIME.)
-	if detected := DetectMimeTypeByContent(data); IsImageMimeType(detected) {
-		mimeType = detected
-	}
-
-	return transcodeImageWithMeta(name, data, mimeType)
 }
 
 // processDocumentPart handles MessagePartTypeDocument.
@@ -325,15 +197,12 @@ func processDocumentPart(part MessagePart) (Document, *ImageResizeResult, error)
 
 	if len(doc.Source.InlineData) > 0 {
 		if IsImageMimeType(doc.MimeType) {
-			// Apply transcoding/resizing to normalise the image.
 			return transcodeImageWithMeta(doc.Name, doc.Source.InlineData, doc.MimeType)
 		}
-		// Non-image binary — pass through unchanged.
 		return doc, nil, nil
 	}
 
 	if doc.Source.InlineText != "" {
-		// Already resolved text — pass through unchanged.
 		return doc, nil, nil
 	}
 
@@ -348,13 +217,12 @@ func transcodeImageWithMeta(name string, data []byte, mimeType string) (Document
 	if err != nil {
 		return Document{}, nil, fmt.Errorf("ProcessAttachment: transcode image %q: %w", name, err)
 	}
-	doc := Document{
+	return Document{
 		Name:     name,
 		MimeType: result.MimeType,
 		Size:     int64(len(result.Data)),
 		Source:   DocumentSource{InlineData: result.Data},
-	}
-	return doc, result, nil
+	}, result, nil
 }
 
 // parseDataURI parses a data URI of the form "data:<mime>;base64,<payload>".
@@ -390,50 +258,4 @@ func parseDataURI(uri string) (mimeType string, data []byte, err error) {
 		return "", nil, fmt.Errorf("base64 decode: %w", err)
 	}
 	return mimeType, data, nil
-}
-
-// fetchRemoteImage fetches an image from an http(s) URL.
-// The safeHTTPClient enforces a timeout and blocks connections to
-// private/reserved IP ranges (SSRF protection).
-// Returns the image bytes, detected MIME type, and a filename derived from the URL.
-func fetchRemoteImage(ctx context.Context, rawURL string) (data []byte, mimeType, name string, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
-	if err != nil {
-		return nil, "", "", fmt.Errorf("create request: %w", err)
-	}
-
-	resp, err := safeHTTPClient.Do(req)
-	if err != nil {
-		return nil, "", "", fmt.Errorf("HTTP GET: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", "", fmt.Errorf("HTTP %d for %q", resp.StatusCode, rawURL)
-	}
-
-	data, err = io.ReadAll(io.LimitReader(resp.Body, attachMaxRemoteBytes+1))
-	if err != nil {
-		return nil, "", "", fmt.Errorf("read response body: %w", err)
-	}
-	if int64(len(data)) > attachMaxRemoteBytes {
-		return nil, "", "", fmt.Errorf("remote image too large (max %d bytes)", attachMaxRemoteBytes)
-	}
-
-	// Determine MIME type: prefer Content-Type header, fall back to content sniff.
-	mimeType = resp.Header.Get("Content-Type")
-	if ct, _, parseErr := mime.ParseMediaType(mimeType); parseErr == nil {
-		mimeType = ct
-	}
-	if mimeType == "" || mimeType == "application/octet-stream" {
-		mimeType = DetectMimeTypeByContent(data)
-	}
-
-	// Derive a filename from the URL path.
-	name = filepath.Base(req.URL.Path)
-	if name == "" || name == "." || name == "/" {
-		name = "image"
-	}
-
-	return data, mimeType, name, nil
 }
