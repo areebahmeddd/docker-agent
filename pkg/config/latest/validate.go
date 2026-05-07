@@ -15,17 +15,17 @@ func (t *Config) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 	*t = Config(tmp)
-	return t.validate()
+	return t.Validate()
 }
 
-func (t *Config) validate() error {
+func (t *Config) Validate() error {
 	for name, p := range t.Providers {
-		if err := p.Auth.validate(p.Provider); err != nil {
+		if err := p.Auth.Validate(p.Provider); err != nil {
 			return fmt.Errorf("providers.%s: %w", name, err)
 		}
 	}
 	for name, m := range t.Models {
-		if err := m.Auth.validate(EffectiveProviderType(m, t.Providers)); err != nil {
+		if err := m.Auth.Validate(EffectiveProviderType(m, t.Providers)); err != nil {
 			return fmt.Errorf("models.%s: %w", name, err)
 		}
 	}
@@ -44,7 +44,7 @@ func (t *Config) validate() error {
 			}
 		}
 		if agent.Hooks != nil {
-			if err := agent.Hooks.validate(); err != nil {
+			if err := agent.Hooks.Validate(); err != nil {
 				return err
 			}
 		}

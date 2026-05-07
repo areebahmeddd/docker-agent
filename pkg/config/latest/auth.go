@@ -156,13 +156,13 @@ func (a *AuthConfig) EnvVars() []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
-// validate validates an AuthConfig. providerType, when non-empty, is used
+// Validate validates an AuthConfig. providerType, when non-empty, is used
 // to enforce that the chosen scheme is supported by the underlying
 // provider (today: WIF requires "anthropic"). Empty providerType skips
 // that check, which is what we want when an [AuthConfig] sits on a
 // [ProviderConfig] that doesn't declare an underlying provider — the
 // per-model check picks it up later.
-func (a *AuthConfig) validate(providerType string) error {
+func (a *AuthConfig) Validate(providerType string) error {
 	if a == nil {
 		return nil
 	}

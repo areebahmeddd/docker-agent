@@ -1,4 +1,4 @@
-package latest_test
+package config
 
 import (
 	"testing"
@@ -10,7 +10,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 )
 
-// TestHooksConfig_TurnStart_YAMLRoundTrip pins the v9 schema contract: the
+// TestHooksConfig_TurnStart_YAMLRoundTrip pins the schema contract: the
 // turn_start key parses into HooksConfig.TurnStart and round-trips back out
 // via YAML marshaling.
 func TestHooksConfig_TurnStart_YAMLRoundTrip(t *testing.T) {
@@ -39,9 +39,9 @@ turn_start:
 	assert.Contains(t, string(out), "turn_start:")
 }
 
-// TestHookDefinition_Args_YAMLRoundTrip pins that the new args field
-// decodes into HookDefinition.Args (used by builtins like add_prompt_files
-// to receive per-hook parameters without polluting Command).
+// TestHookDefinition_Args_YAMLRoundTrip pins that the args field decodes
+// into HookDefinition.Args (used by builtins like add_prompt_files to
+// receive per-hook parameters without polluting Command).
 func TestHookDefinition_Args_YAMLRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -117,7 +117,7 @@ turn_start:
 			var cfg latest.HooksConfig
 			require.NoError(t, yaml.Unmarshal([]byte(tc.src), &cfg))
 
-			err := latest.ValidateHooksConfigForTest(&cfg)
+			err := cfg.Validate()
 			if tc.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.errMatch)
@@ -128,7 +128,7 @@ turn_start:
 	}
 }
 
-// TestHooksConfig_IsEmptyConsidersTurnStart ensures the new event slice
+// TestHooksConfig_IsEmptyConsidersTurnStart ensures the event slice
 // participates in the IsEmpty check (otherwise the runtime's executor
 // builder would short-circuit even when only turn_start is configured).
 func TestHooksConfig_IsEmptyConsidersTurnStart(t *testing.T) {

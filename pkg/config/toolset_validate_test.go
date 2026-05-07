@@ -1,10 +1,12 @@
-package v8
+package config
 
 import (
 	"testing"
 
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/config/latest"
 )
 
 func TestToolset_Validate_LSP(t *testing.T) {
@@ -18,7 +20,6 @@ func TestToolset_Validate_LSP(t *testing.T) {
 		{
 			name: "valid lsp with command",
 			config: `
-version: "3"
 agents:
   root:
     model: "openai/gpt-4"
@@ -31,7 +32,6 @@ agents:
 		{
 			name: "lsp missing command",
 			config: `
-version: "3"
 agents:
   root:
     model: "openai/gpt-4"
@@ -43,7 +43,6 @@ agents:
 		{
 			name: "lsp with args",
 			config: `
-version: "3"
 agents:
   root:
     model: "openai/gpt-4"
@@ -58,7 +57,6 @@ agents:
 		{
 			name: "lsp with env",
 			config: `
-version: "3"
 agents:
   root:
     model: "openai/gpt-4"
@@ -73,7 +71,6 @@ agents:
 		{
 			name: "lsp with file_types",
 			config: `
-version: "5"
 agents:
   root:
     model: "openai/gpt-4"
@@ -87,7 +84,6 @@ agents:
 		{
 			name: "file_types on non-lsp toolset",
 			config: `
-version: "5"
 agents:
   root:
     model: "openai/gpt-4"
@@ -100,7 +96,6 @@ agents:
 		{
 			name: "lsp with working_dir",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -114,7 +109,6 @@ agents:
 		{
 			name: "working_dir on non-mcp-lsp toolset is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -130,7 +124,7 @@ agents:
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var cfg Config
+			var cfg latest.Config
 			err := yaml.Unmarshal([]byte(tt.config), &cfg)
 
 			if tt.wantErr != "" {
@@ -155,7 +149,6 @@ func TestToolset_Validate_MCP_WorkingDir(t *testing.T) {
 		{
 			name: "mcp with working_dir",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -170,7 +163,6 @@ agents:
 		{
 			name: "mcp without working_dir defaults to empty",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -184,7 +176,6 @@ agents:
 		{
 			name: "working_dir on remote mcp is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -203,7 +194,7 @@ agents:
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var cfg Config
+			var cfg latest.Config
 			err := yaml.Unmarshal([]byte(tt.config), &cfg)
 
 			if tt.wantErr != "" {
@@ -228,7 +219,6 @@ func TestToolset_Validate_Fetch_Domains(t *testing.T) {
 		{
 			name: "fetch with allowed_domains",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -243,7 +233,6 @@ agents:
 		{
 			name: "fetch with blocked_domains",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -257,7 +246,6 @@ agents:
 		{
 			name: "fetch with both is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -273,7 +261,6 @@ agents:
 		{
 			name: "allowed_domains on non-fetch toolset is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -287,7 +274,6 @@ agents:
 		{
 			name: "blocked_domains on non-fetch toolset is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -301,7 +287,6 @@ agents:
 		{
 			name: "allow_private_ips on non-fetch toolset is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -314,7 +299,6 @@ agents:
 		{
 			name: "allow_private_ips on fetch toolset is accepted",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -326,7 +310,6 @@ agents:
 		{
 			name: "empty allowed_domains entry is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -341,7 +324,6 @@ agents:
 		{
 			name: "whitespace-only blocked_domains entry is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -355,7 +337,6 @@ agents:
 		{
 			name: "fetch with wildcard subdomain pattern",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -369,7 +350,6 @@ agents:
 		{
 			name: "fetch with ipv4 CIDR pattern",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -384,7 +364,6 @@ agents:
 		{
 			name: "fetch with ipv6 CIDR pattern",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -399,7 +378,6 @@ agents:
 		{
 			name: "malformed CIDR is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -413,7 +391,6 @@ agents:
 		{
 			name: "interior wildcard is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -427,7 +404,6 @@ agents:
 		{
 			name: "double wildcard is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -441,7 +417,6 @@ agents:
 		{
 			name: "bare star is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -458,7 +433,7 @@ agents:
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var cfg Config
+			var cfg latest.Config
 			err := yaml.Unmarshal([]byte(tt.config), &cfg)
 
 			if tt.wantErr != "" {
@@ -482,7 +457,6 @@ func TestToolset_Validate_Fetch_Headers(t *testing.T) {
 		{
 			name: "fetch with headers is accepted",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -497,7 +471,6 @@ agents:
 		{
 			name: "openapi with headers is accepted",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -512,7 +485,6 @@ agents:
 		{
 			name: "a2a with headers is accepted",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -527,7 +499,6 @@ agents:
 		{
 			name: "headers on shell toolset is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -544,7 +515,7 @@ agents:
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var cfg Config
+			var cfg latest.Config
 			err := yaml.Unmarshal([]byte(tt.config), &cfg)
 
 			if tt.wantErr != "" {
@@ -568,7 +539,6 @@ func TestToolset_Validate_MCP_RemoteOAuth_CallbackRedirectURL(t *testing.T) {
 		{
 			name: "callbackRedirectURL absolute URL is accepted",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -585,7 +555,6 @@ agents:
 		{
 			name: "callbackRedirectURL with placeholder is accepted",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -602,7 +571,6 @@ agents:
 		{
 			name: "http on loopback is accepted",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -619,7 +587,6 @@ agents:
 		{
 			name: "http on non-loopback host is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -636,7 +603,6 @@ agents:
 		{
 			name: "javascript scheme is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -653,7 +619,6 @@ agents:
 		{
 			name: "ftp scheme is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -670,7 +635,6 @@ agents:
 		{
 			name: "relative callbackRedirectURL is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -687,7 +651,6 @@ agents:
 		{
 			name: "garbage callbackRedirectURL is rejected",
 			config: `
-version: "8"
 agents:
   root:
     model: "openai/gpt-4"
@@ -707,7 +670,7 @@ agents:
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var cfg Config
+			var cfg latest.Config
 			err := yaml.Unmarshal([]byte(tt.config), &cfg)
 
 			if tt.wantErr != "" {

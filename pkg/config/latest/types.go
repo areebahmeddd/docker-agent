@@ -1978,8 +1978,8 @@ func (h *HookDefinition) DisplayName() string {
 	return h.Type
 }
 
-// validate validates the HooksConfig
-func (h *HooksConfig) validate() error {
+// Validate validates the HooksConfig
+func (h *HooksConfig) Validate() error {
 	// Validate PreToolUse matchers
 	for i, m := range h.PreToolUse {
 		if err := m.validate("pre_tool_use", i); err != nil {
