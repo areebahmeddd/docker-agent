@@ -1,4 +1,4 @@
-package latest_test
+package v8_test
 
 import (
 	"testing"
@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/config/v8"
 )
 
-// TestHooksConfig_TurnStart_YAMLRoundTrip pins the v9 schema contract: the
+// TestHooksConfig_TurnStart_YAMLRoundTrip pins the v8 schema contract: the
 // turn_start key parses into HooksConfig.TurnStart and round-trips back out
 // via YAML marshaling.
 func TestHooksConfig_TurnStart_YAMLRoundTrip(t *testing.T) {
@@ -25,7 +25,7 @@ turn_start:
     timeout: 5
 `
 
-	var cfg latest.HooksConfig
+	var cfg v8.HooksConfig
 	require.NoError(t, yaml.Unmarshal([]byte(src), &cfg))
 
 	require.Len(t, cfg.TurnStart, 2)
@@ -54,7 +54,7 @@ turn_start:
       - PROJECT.md
 `
 
-	var cfg latest.HooksConfig
+	var cfg v8.HooksConfig
 	require.NoError(t, yaml.Unmarshal([]byte(src), &cfg))
 
 	require.Len(t, cfg.TurnStart, 1)
@@ -114,10 +114,10 @@ turn_start:
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			var cfg latest.HooksConfig
+			var cfg v8.HooksConfig
 			require.NoError(t, yaml.Unmarshal([]byte(tc.src), &cfg))
 
-			err := latest.ValidateHooksConfigForTest(&cfg)
+			err := v8.ValidateHooksConfigForTest(&cfg)
 			if tc.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.errMatch)
@@ -134,13 +134,13 @@ turn_start:
 func TestHooksConfig_IsEmptyConsidersTurnStart(t *testing.T) {
 	t.Parallel()
 
-	cfg := &latest.HooksConfig{
-		TurnStart: []latest.HookDefinition{
+	cfg := &v8.HooksConfig{
+		TurnStart: []v8.HookDefinition{
 			{Type: "builtin", Command: "add_date"},
 		},
 	}
 	assert.False(t, cfg.IsEmpty())
-	assert.True(t, (&latest.HooksConfig{}).IsEmpty())
+	assert.True(t, (&v8.HooksConfig{}).IsEmpty())
 }
 
 // TestHooksConfig_OnErrorAndOnMaxIterations_YAMLRoundTrip pins that the
@@ -159,7 +159,7 @@ on_max_iterations:
     command: ./scripts/page-oncall.sh
 `
 
-	var cfg latest.HooksConfig
+	var cfg v8.HooksConfig
 	require.NoError(t, yaml.Unmarshal([]byte(src), &cfg))
 
 	require.Len(t, cfg.OnError, 1)
@@ -168,8 +168,8 @@ on_max_iterations:
 	assert.Equal(t, "./scripts/page-oncall.sh", cfg.OnMaxIterations[0].Command)
 
 	// Either field alone keeps IsEmpty false.
-	assert.False(t, (&latest.HooksConfig{OnError: cfg.OnError}).IsEmpty())
-	assert.False(t, (&latest.HooksConfig{OnMaxIterations: cfg.OnMaxIterations}).IsEmpty())
+	assert.False(t, (&v8.HooksConfig{OnError: cfg.OnError}).IsEmpty())
+	assert.False(t, (&v8.HooksConfig{OnMaxIterations: cfg.OnMaxIterations}).IsEmpty())
 }
 
 // TestHooksConfig_BeforeAndAfterLLMCall_YAMLRoundTrip pins that the two
@@ -188,7 +188,7 @@ after_llm_call:
     timeout: 5
 `
 
-	var cfg latest.HooksConfig
+	var cfg v8.HooksConfig
 	require.NoError(t, yaml.Unmarshal([]byte(src), &cfg))
 
 	require.Len(t, cfg.BeforeLLMCall, 1)
@@ -196,6 +196,6 @@ after_llm_call:
 	assert.Equal(t, "./scripts/audit-llm-call.sh", cfg.BeforeLLMCall[0].Command)
 	assert.Equal(t, "./scripts/check-response.sh", cfg.AfterLLMCall[0].Command)
 
-	assert.False(t, (&latest.HooksConfig{BeforeLLMCall: cfg.BeforeLLMCall}).IsEmpty())
-	assert.False(t, (&latest.HooksConfig{AfterLLMCall: cfg.AfterLLMCall}).IsEmpty())
+	assert.False(t, (&v8.HooksConfig{BeforeLLMCall: cfg.BeforeLLMCall}).IsEmpty())
+	assert.False(t, (&v8.HooksConfig{AfterLLMCall: cfg.AfterLLMCall}).IsEmpty())
 }
