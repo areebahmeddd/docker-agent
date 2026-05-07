@@ -19,6 +19,17 @@ func (t *Config) UnmarshalYAML(unmarshal func(any) error) error {
 }
 
 func (t *Config) validate() error {
+	for name, p := range t.Providers {
+		if err := p.Auth.validate(p.Provider); err != nil {
+			return fmt.Errorf("providers.%s: %w", name, err)
+		}
+	}
+	for name, m := range t.Models {
+		if err := m.Auth.validate(EffectiveProviderType(m, t.Providers)); err != nil {
+			return fmt.Errorf("models.%s: %w", name, err)
+		}
+	}
+
 	for i := range t.Agents {
 		agent := &t.Agents[i]
 

@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/httpclient"
+	"github.com/docker/docker-agent/pkg/model/provider/anthropic/federation"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
@@ -67,16 +68,14 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	}
 
 	if gateway := globalOptions.Gateway(); gateway == "" {
-		authToken, _ := env.Get(ctx, "ANTHROPIC_API_KEY")
-		if authToken == "" {
-			return nil, errors.New("ANTHROPIC_API_KEY environment variable is required")
+		authOpts, err := buildDirectAuthOptions(ctx, cfg, env)
+		if err != nil {
+			slog.ErrorContext(ctx, "Anthropic client creation failed", "error", err)
+			return nil, err
 		}
-
-		slog.DebugContext(ctx, "Anthropic API key found, creating client")
-		requestOptions := []option.RequestOption{
-			option.WithAPIKey(authToken),
+		requestOptions := append([]option.RequestOption{
 			option.WithHTTPClient(httpclient.NewHTTPClient(ctx)),
-		}
+		}, authOpts...)
 		if cfg.BaseURL != "" {
 			requestOptions = append(requestOptions, option.WithBaseURL(cfg.BaseURL))
 		}
@@ -85,6 +84,9 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			return client, nil
 		}
 	} else {
+		if cfg.Auth != nil {
+			return nil, errors.New("anthropic: auth and Docker AI Gateway are mutually exclusive")
+		}
 		// Fail fast if Docker Desktop's auth token isn't available
 		if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
 			slog.ErrorContext(ctx, "Anthropic client creation failed", "error", "failed to get Docker Desktop's authentication token")
@@ -134,6 +136,35 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	anthropicClient.fileManager = NewFileManager(anthropicClient.clientFn)
 
 	return anthropicClient, nil
+}
+
+// buildDirectAuthOptions returns the SDK request options that authenticate
+// a direct (non-gateway) Anthropic client. It picks between Workload
+// Identity Federation and the legacy ANTHROPIC_API_KEY path based on cfg.
+func buildDirectAuthOptions(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider) ([]option.RequestOption, error) {
+	if cfg.Auth != nil {
+		if cfg.Auth.Type != latest.AuthTypeWorkloadIdentityFederation {
+			return nil, fmt.Errorf("anthropic: unsupported auth.type %q", cfg.Auth.Type)
+		}
+		// YAML-loaded configs are validated, but a programmatic caller may
+		// pass Auth.Federation == nil; reject explicitly rather than panic.
+		if cfg.Auth.Federation == nil {
+			return nil, errors.New("anthropic: workload_identity_federation block is required when auth.type is workload_identity_federation")
+		}
+		slog.DebugContext(ctx, "Anthropic Workload Identity Federation configured",
+			"federation_rule_id", cfg.Auth.Federation.FederationRuleID)
+		opts, err := federation.RequestOptions(cfg.Auth.Federation, env)
+		if err != nil {
+			return nil, fmt.Errorf("anthropic workload identity federation: %w", err)
+		}
+		return opts, nil
+	}
+	apiKey, _ := env.Get(ctx, "ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		return nil, errors.New("ANTHROPIC_API_KEY environment variable is required")
+	}
+	slog.DebugContext(ctx, "Anthropic API key found")
+	return []option.RequestOption{option.WithAPIKey(apiKey)}, nil
 }
 
 // hasFileAttachments checks if any messages contain file attachments.

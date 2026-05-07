@@ -105,6 +105,11 @@ func mergeFromProviderConfig(dst *latest.ModelConfig, src latest.ProviderConfig)
 	setIfNil(&dst.TrackUsage, src.TrackUsage)
 	setIfNil(&dst.ThinkingBudget, src.ThinkingBudget)
 	setIfNil(&dst.TaskBudget, src.TaskBudget)
+	// Inherit Auth from the provider config when the model does not
+	// override it. Auth is a pointer so a model-level value (even a
+	// stub like {type: workload_identity_federation}) wins as a whole;
+	// we deliberately do not merge field-by-field across the levels.
+	setIfNil(&dst.Auth, src.Auth)
 
 	// Merge provider_opts from provider config (model opts take precedence).
 	for k, v := range src.ProviderOpts {
