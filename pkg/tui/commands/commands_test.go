@@ -107,16 +107,7 @@ func TestParseSlashCommand_OtherCommands(t *testing.T) {
 		assert.True(t, ok)
 	})
 
-	t.Run("snapshot command", func(t *testing.T) {
-		t.Parallel()
-		cmd := parser.Parse("/snapshot")
-		require.NotNil(t, cmd)
-		msg := cmd()
-		_, ok := msg.(messages.ShowSnapshotsDialogMsg)
-		assert.True(t, ok)
-	})
-
-	t.Run("snapshots alias", func(t *testing.T) {
+	t.Run("snapshots command", func(t *testing.T) {
 		t.Parallel()
 		cmd := parser.Parse("/snapshots")
 		require.NotNil(t, cmd)
@@ -185,12 +176,10 @@ func TestRemoveByIDsDropsSnapshotCommands(t *testing.T) {
 	}
 
 	require.True(t, hasID(items, "session.undo"))
-	require.True(t, hasID(items, "session.snapshot"))
 	require.True(t, hasID(items, "session.snapshots"))
 
 	filtered := removeByIDs(items, snapshotCommandIDs)
 	assert.False(t, hasID(filtered, "session.undo"))
-	assert.False(t, hasID(filtered, "session.snapshot"))
 	assert.False(t, hasID(filtered, "session.snapshots"))
 	// Other commands are untouched.
 	assert.True(t, hasID(filtered, "session.exit"))
@@ -200,7 +189,6 @@ func TestRemoveByIDsDropsSnapshotCommands(t *testing.T) {
 	// that the snapshot slash commands no longer resolve.
 	parser := NewParser(Category{Name: "Session", Commands: filtered})
 	assert.Nil(t, parser.Parse("/undo"))
-	assert.Nil(t, parser.Parse("/snapshot"))
 	assert.Nil(t, parser.Parse("/snapshots"))
 	require.NotNil(t, parser.Parse("/exit"))
 }

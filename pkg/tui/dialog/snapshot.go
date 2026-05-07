@@ -26,22 +26,22 @@ const (
 
 // snapshotsKeyMap defines the navigation keys for the snapshots dialog.
 type snapshotsKeyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Top    key.Binding
-	Bottom key.Binding
-	Enter  key.Binding
-	Escape key.Binding
+	Up      key.Binding
+	Down    key.Binding
+	Top     key.Binding
+	Bottom  key.Binding
+	Restore key.Binding
+	Escape  key.Binding
 }
 
 func defaultSnapshotsKeyMap() snapshotsKeyMap {
 	return snapshotsKeyMap{
-		Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		Top:    key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g", "first")),
-		Bottom: key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G", "last")),
-		Enter:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "reset")),
-		Escape: key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
+		Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		Top:     key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g", "first")),
+		Bottom:  key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G", "last")),
+		Restore: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
+		Escape:  key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
 	}
 }
 
@@ -95,9 +95,9 @@ func (d *snapshotsDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		case key.Matches(msg, d.keyMap.Bottom):
 			d.selected = d.maxIndex()
 			return d, nil
-		case key.Matches(msg, d.keyMap.Enter):
+		case key.Matches(msg, d.keyMap.Restore):
 			if len(d.snapshots) == 0 {
-				return d, core.CmdHandler(CloseDialogMsg{})
+				return d, nil
 			}
 			return d, tea.Sequence(
 				core.CmdHandler(CloseDialogMsg{}),
@@ -159,7 +159,7 @@ func (d *snapshotsDialog) View() string {
 		AddSpace().
 		AddContent(d.renderList(contentWidth)).
 		AddSpace().
-		AddHelpKeys("↑/↓", "navigate", "enter", "reset", "esc", "close").
+		AddHelpKeys("↑/↓", "navigate", "r", "restore", "esc", "close").
 		Build()
 
 	return styles.DialogStyle.Width(dialogWidth).Render(content)

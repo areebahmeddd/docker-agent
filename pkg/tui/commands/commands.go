@@ -107,22 +107,10 @@ func builtInSessionCommands() []Item {
 			},
 		},
 		{
-			ID:           "session.snapshot",
-			Label:        "Snapshot",
-			SlashCommand: "/snapshot",
-			Description:  "List captured snapshots and reset to one",
-			Category:     "Session",
-			Immediate:    true,
-			Execute: func(string) tea.Cmd {
-				return core.CmdHandler(messages.ShowSnapshotsDialogMsg{})
-			},
-		},
-		{
 			ID:           "session.snapshots",
 			Label:        "Snapshots",
 			SlashCommand: "/snapshots",
-			Hidden:       true,
-			Description:  "Alias for /snapshot",
+			Description:  "List captured snapshots",
 			Category:     "Session",
 			Immediate:    true,
 			Execute: func(string) tea.Cmd {
@@ -420,7 +408,6 @@ func sortByLabel(items []Item) []Item {
 // snapshots are turned off.
 var snapshotCommandIDs = map[string]bool{
 	"session.undo":      true,
-	"session.snapshot":  true,
 	"session.snapshots": true,
 }
 
