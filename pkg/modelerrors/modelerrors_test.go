@@ -211,6 +211,31 @@ func TestIsRetryableModelError_ContextOverflow(t *testing.T) {
 	}
 }
 
+func TestMatchesTransientPattern(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{name: "nil error", err: nil, expected: false},
+		{name: "unrelated error", err: errors.New("connection refused"), expected: false},
+		{name: "exact lowercase match", err: errors.New("number of function response parts"), expected: true},
+		// Defence-in-depth: the message is lowercased before comparison so
+		// mixed-case provider errors still match the lowercase pattern.
+		{name: "mixed-case message", err: errors.New("Please ensure that the Number Of Function Response Parts is equal"), expected: true},
+		{name: "wrapped error", err: fmt.Errorf("error receiving from stream: %w", errors.New("NUMBER OF FUNCTION RESPONSE PARTS")), expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, matchesTransientPattern(tt.err), "matchesTransientPattern(%v)", tt.err)
+		})
+	}
+}
+
 func TestFormatError(t *testing.T) {
 	t.Parallel()
 

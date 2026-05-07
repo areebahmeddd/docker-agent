@@ -219,8 +219,8 @@ func isRetryableStatusCode(statusCode int) bool {
 
 // transientStatusCodePatterns contains error message substrings that indicate
 // a transient failure even when the HTTP status code would otherwise classify
-// the error as non-retryable (e.g. 4xx). Patterns are matched
-// case-insensitively against the full formatted error.
+// the error as non-retryable (e.g. 4xx). Patterns MUST be lowercase: they are
+// compared against a lowercased error message (see [matchesTransientPattern]).
 //
 // Currently:
 //   - Vertex AI / Gemini intermittently returns 400 INVALID_ARGUMENT with the
@@ -235,14 +235,16 @@ var transientStatusCodePatterns = []string{
 
 // matchesTransientPattern reports whether the error's message matches one of
 // [transientStatusCodePatterns]. Used to override an otherwise non-retryable
-// HTTP status classification.
+// HTTP status classification. Patterns are pre-lowercased (enforced by
+// declaration convention) and additionally lowercased here for defence in
+// depth, so a mixed-case pattern slipping into the list will still match.
 func matchesTransientPattern(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
 	for _, p := range transientStatusCodePatterns {
-		if strings.Contains(msg, p) {
+		if strings.Contains(msg, strings.ToLower(p)) {
 			return true
 		}
 	}
