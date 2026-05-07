@@ -185,6 +185,14 @@ type Input struct {
 	// model-call-scoped.
 	ModelID string `json:"model_id,omitempty"`
 
+	// Iteration is the 1-based run-loop iteration counter for the
+	// model call this dispatch is gating. Populated for
+	// [EventBeforeLLMCall] (1 for the first call of the RunStream, 2
+	// for the second, ...); zero for events not tied to a loop
+	// iteration. The max_iterations builtin compares it to a configured
+	// budget without per-session state.
+	Iteration int `json:"iteration,omitempty"`
+
 	// LastUserMessage is the text content of the latest user message in
 	// the session at dispatch time. Populated for events that respond to
 	// a user turn (stop, after_llm_call). Empty for events that aren't

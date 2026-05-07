@@ -68,7 +68,6 @@ func TestSnapshotBuiltinUndoSurvivesStreamEnd(t *testing.T) {
 		Reason:        "stream_ended",
 	}, nil)
 	require.NoError(t, err)
-	state.ClearSession("s")
 
 	entries, err := os.ReadDir(filepath.Join(paths.GetDataDir(), "snapshot"))
 	require.NoError(t, err)

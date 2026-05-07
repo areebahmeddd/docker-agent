@@ -165,10 +165,11 @@ type LocalRuntime struct {
 	// touching any process-wide state.
 	hooksRegistry *hooks.Registry
 
-	// builtinsState holds per-session state for the stateful builtins
-	// (loop_detector, max_iterations). The runtime calls
-	// builtinsState.ClearSession from session_end so a long-running
-	// runtime serving many sessions stays bounded.
+	// builtinsState exposes per-runtime state of the stateful builtins
+	// (currently just the snapshot store). It's the handle the runtime
+	// uses for snapshot operations like /undo, and was originally where
+	// the max_iterations counter lived before that builtin became
+	// stateless via [hooks.Input.Iteration].
 	builtinsState *builtins.State
 
 	// hooksExecByAgent holds the per-agent [hooks.Executor], keyed by

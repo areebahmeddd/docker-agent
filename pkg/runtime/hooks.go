@@ -189,15 +189,12 @@ func contextMessages(result *hooks.Result) []chat.Message {
 	}}
 }
 
-// executeSessionEndHooks fires session_end when the run loop exits
-// and clears any per-session state held by stateful builtins so a
-// long-running runtime stays bounded.
+// executeSessionEndHooks fires session_end when the run loop exits.
 func (r *LocalRuntime) executeSessionEndHooks(ctx context.Context, sess *session.Session, a *agent.Agent) {
 	r.dispatchHook(ctx, a, hooks.EventSessionEnd, &hooks.Input{
 		SessionID: sess.ID,
 		Reason:    "stream_ended",
 	}, nil)
-	r.builtinsState.ClearSession(sess.ID)
 }
 
 // executeStopHooks fires stop hooks when the model finishes responding,
@@ -329,10 +326,11 @@ func (r *LocalRuntime) executeOnToolApprovalDecisionHooks(
 // the contract. Hooks that just want to contribute system messages
 // should target turn_start instead.
 //
-// modelID is the canonical model identifier the loop has just
-// resolved (after per-tool overrides and alloy-mode selection); it's
-// surfaced to hooks via [hooks.Input.ModelID] so handlers don't need
-// to recompute it from the agent.
+// modelID and iteration are surfaced verbatim via
+// [hooks.Input.ModelID] / [hooks.Input.Iteration] so handlers (notably
+// the max_iterations builtin) don't have to recompute them — the
+// loop's resolved values reflect per-tool overrides and alloy-mode
+// selection that an Agent.Model() lookup would miss.
 //
 // messages is the conversation snapshot the runtime is about to send
 // to the model. Hooks may return a rewrite via
@@ -340,15 +338,13 @@ func (r *LocalRuntime) executeOnToolApprovalDecisionHooks(
 // builtin scrubbing outbound chat content); the rewrite is returned
 // in the third tuple value when present, nil otherwise. Callers must
 // swap the rewrite in BEFORE the model call so the LLM never sees the
-// original content. messages is passed through to hooks only when at
-// least one before_llm_call hook is configured (see [dispatchHook]),
-// so observational hook configurations don't pay the JSON-encoding
-// cost on every model call.
+// original content.
 func (r *LocalRuntime) executeBeforeLLMCallHooks(
 	ctx context.Context,
 	sess *session.Session,
 	a *agent.Agent,
 	modelID string,
+	iteration int,
 	messages []chat.Message,
 ) (stop bool, message string, rewritten []chat.Message) {
 	exec := r.hooksExec(a)
@@ -362,6 +358,7 @@ func (r *LocalRuntime) executeBeforeLLMCallHooks(
 		SessionID: sess.ID,
 		AgentName: a.Name(),
 		ModelID:   modelID,
+		Iteration: iteration,
 		Messages:  messages,
 	}, nil)
 	if result == nil {

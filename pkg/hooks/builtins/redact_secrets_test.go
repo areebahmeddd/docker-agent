@@ -128,9 +128,8 @@ func TestRedactSecretsIsRegistered(t *testing.T) {
 	t.Parallel()
 
 	reg := hooks.NewRegistry()
-	state, err := Register(reg)
+	_, err := Register(reg)
 	require.NoError(t, err)
-	t.Cleanup(func() { state.ClearSession("") })
 
 	handler, ok := reg.LookupBuiltin(RedactSecrets)
 	require.Truef(t, ok, "builtin %q must be registered", RedactSecrets)

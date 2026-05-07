@@ -386,7 +386,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// AFTER the closure body has assigned both, so callers see the same
 		// reason the runtime took. ctrl drives the outer for-loop's
 		// continue-or-exit decision.
-		ctrl := r.runTurn(ctx, sess, a, m, model, modelID, contextLimit, sessionSpan,
+		ctrl := r.runTurn(ctx, sess, a, m, model, modelID, iteration, contextLimit, sessionSpan,
 			slices.Concat(sessionStartMsgs, userPromptMsgs),
 			agentTools, loopDetector, &overflowCompactions, &toolModelOverride, events)
 		switch ctrl {
@@ -436,6 +436,7 @@ func (r *LocalRuntime) runTurn(
 	m *modelsdev.Model,
 	model provider.Provider,
 	modelID string,
+	iteration int,
 	contextLimit int64,
 	sessionSpan trace.Span,
 	priorExtras []chat.Message,
@@ -504,7 +505,7 @@ func (r *LocalRuntime) runTurn(
 	// runtime's Go-only message transforms so a hook that drops a
 	// message (e.g. a custom "strip system reminders") doesn't get
 	// silently overridden by a transform later in the chain.
-	stop, msg, rewritten := r.executeBeforeLLMCallHooks(ctx, sess, a, modelID, messages)
+	stop, msg, rewritten := r.executeBeforeLLMCallHooks(ctx, sess, a, modelID, iteration, messages)
 	if stop {
 		slog.WarnContext(ctx, "before_llm_call hook signalled run termination",
 			"agent", a.Name(), "session_id", sess.ID, "reason", msg)

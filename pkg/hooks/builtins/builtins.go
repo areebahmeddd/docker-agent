@@ -36,13 +36,11 @@
 //
 // turn_start builtins recompute every turn (date, git state).
 // session_start builtins run once per session for context that's
-// stable for its duration. max_iterations is stateful: its
-// per-session counter lives on the [State] returned by [Register];
-// the runtime clears it via [State.ClearSession] from session_end.
-// snapshot is also stateful: it keeps per-session turn/tool snapshot
-// hashes and undo checkpoints in memory while the shadow git objects live
-// under the data directory. Undo checkpoints intentionally survive the
-// RunStream session_end cleanup so /undo can run after the response stops.
+// stable for its duration. snapshot is stateful: it keeps per-session
+// turn/tool snapshot hashes and undo checkpoints in memory while the
+// shadow git objects live under the data directory. Undo checkpoints
+// intentionally survive the RunStream session_end cleanup so /undo
+// can run after the response stops.
 //
 // LLM-as-a-judge hooks are NOT shipped here: write `type: model` with
 // `schema: pre_tool_use_decision` instead — see
@@ -57,20 +55,11 @@ import (
 )
 
 // State holds the per-runtime state of the stateful builtins.
-// It is returned by [Register] so callers can clear per-session
-// entries on session_end. Stateless builtins don't appear here.
+// It is returned by [Register] so callers can reach into
+// snapshot operations (undo / list / reset) without poking at
+// builtin internals. Stateless builtins don't appear here.
 type State struct {
-	maxIterations *maxIterationsBuiltin
-	snapshot      *snapshotBuiltin
-}
-
-// ClearSession drops per-RunStream state that should not survive stream teardown.
-// A nil receiver is a no-op.
-func (s *State) ClearSession(sessionID string) {
-	if s == nil || sessionID == "" {
-		return
-	}
-	s.maxIterations.clearSession(sessionID)
+	snapshot *snapshotBuiltin
 }
 
 // UndoLastSnapshot restores files from the latest completed snapshot checkpoint.
@@ -104,8 +93,7 @@ func (s *State) ResetSnapshot(ctx context.Context, sessionID, cwd string, keep i
 // handle the caller can use for stateful builtin operations.
 func Register(r *hooks.Registry) (*State, error) {
 	state := &State{
-		maxIterations: newMaxIterations(),
-		snapshot:      newSnapshotBuiltin(),
+		snapshot: newSnapshotBuiltin(),
 	}
 	if err := errors.Join(
 		r.RegisterBuiltin(AddDate, addDate),
@@ -116,7 +104,7 @@ func Register(r *hooks.Registry) (*State, error) {
 		r.RegisterBuiltin(AddDirectoryListing, addDirectoryListing),
 		r.RegisterBuiltin(AddUserInfo, addUserInfo),
 		r.RegisterBuiltin(AddRecentCommits, addRecentCommits),
-		r.RegisterBuiltin(MaxIterations, state.maxIterations.hook),
+		r.RegisterBuiltin(MaxIterations, maxIterations),
 		r.RegisterBuiltin(Snapshot, state.snapshot.hook),
 		r.RegisterBuiltin(RedactSecrets, redactSecrets),
 		r.RegisterBuiltin(HTTPPost, httpPost),
