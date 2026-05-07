@@ -196,7 +196,9 @@ func getGlobalStyles() *cachedStyles {
 		// Heading prefixes used both for display and width math. H1 deliberately
 		// uses the same "## " prefix as H2 so a single hash in the source does not
 		// dominate the TUI with an oversized banner heading.
-		headingPrefixes := [6]string{"## ", "## ", "### ", "#### ", "##### ", "###### "}
+		// Note: H1 uses "# " (single hash) for proper visual hierarchy and correct
+		// continuation-indent width (2 spaces instead of 3).
+		headingPrefixes := [6]string{"# ", "## ", "### ", "#### ", "##### ", "###### "}
 		ansiHeadings := [6]ansiStyle{
 			buildAnsiStyle(headingLipStyles[0]),
 			buildAnsiStyle(headingLipStyles[1]),
@@ -2530,6 +2532,11 @@ func (p *parser) wrapText(text string, width int) string {
 		}
 		word := text[wordStart:i]
 
+		// Fold this word's ANSI codes into the active set BEFORE handling it.
+		// For a long word that gets split, this ensures the continuation-line
+		// breaks below close and re-open any styles that were opened inside the
+		// word, instead of replaying only the styles active before it.
+		active = updateActiveStyles(active, wordAnsi)
 		// Layout decision: do we need to wrap before this word?
 		haveLine := lineWidth > 0
 		needsWrap := haveLine && lineWidth+1+wordWidth > width
@@ -2543,12 +2550,6 @@ func (p *parser) wrapText(text string, width int) string {
 			out.WriteByte(' ')
 			lineWidth++
 		}
-
-		// Fold this word's ANSI codes into the active set BEFORE handling it.
-		// For a long word that gets split, this ensures the continuation-line
-		// breaks below close and re-open any styles that were opened inside the
-		// word, instead of replaying only the styles active before it.
-		active = updateActiveStyles(active, wordAnsi)
 
 		if wordWidth > width {
 			// Long word: break it into pieces, separated by line breaks that close
