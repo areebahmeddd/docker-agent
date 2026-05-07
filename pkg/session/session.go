@@ -941,7 +941,7 @@ func (s *Session) CompactionInput() ([]chat.Message, []int) {
 	items := s.snapshotItems()
 
 	lastSummaryIndex := -1
-	for i := len(items) - 1; i >= 0; i-- {
+	for i := range slices.Backward(items) {
 		if items[i].Summary != "" {
 			lastSummaryIndex = i
 			break
