@@ -133,6 +133,10 @@ func (a *AuthConfig) EnvVars() []string {
 	}
 	seen := map[string]bool{}
 	collect := func(s string) {
+		// We use os.Expand purely as a $VAR / ${VAR} scanner: the mapping
+		// function records the name and returns "" so the resulting string
+		// is discarded. This intentionally does not understand the $$ escape
+		// (literal dollar), which doesn't occur in any real URL we expect.
 		os.Expand(s, func(name string) string {
 			if name != "" {
 				seen[name] = true

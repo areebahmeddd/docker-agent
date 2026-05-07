@@ -488,8 +488,11 @@ func (r *LocalRuntime) getAvailableProviders(ctx context.Context) map[string]boo
 
 	// Mark anthropic available when any model or referenced provider in the
 	// workspace has a non-API-key auth scheme configured (e.g. Workload
-	// Identity Federation). The actual token exchange happens lazily on the
-	// first request, so we just need the model picker to surface the model.
+	// Identity Federation). We deliberately do not eagerly probe the token
+	// source here: doing so would slow down startup for the common case
+	// (file/env are fine, gcloud/az may take seconds, IMDS endpoints may
+	// hang on non-cloud hosts). A misconfigured source surfaces as a clear
+	// error on the first request via federation.RequestOptions.
 	for _, m := range r.modelSwitcherCfg.Models {
 		if modelHasAnthropicAuth(m, r.modelSwitcherCfg.Providers) {
 			available["anthropic"] = true

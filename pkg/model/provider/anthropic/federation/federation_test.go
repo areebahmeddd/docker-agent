@@ -138,6 +138,24 @@ func TestURLSource_MissingField(t *testing.T) {
 	assert.Contains(t, err.Error(), `missing field "value"`)
 }
 
+// TestURLSource_DoesNotLeakExpandedURL verifies that error messages quote
+// the unexpanded URL template rather than the expanded form, so any ${VAR}
+// substitutions carrying secret values do not flow into logs / TUI events.
+func TestURLSource_DoesNotLeakExpandedURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`nope`))
+	}))
+	defer server.Close()
+
+	env := environment.NewMapEnvProvider(map[string]string{"SECRET": "super-secret-123"})
+	rawURL := server.URL + "?token=${SECRET}"
+	_, err := urlSource(rawURL, nil, "", env)(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), rawURL, "error must reference the unexpanded URL template")
+	assert.NotContains(t, err.Error(), "super-secret-123", "error must not leak the expanded secret")
+}
+
 // TestURLSource_DoesNotFollowRedirects verifies that a redirect from the
 // configured token endpoint is surfaced as a non-2xx error rather than
 // silently followed. Following redirects could leak sensitive headers
@@ -159,7 +177,8 @@ func TestURLSource_DoesNotFollowRedirects(t *testing.T) {
 
 // TestURLSource_LimitsResponseBody verifies that a hostile or misconfigured
 // endpoint returning a giant body cannot exhaust memory: we read at most
-// maxTokenResponseBytes and treat the rest as silently truncated.
+// maxTokenResponseBytes (plus one sentinel byte for overflow detection)
+// and surface a clear error rather than silently truncate.
 func TestURLSource_LimitsResponseBody(t *testing.T) {
 	huge := strings.Repeat("A", int(maxTokenResponseBytes)+1024)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -167,9 +186,9 @@ func TestURLSource_LimitsResponseBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	got, err := urlSource(server.URL, nil, "", environment.NewMapEnvProvider(nil))(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, got, int(maxTokenResponseBytes), "body must be truncated to the limit")
+	_, err := urlSource(server.URL, nil, "", environment.NewMapEnvProvider(nil))(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "response exceeded")
 }
 
 func TestTruncateForError(t *testing.T) {

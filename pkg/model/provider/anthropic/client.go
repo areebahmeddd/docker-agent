@@ -146,7 +146,12 @@ func buildDirectAuthOptions(ctx context.Context, cfg *latest.ModelConfig, env en
 		if cfg.Auth.Type != latest.AuthTypeWorkloadIdentityFederation {
 			return nil, fmt.Errorf("anthropic: unsupported auth.type %q", cfg.Auth.Type)
 		}
-		slog.Debug("Anthropic Workload Identity Federation configured",
+		// YAML-loaded configs are validated, but a programmatic caller may
+		// pass Auth.Federation == nil; reject explicitly rather than panic.
+		if cfg.Auth.Federation == nil {
+			return nil, errors.New("anthropic: workload_identity_federation block is required when auth.type is workload_identity_federation")
+		}
+		slog.DebugContext(ctx, "Anthropic Workload Identity Federation configured",
 			"federation_rule_id", cfg.Auth.Federation.FederationRuleID)
 		opts, err := federation.RequestOptions(cfg.Auth.Federation, env)
 		if err != nil {
@@ -158,7 +163,7 @@ func buildDirectAuthOptions(ctx context.Context, cfg *latest.ModelConfig, env en
 	if apiKey == "" {
 		return nil, errors.New("ANTHROPIC_API_KEY environment variable is required")
 	}
-	slog.Debug("Anthropic API key found")
+	slog.DebugContext(ctx, "Anthropic API key found")
 	return []option.RequestOption{option.WithAPIKey(apiKey)}, nil
 }
 

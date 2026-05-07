@@ -148,6 +148,11 @@ func envSource(name string, env environment.Provider) option.IdentityTokenFunc {
 // stdout. Stderr is logged at warn level on success and folded into the
 // error on failure. A hard timeout is applied on top of the caller's
 // context so a wedged subprocess can't stall token refresh forever.
+//
+// The subprocess inherits the parent process environment (we do not set
+// cmd.Env). This is intentional: tools like `gcloud auth print-identity-
+// token` and `az account get-access-token` rely on ambient credentials
+// (ADC paths, Azure CLI cache, ...) discovered via the environment.
 func commandSource(argv []string) option.IdentityTokenFunc {
 	return func(ctx context.Context) (string, error) {
 		if len(argv) == 0 {
@@ -204,7 +209,11 @@ func urlSource(rawURL string, headers map[string]string, responseField string, e
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, expandedURL, http.NoBody)
 		if err != nil {
-			return "", fmt.Errorf("build request for %q: %w", expandedURL, err)
+			// Errors include the unexpanded template (rawURL): the expanded
+			// form may carry secret values when callers wire ${VAR}-style
+			// substitutions into the URL or query string, and we don't want
+			// those to surface in logs / TUI error events.
+			return "", fmt.Errorf("build request for %q: %w", rawURL, err)
 		}
 		for k, v := range headers {
 			expanded, err := environment.Expand(ctx, v, env)
@@ -215,18 +224,24 @@ func urlSource(rawURL string, headers map[string]string, responseField string, e
 		}
 		resp, err := noRedirectClient.Do(req)
 		if err != nil {
-			return "", fmt.Errorf("fetch %q: %w", expandedURL, err)
+			return "", fmt.Errorf("fetch %q: %w", rawURL, err)
 		}
 		defer resp.Body.Close()
 
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponseBytes))
+		// Read one byte beyond the cap so we can detect (and reject) a
+		// response that overflows our maxTokenResponseBytes budget instead
+		// of silently passing a truncated body to the JSON parser.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponseBytes+1))
 		if err != nil {
-			return "", fmt.Errorf("read response from %q: %w", expandedURL, err)
+			return "", fmt.Errorf("read response from %q: %w", rawURL, err)
+		}
+		if int64(len(body)) > maxTokenResponseBytes {
+			return "", fmt.Errorf("fetch %q: response exceeded %d bytes; check identity_token.url endpoint", rawURL, maxTokenResponseBytes)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("fetch %q: status %d: %s", expandedURL, resp.StatusCode, truncateForError(body))
+			return "", fmt.Errorf("fetch %q: status %d: %s", rawURL, resp.StatusCode, truncateForError(body))
 		}
-		return extractToken(body, responseField, expandedURL)
+		return extractToken(body, responseField, rawURL)
 	}
 }
 
