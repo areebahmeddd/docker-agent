@@ -14,6 +14,44 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 )
 
+// dmrInput builds an on_agent_switch [hooks.Input] carrying a single
+// DMR ModelEndpoint pointed at server. Callers pass the relative
+// override (or "") plus optional opts to tweak the generic transition
+// fields (e.g. emptying FromAgent, equating From/To). Centralising
+// this removes a chunk of per-test boilerplate without hiding the
+// input shape — every field the test cares about is still visible on
+// the call site.
+func dmrInput(server *httptest.Server, unloadAPI string, opts ...func(*hooks.Input)) *hooks.Input {
+	in := &hooks.Input{
+		FromAgent: "from",
+		ToAgent:   "to",
+		FromAgentModels: []hooks.ModelEndpoint{{
+			Provider:  "dmr",
+			Model:     "ai/qwen3",
+			BaseURL:   server.URL + "/engines/v1",
+			UnloadAPI: unloadAPI,
+		}},
+	}
+	for _, opt := range opts {
+		opt(in)
+	}
+	return in
+}
+
+// countingServer returns a recording server whose handler runs `mark`
+// on every hit; tests that count calls share the same idiom.
+func countingServer(t *testing.T, status int, mark func(*http.Request)) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mark != nil {
+			mark(r)
+		}
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // TestUnloadBuiltin_Registered guarantees the public name is findable
 // on a registry built by [Register], so YAML hook entries that name it
 // actually resolve.
@@ -46,15 +84,9 @@ func TestUnload_PostsToDefaultEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	in := &hooks.Input{
-		FromAgent: "from",
-		ToAgent:   "to",
-		FromAgentModels: []hooks.ModelEndpoint{{
-			Provider: "dmr",
-			Model:    "ai/qwen3",
-			BaseURL:  server.URL + "/engines/llama.cpp/v1",
-		}},
-	}
+	in := dmrInput(server, "")
+	in.FromAgentModels[0].BaseURL = server.URL + "/engines/llama.cpp/v1"
+
 	out, err := unload(t.Context(), in, nil)
 	require.NoError(t, err)
 	assert.Nil(t, out, "unload is observational; output must be nil")
@@ -69,104 +101,79 @@ func TestUnload_HonoursOverrideUnloadAPI(t *testing.T) {
 	t.Parallel()
 
 	var gotPath string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server := countingServer(t, http.StatusOK, func(r *http.Request) { gotPath = r.URL.Path })
 
-	in := &hooks.Input{
-		FromAgent: "from",
-		ToAgent:   "to",
-		FromAgentModels: []hooks.ModelEndpoint{{
-			Provider:  "dmr",
-			Model:     "ai/qwen3",
-			BaseURL:   server.URL + "/engines/v1",
-			UnloadAPI: "/custom/unload",
-		}},
-	}
-	_, err := unload(t.Context(), in, nil)
+	_, err := unload(t.Context(), dmrInput(server, "/custom/unload"), nil)
 	require.NoError(t, err)
 	assert.Equal(t, "/custom/unload", gotPath)
 }
 
-// TestUnload_SkipsNonDMRProviders pins the cross-provider safety
-// property: wiring `unload` on a heterogeneous chain is harmless
-// because non-DMR endpoints are silently skipped.
-func TestUnload_SkipsNonDMRProviders(t *testing.T) {
+// TestUnload_NoOpInputs pins the cheap-path properties the agent loop
+// relies on: the hook MUST NOT fire any HTTP call when the input
+// describes a transition where unloading would be wrong (back to the
+// same agent, no previous agent, only cloud providers, or a model
+// without a resolvable endpoint). Combining these into one table
+// makes the no-op contract obvious from the test body.
+func TestUnload_NoOpInputs(t *testing.T) {
 	t.Parallel()
 
-	var calls atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	in := &hooks.Input{
-		FromAgent: "from",
-		ToAgent:   "to",
-		FromAgentModels: []hooks.ModelEndpoint{
-			{Provider: "openai", Model: "gpt-4", BaseURL: server.URL},
-			{Provider: "anthropic", Model: "claude", BaseURL: server.URL},
+	tests := []struct {
+		name string
+		in   func(*httptest.Server) *hooks.Input
+	}{
+		{
+			name: "nil input",
+			in:   func(*httptest.Server) *hooks.Input { return nil },
+		},
+		{
+			name: "empty FromAgent",
+			in: func(s *httptest.Server) *hooks.Input {
+				return dmrInput(s, "", func(in *hooks.Input) { in.FromAgent = "" })
+			},
+		},
+		{
+			name: "FromAgent equals ToAgent",
+			in: func(s *httptest.Server) *hooks.Input {
+				return dmrInput(s, "", func(in *hooks.Input) {
+					in.FromAgent, in.ToAgent = "same", "same"
+				})
+			},
+		},
+		{
+			name: "non-DMR providers only",
+			in: func(s *httptest.Server) *hooks.Input {
+				return &hooks.Input{
+					FromAgent: "from", ToAgent: "to",
+					FromAgentModels: []hooks.ModelEndpoint{
+						{Provider: "openai", Model: "gpt-4", BaseURL: s.URL},
+						{Provider: "anthropic", Model: "claude", BaseURL: s.URL},
+					},
+				}
+			},
+		},
+		{
+			name: "DMR model with no endpoint",
+			in: func(*httptest.Server) *hooks.Input {
+				return &hooks.Input{
+					FromAgent: "from", ToAgent: "to",
+					FromAgentModels: []hooks.ModelEndpoint{{Provider: "dmr", Model: "ai/qwen3"}},
+				}
+			},
 		},
 	}
-	_, err := unload(t.Context(), in, nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), calls.Load(), "no HTTP call must reach a non-DMR endpoint")
-}
 
-// TestUnload_NoopWhenFromEqualsTo documents the no-self-unload guard:
-// transferring back into the same agent must not unload the model the
-// next turn is about to use.
-func TestUnload_NoopWhenFromEqualsTo(t *testing.T) {
-	t.Parallel()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int64
+			server := countingServer(t, http.StatusOK, func(*http.Request) { calls.Add(1) })
 
-	var calls atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	in := &hooks.Input{
-		FromAgent: "same",
-		ToAgent:   "same",
-		FromAgentModels: []hooks.ModelEndpoint{{
-			Provider: "dmr",
-			Model:    "ai/qwen3",
-			BaseURL:  server.URL + "/engines/v1",
-		}},
+			out, err := unload(t.Context(), tt.in(server), nil)
+			require.NoError(t, err)
+			assert.Nil(t, out)
+			assert.Zero(t, calls.Load(), "no HTTP call must reach the server")
+		})
 	}
-	_, err := unload(t.Context(), in, nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), calls.Load())
-}
-
-// TestUnload_NoopWhenFromAgentEmpty documents the cheap path: the very
-// first switch into the team's default agent has no previous agent and
-// must not fire any HTTP call.
-func TestUnload_NoopWhenFromAgentEmpty(t *testing.T) {
-	t.Parallel()
-
-	var calls atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	in := &hooks.Input{
-		ToAgent: "to",
-		FromAgentModels: []hooks.ModelEndpoint{{
-			Provider: "dmr",
-			Model:    "ai/qwen3",
-			BaseURL:  server.URL + "/engines/v1",
-		}},
-	}
-	_, err := unload(t.Context(), in, nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), calls.Load())
 }
 
 // TestUnload_SwallowsServerErrors verifies the best-effort contract:
@@ -182,77 +189,80 @@ func TestUnload_SwallowsServerErrors(t *testing.T) {
 	}))
 	defer server.Close()
 
-	in := &hooks.Input{
-		FromAgent: "from",
-		ToAgent:   "to",
-		FromAgentModels: []hooks.ModelEndpoint{{
-			Provider: "dmr",
-			Model:    "ai/qwen3",
-			BaseURL:  server.URL + "/engines/v1",
-		}},
-	}
-	out, err := unload(t.Context(), in, nil)
+	out, err := unload(t.Context(), dmrInput(server, ""), nil)
 	require.NoError(t, err)
 	assert.Nil(t, out)
 }
 
-// TestUnload_NoopWhenNoEndpoint documents that a DMR model without a
-// BaseURL or unload_api is silently skipped (rather than erroring) so
-// the hook stays harmless when wired against an in-process / test
-// provider that hasn't resolved an HTTP endpoint.
-func TestUnload_NoopWhenNoEndpoint(t *testing.T) {
-	t.Parallel()
-
-	in := &hooks.Input{
-		FromAgent: "from",
-		ToAgent:   "to",
-		FromAgentModels: []hooks.ModelEndpoint{{
-			Provider: "dmr",
-			Model:    "ai/qwen3",
-		}},
-	}
-	out, err := unload(t.Context(), in, nil)
-	require.NoError(t, err)
-	assert.Nil(t, out)
-}
-
-func TestRebaseURL(t *testing.T) {
+// TestUnloadURL covers every branch of the URL-resolution algorithm in
+// one table. Replaces what used to be two separate tables for the now
+// inlined `defaultUnloadURL` and `rebaseURL` helpers.
+func TestUnloadURL(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name        string
 		baseURL     string
-		path        string
+		unloadAPI   string
 		want        string
 		errContains string // empty ⇒ expect success
 	}{
+		// Default derivation (no unload_api set).
 		{
-			name:    "absolute https URL is returned verbatim",
-			baseURL: "http://anything",
-			path:    "https://api.example.com/unload",
-			want:    "https://api.example.com/unload",
+			name:    "default: standard engines path",
+			baseURL: "http://127.0.0.1:12434/engines/v1/",
+			want:    "http://127.0.0.1:12434/engines/_unload",
 		},
 		{
-			name:    "rooted path drops base path",
-			baseURL: "http://localhost:12434/engines/v1",
-			path:    "/engines/_unload",
-			want:    "http://localhost:12434/engines/_unload",
+			name:    "default: no trailing slash",
+			baseURL: "http://127.0.0.1:12434/engines/v1",
+			want:    "http://127.0.0.1:12434/engines/_unload",
 		},
 		{
-			name:    "relative path is rooted",
-			baseURL: "http://localhost:12434/engines/v1",
-			path:    "engines/_unload",
-			want:    "http://localhost:12434/engines/_unload",
+			name:    "default: Docker Desktop experimental prefix",
+			baseURL: "http://_/exp/vDD4.40/engines/v1",
+			want:    "http://_/exp/vDD4.40/engines/_unload",
 		},
 		{
-			name:        "empty base URL with relative path errors",
-			path:        "/engines/_unload",
+			name:    "default: backend-scoped path",
+			baseURL: "http://127.0.0.1:12434/engines/llama.cpp/v1/",
+			want:    "http://127.0.0.1:12434/engines/llama.cpp/_unload",
+		},
+
+		// Override paths and absolute URLs.
+		{
+			name:      "override: absolute https URL is returned verbatim",
+			baseURL:   "http://anything",
+			unloadAPI: "https://api.example.com/unload",
+			want:      "https://api.example.com/unload",
+		},
+		{
+			name:      "override: rooted path drops base path",
+			baseURL:   "http://localhost:12434/engines/v1",
+			unloadAPI: "/engines/_unload",
+			want:      "http://localhost:12434/engines/_unload",
+		},
+		{
+			name:      "override: relative path is rooted",
+			baseURL:   "http://localhost:12434/engines/v1",
+			unloadAPI: "engines/_unload",
+			want:      "http://localhost:12434/engines/_unload",
+		},
+
+		// Skip / error cases.
+		{
+			name: "skip: no base_url and no unload_api",
+			want: "",
+		},
+		{
+			name:        "error: unload_api set but base_url empty",
+			unloadAPI:   "/engines/_unload",
 			errContains: "is not absolute",
 		},
 		{
-			name:        "base URL without scheme errors",
+			name:        "error: base_url without scheme",
 			baseURL:     "localhost:12434/engines/v1",
-			path:        "/engines/_unload",
+			unloadAPI:   "/engines/_unload",
 			errContains: "is not absolute",
 		},
 	}
@@ -260,7 +270,10 @@ func TestRebaseURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := rebaseURL(tt.baseURL, tt.path)
+			got, err := unloadURL(hooks.ModelEndpoint{
+				BaseURL:   tt.baseURL,
+				UnloadAPI: tt.unloadAPI,
+			})
 			if tt.errContains != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errContains)
@@ -268,44 +281,6 @@ func TestRebaseURL(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestDefaultUnloadURL(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		baseURL  string
-		expected string
-	}{
-		{
-			name:     "standard engines path",
-			baseURL:  "http://127.0.0.1:12434/engines/v1/",
-			expected: "http://127.0.0.1:12434/engines/_unload",
-		},
-		{
-			name:     "no trailing slash",
-			baseURL:  "http://127.0.0.1:12434/engines/v1",
-			expected: "http://127.0.0.1:12434/engines/_unload",
-		},
-		{
-			name:     "Docker Desktop experimental prefix",
-			baseURL:  "http://_/exp/vDD4.40/engines/v1",
-			expected: "http://_/exp/vDD4.40/engines/_unload",
-		},
-		{
-			name:     "backend-scoped path",
-			baseURL:  "http://127.0.0.1:12434/engines/llama.cpp/v1/",
-			expected: "http://127.0.0.1:12434/engines/llama.cpp/_unload",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.expected, defaultUnloadURL(tt.baseURL))
 		})
 	}
 }

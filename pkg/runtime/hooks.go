@@ -295,9 +295,8 @@ func (r *LocalRuntime) executeOnAgentSwitchHooks(ctx context.Context, a *agent.A
 // builtin) read this slice instead of poking at the runtime, so the
 // hook payload stays self-contained.
 //
-// Returns nil — not an empty slice — when there is nothing to ship
-// (no fromAgent, the agent isn't on the team, or it has no models)
-// so the JSON wire payload omits the field via `omitempty`.
+// Returns nil when there is no previous agent or the lookup fails so
+// the JSON wire payload omits the field via `omitempty`.
 func (r *LocalRuntime) fromAgentModels(fromAgent string) []hooks.ModelEndpoint {
 	if fromAgent == "" {
 		return nil
@@ -309,9 +308,6 @@ func (r *LocalRuntime) fromAgentModels(fromAgent string) []hooks.ModelEndpoint {
 		return nil
 	}
 	configured := from.ConfiguredModels()
-	if len(configured) == 0 {
-		return nil
-	}
 	out := make([]hooks.ModelEndpoint, 0, len(configured))
 	for _, p := range configured {
 		cfg := p.BaseConfig()
