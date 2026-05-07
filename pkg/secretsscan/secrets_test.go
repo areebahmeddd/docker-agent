@@ -76,6 +76,32 @@ func TestContainsSecretsRecognisesKnownTokens(t *testing.T) {
 		{"netlify_pat", "nfp_" + strings.Repeat("a", 40)},
 		{"asana_pat", "1/" + strings.Repeat("1", 16) + ":" + strings.Repeat("a", 32)},
 		{"cloudflare_origin_ca_key", "v1.0-" + strings.Repeat("a", 32) + "-" + strings.Repeat("b", 146)},
+		// Third batch of additions — vendor-prefixed credentials
+		// confirmed against gitleaks default rules and vendor docs.
+		{"onepassword_service_account", "ops_eyJ" + strings.Repeat("a", 260)},
+		{"openrouter_api_key", "sk-or-v1-" + strings.Repeat("a", 64)},
+		{"sonar_user_token", "squ_" + strings.Repeat("a", 40)},
+		{"sonar_project_token", "sqp_" + strings.Repeat("a", 40)},
+		{"sonar_global_analysis_token", "sqa_" + strings.Repeat("a", 40)},
+		{"pinecone_api_key", "pckey_" + "label_" + strings.Repeat("a", 32)},
+		{"supabase_secret_key", "sb_secret_" + strings.Repeat("a", 48)},
+		{"tailscale_auth_key", "tskey-auth-" + strings.Repeat("a", 12) + "-" + strings.Repeat("b", 32)},
+		{"tailscale_api_access_token", "tskey-api-" + strings.Repeat("a", 12) + "-" + strings.Repeat("b", 32)},
+		{"vercel_personal_access_token", "vcp_" + strings.Repeat("a", 24)},
+		{"vercel_cli_token", "vck_" + strings.Repeat("a", 24)},
+		{"vercel_integration_token", "vci_" + strings.Repeat("a", 24)},
+		// Fourth batch — payment processors, AI / data platforms, infra.
+		{"razorpay_test_key_id", "rzp_test_" + strings.Repeat("a", 14)},
+		{"razorpay_live_key_id", "rzp_live_" + strings.Repeat("a", 14)},
+		{"adyen_api_key", "AQE" + strings.Repeat("a", 200)},
+		{"plaid_access_token_sandbox", "access-sandbox-" + strings.Repeat("a", 8) + "-" + strings.Repeat("b", 4) + "-" + strings.Repeat("c", 4) + "-" + strings.Repeat("d", 4) + "-" + strings.Repeat("e", 12)},
+		{"plaid_access_token_production", "access-production-" + strings.Repeat("f", 8) + "-" + strings.Repeat("a", 4) + "-" + strings.Repeat("b", 4) + "-" + strings.Repeat("c", 4) + "-" + strings.Repeat("d", 12)},
+		{"posthog_personal_api_token", "phx_" + strings.Repeat("a", 43)},
+		{"render_api_key", "rnd_" + strings.Repeat("a", 32)},
+		{"honeycomb_ingest_key", "hcaik_" + strings.Repeat("a", 58)},
+		{"honeycomb_config_key", "hcaic_" + strings.Repeat("a", 58)},
+		{"akamai_edgegrid_client_token", "akab-" + strings.Repeat("a", 16) + "-" + strings.Repeat("b", 16)},
+		{"adafruit_io_key", "aio_" + strings.Repeat("a", 28)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
