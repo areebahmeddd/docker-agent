@@ -656,6 +656,177 @@ var rules = sync.OnceValue(func() []rule {
 			expression: `ATATT3xFfGF0[A-Za-z0-9_=-]{180,250}`,
 			keywords:   []string{"ATATT3xFfGF0"},
 		},
+
+		// --- Second batch of additions, focused on credentials whose
+		// shapes are documented by the issuing vendor and whose
+		// prefixes (or framing structure) are unique enough to keep
+		// the keyword pre-filter useful and the false-positive rate
+		// low. Each rule cites the format it targets in its comment.
+
+		{
+			// discord-bot-token. Three-part dotted format issued for bot
+			// applications: `<base64 snowflake>.<6-char timestamp>.<27+
+			// char HMAC>`. The first segment is the bot's user-ID base64
+			// encoded; current Discord IDs (2018 onwards) base64 to a
+			// leading `MT`/`Mz`/`ND`/`NT`/`Nz`/`OD` byte pair, which we
+			// list as keywords so the AC pre-filter still skips inputs
+			// without a plausible token prefix. The structural shape
+			// (M-or-N-or-O-prefixed body, two literal dots, fixed segment
+			// widths) keeps the regex itself specific.
+			expression: `[MNO][A-Za-z\d_-]{23,25}\.[\w-]{6,7}\.[\w-]{27,38}`,
+			keywords:   []string{"MT", "Mz", "ND", "NT", "Nz", "OD"},
+		},
+		{
+			// discord-webhook-url. The URL itself is a bearer credential:
+			// anyone holding it can post arbitrary content to the channel.
+			// `discord.com/api/webhooks/<channel id>/<token>` (and the
+			// `discordapp.com` legacy alias plus the `canary.`/`ptb.`
+			// release-channel hosts) is the documented shape.
+			expression: `https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+`,
+			keywords:   []string{"discord.com/api/webhooks", "discordapp.com/api/webhooks"},
+		},
+		{
+			// telegram-bot-token. BotFather issues tokens shaped
+			// `<8-10 digit bot id>:AA<33 char base64url>`; the literal
+			// `:AA` byte pair starts the second segment for every token
+			// the BotFather has ever issued.
+			expression: `\d{8,10}:AA[A-Za-z0-9_-]{33}`,
+			keywords:   []string{":AA"},
+		},
+		{
+			// flyio-macaroon. Fly.io API tokens are macaroons whose
+			// printable form always starts with the literal `FlyV1 fm2_`
+			// prefix followed by a long base64url body. The space inside
+			// the prefix is part of the token (Fly's CLI emits it
+			// verbatim). Capping the body at 400 chars stops the regex
+			// from swallowing arbitrary trailing text when the token is
+			// not separated from following content by whitespace.
+			expression: `FlyV1 fm2_[A-Za-z0-9_=-]{40,400}`,
+			keywords:   []string{"FlyV1 fm2_"},
+		},
+		{
+			// groq-api-key. Groq Cloud API keys carry the `gsk_` prefix
+			// followed by a fixed 52-character alphanumeric body.
+			expression: `gsk_[A-Za-z0-9]{52}`,
+			keywords:   []string{"gsk_"},
+		},
+		{
+			// perplexity-api-key. Perplexity API keys carry the `pplx-`
+			// prefix followed by a 48-56 char alphanumeric body (length
+			// has shifted slightly between issuance epochs).
+			expression: `pplx-[A-Za-z0-9]{48,56}`,
+			keywords:   []string{"pplx-"},
+		},
+		{
+			// xai-api-key. xAI / Grok API keys carry the `xai-` prefix
+			// followed by an 80-character alphanumeric body.
+			expression: `xai-[A-Za-z0-9]{80}`,
+			keywords:   []string{"xai-"},
+		},
+		{
+			// cohere-api-key. Cohere's modern API keys carry the `co_`
+			// prefix and a 40-char alphanumeric body. Older trial keys
+			// without the prefix are unfortunately too generic to
+			// match without a `cohere` keyword anchor.
+			expression: `co_[A-Za-z0-9]{40}`,
+			keywords:   []string{"co_"},
+		},
+		{
+			// buildkite-agent-token. Agent registration tokens carry the
+			// `bkua_` prefix and a 40-character alphanumeric body. Leakage
+			// lets attackers register fake agents in a Buildkite cluster.
+			expression: `bkua_[a-zA-Z0-9]{40}`,
+			keywords:   []string{"bkua_"},
+		},
+		{
+			// circleci-project-token. Project-scoped CircleCI API tokens
+			// carry the `CCIPRJ_` prefix followed by `<vcs-org>_<token>`.
+			// User-scoped personal tokens are 40-char hex without a
+			// prefix and are too generic to match safely on their own.
+			expression: `CCIPRJ_[A-Za-z0-9_-]+_[A-Za-z0-9_-]{32,}`,
+			keywords:   []string{"CCIPRJ_"},
+		},
+		{
+			// cloudinary-url. Cloudinary SDK credentials are passed as a
+			// single URL whose userinfo segment carries the API key and
+			// secret. The `cloudinary://` scheme is unique to this
+			// product so we redact the whole URL.
+			expression: `cloudinary://\d+:[A-Za-z0-9_-]+@[A-Za-z0-9_-]+`,
+			keywords:   []string{"cloudinary://"},
+		},
+		{
+			// mongodb-connection-string. The userinfo of a `mongodb://` /
+			// `mongodb+srv://` URI carries the database password. We
+			// preserve the scheme + username + host so log readers can
+			// still tell which cluster was being addressed, and only
+			// scrub the password span. The 200-char upper bound stops
+			// the regex from consuming arbitrary trailing content if a
+			// connection string is missing the `@` terminator.
+			expression: `mongodb(?:\+srv)?://[^\s:/?#@]+:(?P<secret>[^\s@]{1,200})@`,
+			keywords:   []string{"mongodb://", "mongodb+srv://"},
+		},
+		{
+			// postgres-connection-string. Same shape as the MongoDB rule:
+			// only the URI password is redacted so the surrounding
+			// `postgresql://user@host/db` framing stays readable.
+			expression: `postgres(?:ql)?://[^\s:/?#@]+:(?P<secret>[^\s@]{1,200})@`,
+			keywords:   []string{"postgres://", "postgresql://"},
+		},
+		{
+			// azure-storage-connection-string. The `AccountKey=` field is
+			// the actual secret; the surrounding `DefaultEndpointsProtocol`
+			// / `AccountName` framing is only metadata. The base64 value
+			// is typically 88 chars (44-byte key) but we accept anything
+			// from 20 chars upwards to cover shorter SAS-signing keys.
+			expression: `DefaultEndpointsProtocol=https?;AccountName=[^;]+;AccountKey=(?P<secret>[A-Za-z0-9+/=]{20,})`,
+			keywords:   []string{"DefaultEndpointsProtocol="},
+		},
+		{
+			// mapbox-secret-key. Mapbox publishable keys (`pk.<60>.<22>`)
+			// are already covered; secret keys share the same shape with
+			// the `sk.` prefix and grant write access to the Mapbox
+			// account.
+			expression: `(?i)sk\.[a-z0-9]{60}\.[a-z0-9]{22}`,
+			keywords:   []string{"sk."},
+		},
+		{
+			// vault-batch-token. HashiCorp Vault batch tokens follow the
+			// same `<prefix>.<base64url body>` shape as service tokens
+			// but use the `hvb.` prefix.
+			expression: `hvb\.[A-Za-z0-9_-]{90,200}`,
+			keywords:   []string{"hvb."},
+		},
+		{
+			// vault-recovery-token. Recovery tokens are issued during
+			// initialisation of an auto-unsealed Vault and carry the
+			// `hvr.` prefix; full root-equivalent if leaked.
+			expression: `hvr\.[A-Za-z0-9_-]{90,200}`,
+			keywords:   []string{"hvr."},
+		},
+		{
+			// netlify-pat. Netlify personal access tokens carry the
+			// `nfp_` prefix and a 40-character alphanumeric body.
+			expression: `nfp_[A-Za-z0-9]{40}`,
+			keywords:   []string{"nfp_"},
+		},
+		{
+			// asana-pat. Asana personal access tokens are shaped
+			// `1/<numeric workspace id>:<32 hex>`. The numeric workspace
+			// id is at least 14 digits in practice, which keeps the rule
+			// from firing on innocuous `1/<short>` substrings (page
+			// numbers, fractions, paths). The existing `asana-*` rules
+			// only fire when the literal word `asana` appears nearby; this
+			// rule fills the gap for bare leakage in CLI output / logs.
+			expression: `1/\d{14,}:[a-f0-9]{32}`,
+			keywords:   []string{"1/"},
+		},
+		{
+			// cloudflare-origin-ca-key. Cloudflare's Origin CA keys are
+			// printed as `v1.0-<32 hex>-<146 base64>` and grant the
+			// ability to issue certificates for any zone in the account.
+			expression: `v1\.0-[a-f0-9]{32}-[A-Za-z0-9+/=]{146}`,
+			keywords:   []string{"v1.0-"},
+		},
 	}
 })
 
