@@ -70,7 +70,7 @@ func (f *evalFlags) runEvalCommand(cmd *cobra.Command, args []string) (commandEr
 	}
 
 	// Create output directory
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
@@ -79,7 +79,7 @@ func (f *evalFlags) runEvalCommand(cmd *cobra.Command, args []string) (commandEr
 
 	// Set up log file with debug logging
 	logPath := filepath.Join(outputDir, runName+".log")
-	logFile, err := os.Create(logPath)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("creating log file: %w", err)
 	}

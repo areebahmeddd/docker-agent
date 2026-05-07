@@ -22,7 +22,7 @@ func Start(cpuProfile, memProfile string) (Stop, error) {
 	var closers []func() error
 
 	if cpuProfile != "" {
-		f, err := os.Create(cpuProfile)
+		f, err := os.OpenFile(cpuProfile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			return noop, fmt.Errorf("failed to create CPU profile: %w", err)
 		}
@@ -38,7 +38,7 @@ func Start(cpuProfile, memProfile string) (Stop, error) {
 
 	if memProfile != "" {
 		closers = append(closers, func() error {
-			f, err := os.Create(memProfile)
+			f, err := os.OpenFile(memProfile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 			if err != nil {
 				return fmt.Errorf("failed to create memory profile: %w", err)
 			}
