@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
@@ -78,6 +79,11 @@ func (m *mockRuntime) Stop()                                   {}
 func (m *mockRuntime) Steer(_ runtime.QueuedMessage) error     { return nil }
 func (m *mockRuntime) FollowUp(_ runtime.QueuedMessage) error  { return nil }
 func (m *mockRuntime) UndoLastSnapshot(context.Context, *session.Session) (int, bool, error) {
+	return m.undoFiles, m.undoOK, m.undoErr
+}
+func (m *mockRuntime) SnapshotsEnabled() bool                                 { return true }
+func (m *mockRuntime) ListSnapshots(*session.Session) []builtins.SnapshotInfo { return nil }
+func (m *mockRuntime) ResetSnapshot(context.Context, *session.Session, int) (int, bool, error) {
 	return m.undoFiles, m.undoOK, m.undoErr
 }
 
@@ -252,6 +258,15 @@ func TestApp_UndoLastSnapshot_NoSnapshot(t *testing.T) {
 	app := New(ctx, &mockRuntime{}, session.New())
 	_, err := app.UndoLastSnapshot(ctx)
 	assert.ErrorIs(t, err, ErrNothingToUndo)
+}
+
+func TestApp_SnapshotsEnabled_DoesNotRequireSession(t *testing.T) {
+	t.Parallel()
+
+	// SnapshotsEnabled answers a runtime-capability question; it must not
+	// silently return false just because no session is attached.
+	app := &App{runtime: &mockRuntime{}, session: nil}
+	assert.True(t, app.SnapshotsEnabled())
 }
 
 func TestApp_RegenerateSessionTitle(t *testing.T) {

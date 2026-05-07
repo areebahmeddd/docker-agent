@@ -823,6 +823,12 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.UndoSnapshotMsg:
 		return m.handleUndoSnapshot()
 
+	case messages.ShowSnapshotsDialogMsg:
+		return m.handleShowSnapshotsDialog()
+
+	case messages.ResetSnapshotMsg:
+		return m.handleResetSnapshot(msg.Keep)
+
 	case messages.EvalSessionMsg:
 		return m.handleEvalSession(msg.Filename)
 
