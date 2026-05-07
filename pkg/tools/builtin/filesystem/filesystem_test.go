@@ -67,6 +67,45 @@ func TestFilesystemTool_ResolvePath(t *testing.T) {
 	assert.Equal(t, "/etc/hosts", resolvedPath)
 }
 
+// TestFilesystemTool_ResolvePath_ExpandsTilde is a regression test for
+// issue #2696: paths starting with "~" or "~/" must be expanded to the
+// user's home directory before being used, otherwise read_file (and every
+// other filesystem handler) treats them as a literal subdirectory of the
+// working directory and fails with "not found".
+func TestFilesystemTool_ResolvePath_ExpandsTilde(t *testing.T) {
+	homeDir := t.TempDir()
+	resetHomeDir(t, homeDir)
+	wd := t.TempDir()
+	tool := NewFilesystemTool(wd)
+
+	assert.Equal(t, homeDir, tool.resolvePath("~"))
+	assert.Equal(t, filepath.Join(homeDir, "file.txt"), tool.resolvePath("~/file.txt"))
+	assert.Equal(t, filepath.Join(homeDir, "a", "b", "c.txt"), tool.resolvePath("~/a/b/c.txt"))
+
+	// A bare "~name" (no separator) is not the home dir: keep it as a
+	// literal subdirectory of the working dir so the user can still
+	// reference a file/dir whose name happens to start with "~".
+	assert.Equal(t, filepath.Join(wd, "~name"), tool.resolvePath("~name"))
+}
+
+// TestFilesystemTool_ReadFile_TildePath verifies the end-to-end behaviour:
+// read_file with a "~/..." path must succeed and return the file's
+// contents. This is the user-visible bug from issue #2696.
+func TestFilesystemTool_ReadFile_TildePath(t *testing.T) {
+	homeDir := t.TempDir()
+	resetHomeDir(t, homeDir)
+	wd := t.TempDir()
+	tool := NewFilesystemTool(wd)
+
+	content := "hello from home"
+	require.NoError(t, os.WriteFile(filepath.Join(homeDir, "note.txt"), []byte(content), 0o644))
+
+	result, err := tool.handleReadFile(t.Context(), ReadFileArgs{Path: "~/note.txt"})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Equal(t, content, result.Output)
+}
+
 func TestFilesystemTool_WriteFile(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
