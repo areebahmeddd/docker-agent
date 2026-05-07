@@ -165,12 +165,12 @@ type LocalRuntime struct {
 	// touching any process-wide state.
 	hooksRegistry *hooks.Registry
 
-	// builtinsState exposes per-runtime state of the stateful builtins
-	// (currently just the snapshot store). It's the handle the runtime
-	// uses for snapshot operations like /undo, and was originally where
-	// the max_iterations counter lived before that builtin became
-	// stateless via [hooks.Input.Iteration].
-	builtinsState *builtins.State
+	// snapshots is the shared shadow-git snapshot tracker. The hook
+	// side ([Snapshots.Hook], wired in via [builtins.Register]) writes
+	// checkpoints during the run; the runtime side
+	// ([UndoLastSnapshot] / [ListSnapshots] / [ResetSnapshot])
+	// reads them for /undo and /reset commands.
+	snapshots *builtins.Snapshots
 
 	// hooksExecByAgent holds the per-agent [hooks.Executor], keyed by
 	// agent name. Built once in [NewLocalRuntime.buildHooksExecutors]
@@ -404,7 +404,7 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	}
 
 	hooksRegistry := hooks.NewRegistry()
-	builtinsState, err := builtins.Register(hooksRegistry)
+	snapshots, err := builtins.Register(hooksRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("register builtin hooks: %w", err)
 	}
@@ -422,7 +422,7 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		managedOAuth:           true,
 		sessionStore:           session.NewInMemorySessionStore(),
 		hooksRegistry:          hooksRegistry,
-		builtinsState:          builtinsState,
+		snapshots:              snapshots,
 		fallback:               newFallbackExecutor(),
 		now:                    time.Now,
 		telemetry:              defaultTelemetry{},

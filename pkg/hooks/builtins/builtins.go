@@ -48,53 +48,17 @@
 package builtins
 
 import (
-	"context"
 	"errors"
 
 	"github.com/docker/docker-agent/pkg/hooks"
 )
 
-// State holds the per-runtime state of the stateful builtins.
-// It is returned by [Register] so callers can reach into
-// snapshot operations (undo / list / reset) without poking at
-// builtin internals. Stateless builtins don't appear here.
-type State struct {
-	snapshot *snapshotBuiltin
-}
-
-// UndoLastSnapshot restores files from the latest completed snapshot checkpoint.
-func (s *State) UndoLastSnapshot(ctx context.Context, sessionID, cwd string) (files int, ok bool, err error) {
-	if s == nil || s.snapshot == nil || sessionID == "" || cwd == "" {
-		return 0, false, nil
-	}
-	return s.snapshot.undoLast(ctx, sessionID, cwd)
-}
-
-// ListSnapshots returns the completed snapshot checkpoints for a session in
-// chronological order (oldest first). Returns nil when no snapshots exist.
-func (s *State) ListSnapshots(sessionID string) []SnapshotInfo {
-	if s == nil || s.snapshot == nil || sessionID == "" {
-		return nil
-	}
-	return s.snapshot.listSnapshots(sessionID)
-}
-
-// ResetSnapshot reverts every checkpoint past index keep so the workspace
-// returns to the state captured at that snapshot. keep == 0 resets to the
-// original (pre-agent) state.
-func (s *State) ResetSnapshot(ctx context.Context, sessionID, cwd string, keep int) (files int, ok bool, err error) {
-	if s == nil || s.snapshot == nil || sessionID == "" || cwd == "" {
-		return 0, false, nil
-	}
-	return s.snapshot.resetSnapshot(ctx, sessionID, cwd, keep)
-}
-
-// Register installs the stock builtin hooks on r and returns a [State]
-// handle the caller can use for stateful builtin operations.
-func Register(r *hooks.Registry) (*State, error) {
-	state := &State{
-		snapshot: newSnapshotBuiltin(),
-	}
+// Register installs the stock builtin hooks on r and returns the
+// shared [*Snapshots] tracker so the caller (typically the runtime)
+// can drive /undo, /list-snapshots, and /reset against the same
+// in-memory checkpoint history the snapshot hook is writing to.
+func Register(r *hooks.Registry) (*Snapshots, error) {
+	snapshots := NewSnapshots()
 	if err := errors.Join(
 		r.RegisterBuiltin(AddDate, addDate),
 		r.RegisterBuiltin(AddEnvironmentInfo, addEnvironmentInfo),
@@ -105,13 +69,13 @@ func Register(r *hooks.Registry) (*State, error) {
 		r.RegisterBuiltin(AddUserInfo, addUserInfo),
 		r.RegisterBuiltin(AddRecentCommits, addRecentCommits),
 		r.RegisterBuiltin(MaxIterations, maxIterations),
-		r.RegisterBuiltin(Snapshot, state.snapshot.hook),
+		r.RegisterBuiltin(Snapshot, snapshots.Hook),
 		r.RegisterBuiltin(RedactSecrets, redactSecrets),
 		r.RegisterBuiltin(HTTPPost, httpPost),
 	); err != nil {
 		return nil, err
 	}
-	return state, nil
+	return snapshots, nil
 }
 
 // AgentDefaults captures defaults that map onto stock builtin hook entries.
