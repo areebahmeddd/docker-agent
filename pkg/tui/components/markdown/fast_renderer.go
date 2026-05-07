@@ -193,6 +193,9 @@ func getGlobalStyles() *cachedStyles {
 		// Build blockquote lipgloss style
 		blockquoteLipStyle := buildStylePrimitive(mdStyle.BlockQuote.StylePrimitive)
 
+		// Heading prefixes used both for display and width math. H1 deliberately
+		// uses the same "## " prefix as H2 so a single hash in the source does not
+		// dominate the TUI with an oversized banner heading.
 		headingPrefixes := [6]string{"## ", "## ", "### ", "#### ", "##### ", "###### "}
 		ansiHeadings := [6]ansiStyle{
 			buildAnsiStyle(headingLipStyles[0]),
@@ -2541,9 +2544,15 @@ func (p *parser) wrapText(text string, width int) string {
 			lineWidth++
 		}
 
+		// Fold this word's ANSI codes into the active set BEFORE handling it.
+		// For a long word that gets split, this ensures the continuation-line
+		// breaks below close and re-open any styles that were opened inside the
+		// word, instead of replaying only the styles active before it.
+		active = updateActiveStyles(active, wordAnsi)
+
 		if wordWidth > width {
 			// Long word: break it into pieces, separated by line breaks that close
-			// and restore the styles that were active before this word.
+			// and restore the currently-active styles.
 			broken := breakWord(word, width)
 			for j, part := range broken {
 				if j > 0 {
@@ -2559,9 +2568,6 @@ func (p *parser) wrapText(text string, width int) string {
 			out.WriteString(word)
 			lineWidth += wordWidth
 		}
-
-		// After the word is emitted, fold any new ANSI codes into the active set.
-		active = updateActiveStyles(active, wordAnsi)
 	}
 
 	return out.String()
