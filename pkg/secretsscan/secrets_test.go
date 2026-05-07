@@ -51,6 +51,30 @@ func TestContainsSecretsRecognisesKnownTokens(t *testing.T) {
 		{"atlassian_cloud_api_token", "ATATT3xFfGF0" + strings.Repeat("a", 200)},
 		{"digitalocean_oauth_token", "doo_v1_" + strings.Repeat("a", 64)},
 		{"digitalocean_oauth_refresh", "dor_v1_" + strings.Repeat("a", 64)},
+		// Second batch of additions (Discord / Telegram / Fly.io / LLM
+		// providers / data-store URIs / Cloudflare Origin CA / etc.).
+		{"discord_bot_token", "MTI" + strings.Repeat("a", 22) + "." + strings.Repeat("b", 6) + "." + strings.Repeat("c", 30)},
+		{"discord_bot_token_n_prefix", "NDQ" + strings.Repeat("a", 22) + "." + strings.Repeat("b", 6) + "." + strings.Repeat("c", 30)},
+		{"discord_webhook_url", "https://discord.com/api/webhooks/" + strings.Repeat("1", 18) + "/" + strings.Repeat("a", 60)},
+		{"discord_webhook_legacy", "https://discordapp.com/api/webhooks/" + strings.Repeat("1", 18) + "/" + strings.Repeat("a", 60)},
+		{"telegram_bot_token", strings.Repeat("1", 10) + ":AA" + strings.Repeat("a", 33)},
+		{"flyio_macaroon", "FlyV1 " + "fm2_" + strings.Repeat("a", 80)},
+		{"groq_api_key", "gsk_" + strings.Repeat("a", 52)},
+		{"perplexity_api_key", "pplx-" + strings.Repeat("a", 48)},
+		{"xai_api_key", "xai-" + strings.Repeat("a", 80)},
+		{"cohere_api_key", "co_" + strings.Repeat("a", 40)},
+		{"buildkite_agent_token", "bkua_" + strings.Repeat("a", 40)},
+		{"circleci_project_token", "CCIPRJ_someorg_" + strings.Repeat("a", 40)},
+		{"cloudinary_url", "cloudinary://" + strings.Repeat("1", 15) + ":" + strings.Repeat("a", 27) + "@" + strings.Repeat("b", 10)},
+		{"mongodb_conn_string", "mongodb+srv://user:" + strings.Repeat("p", 24) + "@cluster.mongodb.net"},
+		{"postgres_conn_string", "postgresql://user:" + strings.Repeat("p", 24) + "@db.example.com"},
+		{"azure_storage_conn", "DefaultEndpointsProtocol=https;AccountName=mystorage;AccountKey=" + strings.Repeat("a", 86) + "=="},
+		{"mapbox_secret_key", "sk." + strings.Repeat("a", 60) + "." + strings.Repeat("b", 22)},
+		{"vault_batch_token", "hvb." + strings.Repeat("a", 100)},
+		{"vault_recovery_token", "hvr." + strings.Repeat("a", 100)},
+		{"netlify_pat", "nfp_" + strings.Repeat("a", 40)},
+		{"asana_pat", "1/" + strings.Repeat("1", 16) + ":" + strings.Repeat("a", 32)},
+		{"cloudflare_origin_ca_key", "v1.0-" + strings.Repeat("a", 32) + "-" + strings.Repeat("b", 146)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
