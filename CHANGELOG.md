@@ -3,6 +3,42 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.57.0] - 2026-05-07
+
+This release improves markdown rendering performance, adds agent switching capabilities, and enhances secret redaction with better error handling.
+
+## What's New
+- Adds unload on_agent_switch builtin hook for releasing model resources when switching between agents
+
+## Improvements
+- Speeds up and simplifies markdown fast renderer for better performance
+- Trims builtin tool schemas to save tokens in LLM requests
+- Tightens Docker PAT redaction and adds organization access tokens support
+- Adds more vendor-prefixed secret patterns for improved security scanning
+
+## Bug Fixes
+- Fixes retry handling for Vertex AI 'function response parts' 400 errors that occur intermittently
+- Restores styles on continuation lines of broken words in markdown rendering
+- Fixes H1 prefix and ANSI style handling in wrapText functionality
+- Defensively lowercases transient patterns in model error handling
+- Caps quantifiers on new secret rules to prevent adjacent text being incorrectly redacted
+
+## Technical Changes
+- Adopts new rubocop-go DSL across all linting cops for better code organization
+- Uses slog.WarnContext where context is available for improved logging
+- Drains unload response body and documents single-tenant assumption
+
+### Pull Requests
+
+- [#2684](https://github.com/docker/docker-agent/pull/2684) - feat: add unload on_agent_switch builtin hook
+- [#2686](https://github.com/docker/docker-agent/pull/2686) - Make the FastMarkdown renderer simpler and faster
+- [#2687](https://github.com/docker/docker-agent/pull/2687) - refactor(lint): adopt new rubocop-go DSL across all cops
+- [#2691](https://github.com/docker/docker-agent/pull/2691) - fix: retry transient Vertex AI 'function response parts' 400 errors
+- [#2694](https://github.com/docker/docker-agent/pull/2694) - shrink builtin tool schemas to save tokens
+- [#2695](https://github.com/docker/docker-agent/pull/2695) - docs: update CHANGELOG.md for v1.56.0
+- [#2697](https://github.com/docker/docker-agent/pull/2697) - secretsscan: tighten Docker PAT, add new vendor patterns, cap quantifiers
+
+
 ## [v1.56.0] - 2026-05-07
 
 This release adds snapshot management capabilities and expands secret detection with 20 new patterns.
@@ -2563,3 +2599,5 @@ This release improves the terminal user interface with better error handling and
 [v1.55.0]: https://github.com/docker/docker-agent/releases/tag/v1.55.0
 
 [v1.56.0]: https://github.com/docker/docker-agent/releases/tag/v1.56.0
+
+[v1.57.0]: https://github.com/docker/docker-agent/releases/tag/v1.57.0
