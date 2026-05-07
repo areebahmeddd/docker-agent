@@ -263,6 +263,33 @@ func (m *appModel) handleUndoSnapshot() (tea.Model, tea.Cmd) {
 	return m, notification.SuccessCmd(text)
 }
 
+func (m *appModel) handleShowSnapshotsDialog() (tea.Model, tea.Cmd) {
+	snapshots := m.application.ListSnapshots()
+	return m, core.CmdHandler(dialog.OpenDialogMsg{
+		Model: dialog.NewSnapshotsDialog(snapshots),
+	})
+}
+
+func (m *appModel) handleResetSnapshot(keep int) (tea.Model, tea.Cmd) {
+	if m.chatPage.IsWorking() {
+		return m, notification.WarningCmd("Wait for the current response to finish before resetting")
+	}
+	result, err := m.application.ResetSnapshot(context.Background(), keep)
+	if err != nil {
+		if errors.Is(err, app.ErrNothingToUndo) {
+			return m, notification.InfoCmd("Nothing to reset")
+		}
+		return m, notification.ErrorCmd(fmt.Sprintf("Failed to reset snapshot: %v", err))
+	}
+
+	target := "the original state"
+	if keep > 0 {
+		target = fmt.Sprintf("snapshot %d", keep)
+	}
+	text := fmt.Sprintf("Restored %d file%s to %s", result.RestoredFiles, plural(result.RestoredFiles), target)
+	return m, notification.SuccessCmd(text)
+}
+
 func plural(n int) string {
 	if n == 1 {
 		return ""

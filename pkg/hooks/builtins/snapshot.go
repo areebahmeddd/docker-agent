@@ -13,6 +13,12 @@ import (
 // Snapshot is the registered name of the snapshot builtin.
 const Snapshot = "snapshot"
 
+// SnapshotInfo summarises one completed snapshot checkpoint for display.
+type SnapshotInfo struct {
+	// Files is the number of unique files captured in the checkpoint.
+	Files int
+}
+
 type snapshotBuiltin struct {
 	manager *snapshot.Manager
 	mu      sync.Mutex
@@ -202,6 +208,87 @@ func (b *snapshotBuiltin) undoLast(ctx context.Context, sessionID, cwd string) (
 		return 0, true, err
 	}
 	return len(checkpoint.files), true, nil
+}
+
+// listSnapshots returns the completed checkpoints for a session in chronological
+// order (oldest first). The returned slice may be empty.
+func (b *snapshotBuiltin) listSnapshots(sessionID string) []SnapshotInfo {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.session[sessionID]
+	if s == nil || len(s.history) == 0 {
+		return nil
+	}
+	out := make([]SnapshotInfo, len(s.history))
+	for i, c := range s.history {
+		out[i] = SnapshotInfo{Files: countUnique(c.files)}
+	}
+	return out
+}
+
+// truncateAfter pops and returns checkpoints with index >= keep, leaving the
+// surviving prefix in the session history. keep is clamped into [0, len].
+func (b *snapshotBuiltin) truncateAfter(sessionID string, keep int) []snapshotCheckpoint {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.session[sessionID]
+	if s == nil || len(s.history) == 0 {
+		return nil
+	}
+	if keep < 0 {
+		keep = 0
+	}
+	if keep >= len(s.history) {
+		return nil
+	}
+	tail := append([]snapshotCheckpoint(nil), s.history[keep:]...)
+	for i := keep; i < len(s.history); i++ {
+		s.history[i] = snapshotCheckpoint{}
+	}
+	s.history = s.history[:keep]
+	return tail
+}
+
+// resetSnapshot reverts every checkpoint with index >= keep so the workspace
+// returns to the state captured at snapshot keep. keep == 0 means "reset to
+// the original state". A keep value greater than or equal to the snapshot
+// count is a no-op. Reverted checkpoints are dropped from the session history.
+func (b *snapshotBuiltin) resetSnapshot(ctx context.Context, sessionID, cwd string, keep int) (files int, ok bool, err error) {
+	tail := b.truncateAfter(sessionID, keep)
+	if len(tail) == 0 {
+		return 0, false, nil
+	}
+	repo, err := b.manager.Open(ctx, cwd)
+	if err != nil {
+		return 0, true, err
+	}
+	patches := make([]snapshot.Patch, 0, len(tail))
+	seen := map[string]bool{}
+	unique := 0
+	for _, c := range tail {
+		patches = append(patches, snapshot.Patch{Hash: c.hash, Files: c.files})
+		for _, f := range c.files {
+			if !seen[f] {
+				seen[f] = true
+				unique++
+			}
+		}
+	}
+	if err := repo.Revert(ctx, patches); err != nil {
+		return 0, true, err
+	}
+	return unique, true, nil
+}
+
+func countUnique(files []string) int {
+	if len(files) == 0 {
+		return 0
+	}
+	seen := make(map[string]bool, len(files))
+	for _, f := range files {
+		seen[f] = true
+	}
+	return len(seen)
 }
 
 func logPatch(ctx context.Context, scope, sessionID, label string, patch snapshot.Patch, after string) {

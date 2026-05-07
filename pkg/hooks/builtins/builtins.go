@@ -80,6 +80,25 @@ func (s *State) UndoLastSnapshot(ctx context.Context, sessionID, cwd string) (fi
 	return s.snapshot.undoLast(ctx, sessionID, cwd)
 }
 
+// ListSnapshots returns the completed snapshot checkpoints for a session in
+// chronological order (oldest first). Returns nil when no snapshots exist.
+func (s *State) ListSnapshots(sessionID string) []SnapshotInfo {
+	if s == nil || s.snapshot == nil || sessionID == "" {
+		return nil
+	}
+	return s.snapshot.listSnapshots(sessionID)
+}
+
+// ResetSnapshot reverts every checkpoint past index keep so the workspace
+// returns to the state captured at that snapshot. keep == 0 resets to the
+// original (pre-agent) state.
+func (s *State) ResetSnapshot(ctx context.Context, sessionID, cwd string, keep int) (files int, ok bool, err error) {
+	if s == nil || s.snapshot == nil || sessionID == "" || cwd == "" {
+		return 0, false, nil
+	}
+	return s.snapshot.resetSnapshot(ctx, sessionID, cwd, keep)
+}
+
 // Register installs the stock builtin hooks on r and returns a [State]
 // handle the caller can use for stateful builtin operations.
 func Register(r *hooks.Registry) (*State, error) {

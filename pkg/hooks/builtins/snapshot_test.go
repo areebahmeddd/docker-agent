@@ -82,6 +82,122 @@ func TestSnapshotBuiltinUndoSurvivesStreamEnd(t *testing.T) {
 	assert.NoFileExists(t, changedPath)
 }
 
+func TestSnapshotBuiltinListAndReset(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	paths.SetDataDir(t.TempDir())
+	t.Cleanup(func() { paths.SetDataDir("") })
+
+	r := hooks.NewRegistry()
+	state, err := builtins.Register(r)
+	require.NoError(t, err)
+	fn, ok := r.LookupBuiltin(builtins.Snapshot)
+	require.True(t, ok)
+
+	dir := snapshotBuiltinRepo(t)
+
+	// Initially: no checkpoints.
+	assert.Empty(t, state.ListSnapshots("s"))
+
+	// Capture three snapshots: each turn modifies one file.
+	recordTurn := func(t *testing.T, name, contents string) {
+		t.Helper()
+		_, err := fn(t.Context(), &hooks.Input{
+			SessionID:     "s",
+			Cwd:           dir,
+			HookEventName: hooks.EventTurnStart,
+		}, nil)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o644))
+		_, err = fn(t.Context(), &hooks.Input{
+			SessionID:     "s",
+			Cwd:           dir,
+			HookEventName: hooks.EventTurnEnd,
+			Reason:        "continue",
+		}, nil)
+		require.NoError(t, err)
+	}
+
+	recordTurn(t, "a.txt", "a")
+	recordTurn(t, "b.txt", "b")
+	recordTurn(t, "c.txt", "c")
+
+	snaps := state.ListSnapshots("s")
+	require.Len(t, snaps, 3)
+	assert.Equal(t, 1, snaps[0].Files)
+	assert.Equal(t, 1, snaps[1].Files)
+	assert.Equal(t, 1, snaps[2].Files)
+
+	// Reset to snapshot 2: revert turn 3 only, leaving a.txt and b.txt intact.
+	files, restored, err := state.ResetSnapshot(t.Context(), "s", dir, 2)
+	require.NoError(t, err)
+	assert.True(t, restored)
+	assert.Equal(t, 1, files)
+	assert.FileExists(t, filepath.Join(dir, "a.txt"))
+	assert.FileExists(t, filepath.Join(dir, "b.txt"))
+	assert.NoFileExists(t, filepath.Join(dir, "c.txt"))
+	require.Len(t, state.ListSnapshots("s"), 2)
+
+	// Reset to original: revert remaining checkpoints, deleting all three files.
+	files, restored, err = state.ResetSnapshot(t.Context(), "s", dir, 0)
+	require.NoError(t, err)
+	assert.True(t, restored)
+	assert.Equal(t, 2, files)
+	assert.NoFileExists(t, filepath.Join(dir, "a.txt"))
+	assert.NoFileExists(t, filepath.Join(dir, "b.txt"))
+	assert.Empty(t, state.ListSnapshots("s"))
+
+	// Subsequent reset is a no-op (nothing to revert).
+	_, restored, err = state.ResetSnapshot(t.Context(), "s", dir, 0)
+	require.NoError(t, err)
+	assert.False(t, restored)
+}
+
+func TestSnapshotBuiltinResetKeepBeyondHistoryIsNoop(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	paths.SetDataDir(t.TempDir())
+	t.Cleanup(func() { paths.SetDataDir("") })
+
+	r := hooks.NewRegistry()
+	state, err := builtins.Register(r)
+	require.NoError(t, err)
+	fn, ok := r.LookupBuiltin(builtins.Snapshot)
+	require.True(t, ok)
+
+	dir := snapshotBuiltinRepo(t)
+	_, err = fn(t.Context(), &hooks.Input{
+		SessionID:     "s",
+		Cwd:           dir,
+		HookEventName: hooks.EventTurnStart,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
+	_, err = fn(t.Context(), &hooks.Input{
+		SessionID:     "s",
+		Cwd:           dir,
+		HookEventName: hooks.EventTurnEnd,
+		Reason:        "continue",
+	}, nil)
+	require.NoError(t, err)
+
+	// keep == len(history) means "keep everything" — no checkpoints reverted.
+	files, restored, err := state.ResetSnapshot(t.Context(), "s", dir, 1)
+	require.NoError(t, err)
+	assert.False(t, restored)
+	assert.Equal(t, 0, files)
+	assert.FileExists(t, filepath.Join(dir, "a.txt"))
+	require.Len(t, state.ListSnapshots("s"), 1)
+
+	// keep way past the end is also a no-op.
+	_, restored, err = state.ResetSnapshot(t.Context(), "s", dir, 99)
+	require.NoError(t, err)
+	assert.False(t, restored)
+	require.Len(t, state.ListSnapshots("s"), 1)
+}
+
 func snapshotBuiltinRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

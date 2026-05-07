@@ -40,7 +40,8 @@ Type `/` during a session to see available commands, or press <kbd>Ctrl</kbd>+<k
 | `/fork`            | Fork the current session into a new branch                                           |
 | `/copy`            | Copy the entire conversation to clipboard                                            |
 | `/copy-last`       | Copy only the last assistant message to clipboard                                    |
-| `/undo`            | Restore file changes from the latest snapshot                                       |
+| `/undo`            | Restore file changes from the latest snapshot (only when snapshots are enabled)      |
+| `/snapshot`        | List captured snapshots and reset to one (only when snapshots are enabled)           |
 | `/export`          | Export the session as HTML                                                           |
 | `/sessions`        | Browse and load past sessions                                                        |
 | `/model`           | Change the model for the current agent                                               |
@@ -60,7 +61,7 @@ Type `/` during a session to see available commands, or press <kbd>Ctrl</kbd>+<k
 | `/speak`           | Voice input via system speech-to-text (macOS only)                                   |
 | `/exit`            | Exit the application (aliases: `/quit`, `/q`)                                        |
 
-### Snapshots and `/undo`
+### Snapshots, `/undo`, and `/snapshot`
 
 Enable shadow-git snapshots globally in `~/.config/cagent/config.yaml`:
 
@@ -69,7 +70,12 @@ settings:
   snapshot: true
 ```
 
-When enabled, docker-agent records filesystem snapshots at turn boundaries. `/undo` restores files from the most recent changed snapshot; it does **not** remove messages from the session transcript. Omit `snapshot` or set it to `false` to leave automatic snapshots off; agents can still configure snapshot hooks manually.
+When enabled, docker-agent records filesystem snapshots at turn boundaries. The TUI exposes two slash commands that operate on those snapshots:
+
+- **`/undo`** restores files from the most recent snapshot (one step back).
+- **`/snapshot`** opens a dialog showing how many snapshots have been captured and the number of files in each one. Use <kbd>↑</kbd>/<kbd>↓</kbd> (or <kbd>j</kbd>/<kbd>k</kbd>) to highlight an entry, then press <kbd>Enter</kbd> to reset the workspace to that point. Pick `<original>` to revert every snapshot and bring the workspace back to its pre-agent state. <kbd>Esc</kbd> closes the dialog without changing anything. (`/snapshots` is accepted as an alias.)
+
+Neither command removes messages from the session transcript — they only touch files on disk. Both commands (and the matching command-palette entries) are hidden when snapshots are turned off. Omit `snapshot` or set it to `false` to leave automatic snapshots off; agents can still configure snapshot hooks manually.
 
 ## File Attachments
 
