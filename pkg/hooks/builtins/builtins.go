@@ -23,6 +23,7 @@
 //     tool output. Same builtin, dispatches on
 //     event so a single name covers all three
 //     legs of the feature.
+//   - http_post              (any event)       — POST args[1] to args[0]
 //
 // Reference any of them from a hook YAML entry as
 // `{type: builtin, command: "<name>"}`. The runtime additionally
@@ -118,6 +119,7 @@ func Register(r *hooks.Registry) (*State, error) {
 		r.RegisterBuiltin(MaxIterations, state.maxIterations.hook),
 		r.RegisterBuiltin(Snapshot, state.snapshot.hook),
 		r.RegisterBuiltin(RedactSecrets, redactSecrets),
+		r.RegisterBuiltin(HTTPPost, httpPost),
 	); err != nil {
 		return nil, err
 	}
