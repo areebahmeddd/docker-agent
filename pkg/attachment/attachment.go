@@ -7,6 +7,7 @@ package attachment
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
@@ -56,6 +57,10 @@ func Decide(doc chat.Document, mc modelcaps.ModelCapabilities) (Strategy, string
 // parse as a named attachment.
 //
 //	<document name="report.md" mime-type="text/markdown">…body…</document>
+//
+// The body is sanitised to prevent content from breaking out of the envelope:
+// any occurrence of "</document>" in the body is replaced with "&lt;/document&gt;".
 func TXTEnvelope(name, mimeType, body string) string {
-	return fmt.Sprintf("<document name=%q mime-type=%q>%s</document>", name, mimeType, body)
+	safe := strings.ReplaceAll(body, "</document>", "&lt;/document&gt;")
+	return fmt.Sprintf("<document name=%q mime-type=%q>%s</document>", name, mimeType, safe)
 }

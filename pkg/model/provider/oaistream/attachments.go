@@ -51,15 +51,13 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 				}),
 			}, nil
 		}
-		// Non-image binary (PDF, Office docs…): OpenAI Chat Completions has no
-		// native document block, so fall back to a TXT envelope.
-		slog.DebugContext(ctx, "oaistream: no native block for MIME, falling back to TXT envelope",
+		// application/pdf and other binary MIMEs: the Chat Completions endpoint has
+		// no native document block. Sending raw PDF bytes as base64-in-TXT-envelope
+		// is wasteful and meaningless. Drop and warn so the caller can handle it.
+		slog.WarnContext(ctx, "oaistream: PDF attachments are not supported on this provider's "+
+			"Chat Completions endpoint — dropping",
 			"mime", doc.MimeType, "doc", doc.Name)
-		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType,
-			base64.StdEncoding.EncodeToString(doc.Source.InlineData))
-		return []openai.ChatCompletionContentPartUnionParam{
-			openai.TextContentPart(envelope),
-		}, nil
+		return nil, nil
 
 	case attachment.StrategyTXT:
 		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType, doc.Source.InlineText)

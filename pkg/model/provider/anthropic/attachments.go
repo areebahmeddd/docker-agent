@@ -55,8 +55,9 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 			}, nil
 		}
 
-		if IsAnthropicDocumentMime(mime) {
-			// application/pdf → native document block
+		// Gate PDF block strictly on application/pdf — IsAnthropicDocumentMime also
+		// matches text/plain, which must NOT be sent as a DocumentBlockParam.
+		if mime == "application/pdf" {
 			return []anthropic.ContentBlockParamUnion{
 				{
 					OfDocument: &anthropic.DocumentBlockParam{
@@ -71,13 +72,10 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 			}, nil
 		}
 
-		// Other binary: fall back to TXT envelope.
-		slog.DebugContext(ctx, "anthropic: no native block for MIME, falling back to TXT envelope",
+		// Unexpected binary MIME — defensive drop.
+		slog.WarnContext(ctx, "anthropic: unexpected binary MIME in StrategyB64, dropping",
 			"mime", doc.MimeType, "doc", doc.Name)
-		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType, b64Data)
-		return []anthropic.ContentBlockParamUnion{
-			{OfText: &anthropic.TextBlockParam{Text: envelope}},
-		}, nil
+		return nil, nil
 
 	case attachment.StrategyTXT:
 		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType, doc.Source.InlineText)

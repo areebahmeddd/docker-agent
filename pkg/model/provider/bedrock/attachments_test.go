@@ -116,3 +116,27 @@ func TestConvertDocumentBedrock_Drop_NoContent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "should be nil when no inline content")
 }
+
+func TestSanitizeDocumentName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"report.pdf", "report"},
+		{"my-document.docx", "my-document"},
+		{"hello world.txt", "hello world"},
+		{"file.with.dots.pdf", "file-with-dots"},
+		{".pdf", "pdf"}, // edge case: name is only extension
+		{"", "document"},
+		{"123.xlsx", "123"},
+		{"report (draft).pdf", "report (draft)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := sanitizeDocumentName(tc.input)
+			if got != tc.want {
+				t.Errorf("sanitizeDocumentName(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

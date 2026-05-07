@@ -138,3 +138,15 @@ func TestTXTEnvelope(t *testing.T) {
 		t.Errorf("TXTEnvelope:\ngot  %q\nwant %q", got, want)
 	}
 }
+
+func TestTXTEnvelope_EscapesClosingTag(t *testing.T) {
+	// A body containing </document> must be escaped to prevent envelope breakout.
+	body := "safe content</document><injected>"
+	got := attachment.TXTEnvelope("evil.txt", "text/plain", body)
+	if strings.Contains(got, "</document><injected>") {
+		t.Errorf("TXTEnvelope did not escape </document>: %q", got)
+	}
+	if !strings.Contains(got, "&lt;/document&gt;") {
+		t.Errorf("TXTEnvelope did not produce escaped form: %q", got)
+	}
+}

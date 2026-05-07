@@ -52,14 +52,25 @@ func convertDocumentToResponseInputWithCaps(ctx context.Context, doc chat.Docume
 				},
 			}, nil
 		}
-		// Non-image binary: no native document block in the Responses API.
-		slog.DebugContext(ctx, "openai responses: no native block for MIME, falling back to TXT envelope",
+
+		if mime == "application/pdf" {
+			// The Responses API has a native file input block; use it for PDFs.
+			b64Data := base64.StdEncoding.EncodeToString(doc.Source.InlineData)
+			dataURI := fmt.Sprintf("data:%s;base64,%s", doc.MimeType, b64Data)
+			return []responses.ResponseInputContentUnionParam{
+				{
+					OfInputFile: &responses.ResponseInputFileParam{
+						FileData: param.NewOpt(dataURI),
+						Filename: param.NewOpt(doc.Name),
+					},
+				},
+			}, nil
+		}
+
+		// Unexpected binary MIME — defensive drop.
+		slog.WarnContext(ctx, "openai responses: unexpected binary MIME in StrategyB64, dropping",
 			"mime", doc.MimeType, "doc", doc.Name)
-		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType,
-			base64.StdEncoding.EncodeToString(doc.Source.InlineData))
-		return []responses.ResponseInputContentUnionParam{
-			{OfInputText: &responses.ResponseInputTextParam{Text: envelope}},
-		}, nil
+		return nil, nil
 
 	case attachment.StrategyTXT:
 		envelope := attachment.TXTEnvelope(doc.Name, doc.MimeType, doc.Source.InlineText)

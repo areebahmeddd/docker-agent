@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -101,18 +102,30 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 	}
 }
 
-// sanitizeDocumentName replaces characters that Bedrock disallows in document names.
-// Bedrock document names must be alphanumeric + hyphens only.
+// sanitizeDocumentName produces a Bedrock-safe document name.
+// Bedrock allows alphanumeric characters, whitespace, hyphens, parentheses,
+// and square brackets in DocumentBlock.name — but NOT dots.
+// We strip the file extension first so "report.pdf" becomes "report" rather
+// than the ugly "report-pdf", then replace any remaining disallowed characters
+// with hyphens.
 func sanitizeDocumentName(name string) string {
+	// Strip the extension (e.g. ".pdf", ".docx") before sanitising so that
+	// "report.pdf" → "report" instead of "report-pdf".
+	base := strings.TrimSuffix(name, path.Ext(name))
+	if base == "" {
+		base = name // edge-case: name was just an extension (e.g. ".pdf")
+	}
+
 	var sb strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+	for _, r := range base {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			r == '-' || r == ' ' || r == '(' || r == ')' || r == '[' || r == ']' {
 			sb.WriteRune(r)
 		} else {
 			sb.WriteRune('-')
 		}
 	}
-	result := sb.String()
+	result := strings.Trim(sb.String(), "-")
 	if result == "" {
 		return "document"
 	}
