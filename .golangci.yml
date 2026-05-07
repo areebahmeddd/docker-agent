@@ -106,6 +106,7 @@ linters:
     gomoddirectives:
       replace-allow-list:
         - github.com/charmbracelet/ultraviolet
+        - github.com/cyphar/filepath-securejoin
     gocritic:
       disabled-checks:
         - dupImport
