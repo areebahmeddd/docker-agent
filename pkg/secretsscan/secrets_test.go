@@ -186,6 +186,62 @@ func TestRedactDoesNotSwallowAdjacentTextAfterSlackRotatingToken(t *testing.T) {
 		"adjacent hostname must NOT be swallowed by the rotating-token regex: %q", out)
 }
 
+// TestRedactDoesNotSwallowAdjacentTextAfterPrefixedTokens pins the
+// upper bounds of the rules whose bodies share a character class
+// with arbitrary trailing text. Without an explicit ceiling on the
+// body quantifier, a token directly abutting alphanumeric content
+// would have all of the trailing text silently consumed into the
+// redaction span. Each subtest below uses a suffix long enough to
+// overflow the rule's body cap and asserts that the overflow is
+// preserved — i.e. an upper bound exists and is enforced. (Short
+// alphanumeric identifiers concatenated to a token without any
+// separator may still be consumed up to the cap; the realistic leak
+// vector is rare in practice and the alternative — leaving secrets
+// partially redacted — is worse.)
+func TestRedactDoesNotSwallowAdjacentTextAfterPrefixedTokens(t *testing.T) {
+	t.Parallel()
+
+	// Each token below is intentionally longer than the rule's
+	// upper bound so the regex must split the input into a redacted
+	// prefix and a literal trailing suffix. The marker `STOPHERE` is
+	// alphanumeric (so it would be consumed by an unbounded quantifier)
+	// but is positioned past the body cap to confirm the cap is real.
+	cases := []struct {
+		name  string
+		token string
+	}{
+		// Body cap 80 — use 90 chars to overflow.
+		{"vercel_personal", "vcp_" + strings.Repeat("a", 90)},
+		{"vercel_cli", "vck_" + strings.Repeat("b", 90)},
+		{"vercel_integration", "vci_" + strings.Repeat("c", 90)},
+		// Supabase body cap 80 — use 90 chars.
+		{"supabase_secret", "sb_secret_" + strings.Repeat("d", 90)},
+		// Render body cap 80 — use 90 chars.
+		{"render_api_key", "rnd_" + strings.Repeat("e", 90)},
+		// 1Password body cap 1000 — use 1100 chars.
+		{"onepassword_service_account", "ops_eyJ" + strings.Repeat("f", 1100)},
+		// Pinecone second segment cap 80 — use 90 chars.
+		{"pinecone_api_key", "pckey_label_" + strings.Repeat("g", 90)},
+		// Tailscale second segment cap 80 — use 90 chars.
+		{"tailscale_auth_key", "tskey-auth-" + strings.Repeat("h", 12) + "-" + strings.Repeat("i", 90)},
+		{"tailscale_api_token", "tskey-api-" + strings.Repeat("j", 12) + "-" + strings.Repeat("k", 90)},
+	}
+	const suffix = " and the rest of the line"
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			input := tc.token + suffix
+			out := secretsscan.Redact(input)
+
+			assert.Containsf(t, out, secretsscan.RedactionMarker,
+				"%s must still be redacted: %q", tc.name, out)
+			assert.Containsf(t, out, suffix,
+				"adjacent text past the body cap must NOT be swallowed by %s: %q",
+				tc.name, out)
+		})
+	}
+}
+
 // TestContainsSecretsIgnoresHarmlessText: pure digit strings, plain
 // English, and the empty string must never trip detection.
 func TestContainsSecretsIgnoresHarmlessText(t *testing.T) {

@@ -850,8 +850,13 @@ var rules = sync.OnceValue(func() []rule {
 			// always start with `ops_eyJ` — the `eyJ` is the base64
 			// prefix of `{"`, since the body is a JWT-style envelope
 			// over a 1Password macaroon. The literal `ops_eyJ` keyword
-			// keeps the AC pre-filter extremely selective.
-			expression: `ops_eyJ[A-Za-z0-9+/=_-]{250,}`,
+			// keeps the AC pre-filter extremely selective. The 1000-char
+			// upper bound covers the longest 1Password tokens observed
+			// in the wild (and is RE2's hard cap on a single quantifier)
+			// while preventing the regex from absorbing arbitrary
+			// trailing alphanumeric content if a token is not
+			// whitespace-terminated.
+			expression: `ops_eyJ[A-Za-z0-9+/=_-]{250,1000}`,
 			keywords:   []string{"ops_eyJ"},
 		},
 		{
@@ -873,42 +878,49 @@ var rules = sync.OnceValue(func() []rule {
 		},
 		{
 			// pinecone-api-key. Pinecone vector-DB keys carry the
-			// `pckey_` prefix; the body is a `<label>_<token>` pair
-			// of base64url-ish segments.
-			expression: `pckey_[A-Za-z0-9]+_[A-Za-z0-9_-]{24,}`,
+			// `pckey_` prefix; the body is a `<label>_<token>` pair of
+			// base64url-ish segments. Both segments are bounded so the
+			// regex can't swallow neighbouring identifiers when a key
+			// abuts other text without a separator.
+			expression: `pckey_[A-Za-z0-9]{1,40}_[A-Za-z0-9_-]{24,80}`,
 			keywords:   []string{"pckey_"},
 		},
 		{
 			// supabase-secret-key. The 2024 `sb_publishable_` /
 			// `sb_secret_` rotation introduced prefixed keys; only the
 			// secret variant bypasses Row-Level Security and is worth
-			// redacting. Body is base64url-ish, observed at 40+ chars.
-			expression: `sb_secret_[A-Za-z0-9_-]{40,}`,
+			// redacting. Body is base64url-ish, observed at ~56 chars;
+			// the 80-char ceiling keeps the regex from absorbing trailing
+			// text when the key isn't whitespace-terminated.
+			expression: `sb_secret_[A-Za-z0-9_-]{40,80}`,
 			keywords:   []string{"sb_secret_"},
 		},
 		{
 			// tailscale-auth-key. Used to enroll new nodes into a
 			// Tailnet without an interactive login. The `tskey-auth-`
-			// prefix is documented; the body is a `<id>-<secret>`
-			// pair of alphanumeric segments.
-			expression: `tskey-auth-[A-Za-z0-9]{10,}-[A-Za-z0-9]{20,}`,
+			// prefix is documented; the body is a `<id>-<secret>` pair
+			// of alphanumeric segments. Both segments are bounded so
+			// the regex can't swallow adjacent text.
+			expression: `tskey-auth-[A-Za-z0-9]{10,30}-[A-Za-z0-9]{20,80}`,
 			keywords:   []string{"tskey-auth-"},
 		},
 		{
 			// tailscale-api-access-token. Grants programmatic access
 			// to the Tailscale control plane (devices, ACLs, keys).
-			// Same `<id>-<secret>` body shape as the auth-key form.
-			expression: `tskey-api-[A-Za-z0-9]{10,}-[A-Za-z0-9]{20,}`,
+			// Same `<id>-<secret>` body shape as the auth-key form
+			// with the same upper bounds.
+			expression: `tskey-api-[A-Za-z0-9]{10,30}-[A-Za-z0-9]{20,80}`,
 			keywords:   []string{"tskey-api-"},
 		},
 		{
 			// vercel-token. The 2023 token-format change introduced
 			// three prefixed shapes that share a common alphanumeric
 			// body: `vcp_` (personal access tokens), `vck_` (CLI /
-			// deploy tokens), and `vci_` (integration tokens). Any of
-			// the three grants Vercel API access scoped to whatever
-			// the issuer attached to the token.
-			expression: `vc[kpi]_[A-Za-z0-9]{20,}`,
+			// deploy tokens), and `vci_` (integration tokens). Real
+			// tokens are 24 chars; the 80-char ceiling stops the regex
+			// from absorbing trailing text when the token isn't
+			// whitespace-terminated.
+			expression: `vc[kpi]_[A-Za-z0-9]{20,80}`,
 			keywords:   []string{"vcp_", "vck_", "vci_"},
 		},
 
@@ -957,9 +969,11 @@ var rules = sync.OnceValue(func() []rule {
 		},
 		{
 			// render-api-key. Render's REST-API tokens carry the `rnd_`
-			// prefix and a 30+ char alphanumeric body — leakage grants
+			// prefix and a ~32-char alphanumeric body — leakage grants
 			// full account access (deployments, env vars, services).
-			expression: `rnd_[A-Za-z0-9_-]{30,}`,
+			// The 80-char ceiling stops the regex from absorbing trailing
+			// text when the token isn't whitespace-terminated.
+			expression: `rnd_[A-Za-z0-9_-]{30,80}`,
 			keywords:   []string{"rnd_"},
 		},
 		{
