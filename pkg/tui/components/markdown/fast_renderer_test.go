@@ -271,6 +271,31 @@ func TestFastRendererHeadingWithLongCode(t *testing.T) {
 	}
 }
 
+func TestFastRendererBoldLongWordStyleRestoration(t *testing.T) {
+	t.Parallel()
+
+	// A bold span containing a single word longer than the wrap width forces
+	// breakWord to split it. Each continuation-line break inside the broken
+	// word must close and re-open the bold style that was opened *inside*
+	// the word, so the next line is not left with stale terminal state.
+	p := &parser{styles: getGlobalStyles()}
+	input := "prefix \x1b[1mverylongbolditem more"
+	wrapped := p.wrapText(input, 10)
+
+	lines := strings.Split(wrapped, "\n")
+	require.GreaterOrEqual(t, len(lines), 4, "expected breakWord to split the long bold word, got: %q", wrapped)
+
+	// Line 0 holds the prefix word. Line 1 starts the broken bold word and
+	// contains the original \x1b[1m. Line 2 is the *continuation* of the
+	// broken word: it must explicitly re-open bold, since the previous line
+	// break closed all active styles.
+	assert.True(t, strings.HasPrefix(lines[2], "\x1b[1m"),
+		"continuation line of broken bold word must re-open bold: %q", lines[2])
+	// Subsequent words after the broken word must also have bold re-opened.
+	assert.Contains(t, lines[3], "\x1b[1m",
+		"line after broken bold word must keep bold opened: %q", lines[3])
+}
+
 func TestFastRendererHeadingInlineCodeStyleRestoration(t *testing.T) {
 	t.Parallel()
 
@@ -655,7 +680,7 @@ func TestFastRendererTableViewportWidth(t *testing.T) {
 			result, err := r.Render(input)
 			require.NoError(t, err)
 
-			// Every line should be exactly tt.width (padAllLines pads to width)
+			// Every line should be exactly tt.width (finalizeOutput pads to width)
 			lines := strings.Split(result, "\n")
 			for i, line := range lines {
 				lineWidth := runewidth.StringWidth(stripANSI(line))
