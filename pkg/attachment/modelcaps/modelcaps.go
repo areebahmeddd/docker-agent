@@ -95,7 +95,7 @@ func Load(modelID string) (ModelCapabilities, error) {
 
 	store, err := modelsdev.NewStore()
 	if err != nil {
-		slog.Warn("modelcaps: failed to load models.dev store, using conservative caps",
+		slog.WarnContext(ctx, "modelcaps: failed to load models.dev store, using conservative caps",
 			"error", err, "model", modelID)
 		return ModelCapabilities{modelFound: false}, nil
 	}
@@ -103,7 +103,7 @@ func Load(modelID string) (ModelCapabilities, error) {
 	model, err := store.GetModel(ctx, modelID)
 	if err != nil {
 		if ctx.Err() != nil {
-			slog.Warn("modelcaps: models.dev lookup timed out, using conservative caps",
+			slog.WarnContext(ctx, "modelcaps: models.dev lookup timed out, using conservative caps",
 				"model", modelID, "timeout", loadTimeout)
 		}
 		// Model not found or context cancelled — conservative: text-only.

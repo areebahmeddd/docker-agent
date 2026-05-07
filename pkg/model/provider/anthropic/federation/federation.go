@@ -171,7 +171,7 @@ func commandSource(argv []string) option.IdentityTokenFunc {
 			return "", fmt.Errorf("command %q failed: %w", argv[0], err)
 		}
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			slog.Warn("identity_token.command produced stderr", "command", argv[0], "stderr", msg)
+			slog.WarnContext(ctx, "identity_token.command produced stderr", "command", argv[0], "stderr", msg)
 		}
 		token := strings.TrimSpace(stdout.String())
 		if token == "" {
