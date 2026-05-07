@@ -655,7 +655,7 @@ func TestFastRendererTableViewportWidth(t *testing.T) {
 			result, err := r.Render(input)
 			require.NoError(t, err)
 
-			// Every line should be exactly tt.width (padAllLines pads to width)
+			// Every line should be exactly tt.width (finalizeOutput pads to width)
 			lines := strings.Split(result, "\n")
 			for i, line := range lines {
 				lineWidth := runewidth.StringWidth(stripANSI(line))
