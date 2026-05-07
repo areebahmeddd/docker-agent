@@ -30,7 +30,7 @@ func TestNewClientWithExplicitBaseURL(t *testing.T) {
 
 	client, err := NewClient(t.Context(), cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "https://custom.example.com:8080/api/v1", client.baseURL)
+	assert.Equal(t, "https://custom.example.com:8080/api/v1", client.BaseURL)
 }
 
 func TestNewClientReturnsErrNotInstalledWhenDockerModelUnsupported(t *testing.T) {

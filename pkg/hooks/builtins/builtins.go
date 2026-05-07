@@ -12,6 +12,8 @@
 //   - add_user_info         (session_start)   — current OS user and host
 //   - add_recent_commits    (session_start)   — `git log --oneline -n N`
 //   - max_iterations        (before_llm_call) — hard stop after N model calls
+//   - unload                (on_agent_switch) — release the previous
+//     agent's local-engine resources via HTTP unload (DMR today)
 //   - snapshot              (session_start,
 //     turn_start, turn_end,
 //     pre_tool_use, post_tool_use,
@@ -72,6 +74,7 @@ func Register(r *hooks.Registry) error {
 		r.RegisterBuiltin(MaxIterations, maxIterations),
 		r.RegisterBuiltin(RedactSecrets, redactSecrets),
 		r.RegisterBuiltin(HTTPPost, httpPost),
+		r.RegisterBuiltin(Unload, unload),
 	)
 }
 

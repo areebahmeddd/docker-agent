@@ -43,7 +43,7 @@ func (c *Client) CreateBatchEmbedding(ctx context.Context, texts []string) (*bas
 		return &base.BatchEmbeddingResult{Embeddings: [][]float64{}}, nil
 	}
 
-	slog.DebugContext(ctx, "Creating DMR embeddings", "model", c.ModelConfig.Model, "batch_size", len(texts), "base_url", c.baseURL)
+	slog.DebugContext(ctx, "Creating DMR embeddings", "model", c.ModelConfig.Model, "batch_size", len(texts), "base_url", c.BaseURL)
 
 	response, err := c.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: texts},
@@ -127,7 +127,7 @@ func (c *Client) Rerank(ctx context.Context, query string, documents []types.Doc
 		documentStrings[i] = doc.Content
 	}
 
-	baseURL, err := rerankBaseURL(c.baseURL)
+	baseURL, err := rerankBaseURL(c.BaseURL)
 	if err != nil {
 		return nil, err
 	}

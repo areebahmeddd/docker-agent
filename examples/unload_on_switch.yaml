@@ -4,11 +4,13 @@
 #
 # Two agents share Docker Model Runner but use different models that don't
 # fit in GPU memory at the same time. Wiring the `unload` builtin into
-# each agent's `on_agent_switch` hook chain tells the runtime to call
-# Unload on the previous agent's model providers every time the active
-# agent transfers control. For DMR this hits the engine's `_unload`
-# endpoint; for cloud-only providers (OpenAI, Anthropic, ...) the hook is
-# a silent no-op since they don't implement provider.Unloader.
+# each agent's `on_agent_switch` hook chain asks the previous agent's
+# DMR endpoint(s) to release GPU memory every time the active agent
+# transfers control. The hook is pure: it reads the model snapshot the
+# runtime ships on every on_agent_switch dispatch and POSTs to DMR's
+# `_unload` endpoint over plain HTTP — no provider-specific runtime
+# coupling. For cloud-only providers (OpenAI, Anthropic, ...) the hook
+# is a silent no-op since they don't expose an HTTP unload endpoint.
 #
 # Switching back and forth between `coder` and `reviewer` therefore costs
 # one model load per switch instead of failing on out-of-memory.

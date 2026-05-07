@@ -250,6 +250,15 @@ type Input struct {
 	ToAgent         string `json:"to_agent,omitempty"`
 	AgentSwitchKind string `json:"agent_switch_kind,omitempty"`
 
+	// FromAgentModels is the snapshot of the previous agent's
+	// configured model endpoints, captured at on_agent_switch dispatch
+	// time. Populated only on [EventOnAgentSwitch]; nil for every other
+	// event. Hooks that act on the previous agent's models (e.g. the
+	// stock `unload` builtin asking a local inference engine to release
+	// GPU memory) read this slice instead of poking at the runtime,
+	// keeping the hook payload self-contained.
+	FromAgentModels []ModelEndpoint `json:"from_agent_models,omitempty"`
+
 	// OnSessionResume specific: the iteration cap that was reached
 	// (PreviousMaxIterations) and the new cap after the user approved
 	// continuation (NewMaxIterations). Carrying both lets audit
@@ -284,6 +293,27 @@ type Input struct {
 	// applied to the session so observability handlers can audit /
 	// archive what was summarized.
 	Summary string `json:"summary,omitempty"`
+}
+
+// ModelEndpoint identifies one of an agent's configured models plus
+// the HTTP endpoint that hosts it, when one is known. It is the wire
+// format used by [Input.FromAgentModels] so hooks can reach a
+// model-serving endpoint without depending on runtime-only types.
+type ModelEndpoint struct {
+	// Provider is the provider type ("openai", "anthropic", "dmr", ...).
+	Provider string `json:"provider,omitempty"`
+	// Model is the resolved model identifier.
+	Model string `json:"model,omitempty"`
+	// BaseURL is the resolved HTTP base URL of the provider, when known
+	// (set by providers that talk to a configurable HTTP endpoint, e.g.
+	// Docker Model Runner). Empty for cloud providers that don't expose
+	// a stable per-instance base URL on the runtime side.
+	BaseURL string `json:"base_url,omitempty"`
+	// UnloadAPI is the per-model unload path or absolute URL copied
+	// verbatim from the model's `unload_api` provider option. Empty
+	// when the user hasn't configured an override; the unload builtin
+	// falls back to a provider-specific default in that case.
+	UnloadAPI string `json:"unload_api,omitempty"`
 }
 
 // ToJSON serializes the input.

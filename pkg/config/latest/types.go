@@ -238,7 +238,7 @@ type ProviderConfig struct {
 	// models are POSTed `{"model": "<id>"}` here at every switch.
 	// Cloud providers should leave this unset.
 	//
-	// [unload]: https://pkg.go.dev/github.com/docker/docker-agent/pkg/runtime#BuiltinUnload
+	// [unload]: https://pkg.go.dev/github.com/docker/docker-agent/pkg/hooks/builtins#Unload
 	UnloadAPI string `json:"unload_api,omitempty"`
 	// TokenKey is the environment variable name containing the API token
 	TokenKey string `json:"token_key,omitempty"`

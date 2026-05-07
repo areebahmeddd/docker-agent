@@ -503,14 +503,6 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
 	}
 
-	// unload is registered alongside cache_response for the same reason:
-	// it needs to walk Input.FromAgent up to the previous agent's
-	// configured models and dispatch to provider.Unloader
-	// implementations, which the runtime owns through the team.
-	if err := r.hooksRegistry.RegisterBuiltin(BuiltinUnload, r.unloadBuiltin); err != nil {
-		return nil, fmt.Errorf("register %q builtin: %w", BuiltinUnload, err)
-	}
-
 	// Build the cooldown manager and wire the fallback executor's
 	// runtime-bound dependencies after opts so they pick up the final
 	// clock and telemetry sink ([WithClock] / [WithTelemetry]).

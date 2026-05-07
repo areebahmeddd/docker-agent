@@ -17,6 +17,17 @@ type Config struct {
 	// Models stores the full models map for providers that need it (e.g., routers).
 	// This enables proper cloning of providers that reference other models.
 	Models map[string]latest.ModelConfig
+	// BaseURL is the resolved HTTP base URL the client talks to, when
+	// the provider is reachable over a configurable HTTP endpoint.
+	// Distinct from [latest.ModelConfig.BaseURL] (the user-typed input):
+	// providers fill BaseURL with the URL they actually use after auto
+	// discovery / fallback (e.g. Docker Model Runner picking between
+	// MODEL_RUNNER_HOST, the desktop socket, and a localhost fallback).
+	// Surfaced through [Config.BaseConfig] so generic, runtime-free
+	// consumers like hooks can address the endpoint without duplicating
+	// resolution logic. Empty for providers that don't expose a stable
+	// per-instance URL.
+	BaseURL string
 }
 
 // ID returns the provider and model ID in the format "provider/model".

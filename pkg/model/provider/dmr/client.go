@@ -53,7 +53,6 @@ type Client struct {
 	base.Config
 
 	client     openai.Client
-	baseURL    string
 	httpClient *http.Client
 	engine     string
 }
@@ -137,9 +136,9 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, opts ...options.Opt
 		Config: base.Config{
 			ModelConfig:  *cfg,
 			ModelOptions: globalOptions,
+			BaseURL:      baseURL,
 		},
 		client:     openai.NewClient(clientOptions...),
-		baseURL:    baseURL,
 		httpClient: httpClient,
 		engine:     engine,
 	}, nil
@@ -159,7 +158,7 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, messages []chat
 		"model", c.ModelConfig.Model,
 		"message_count", len(messages),
 		"tool_count", len(requestTools),
-		"base_url", c.baseURL,
+		"base_url", c.BaseURL,
 	)
 
 	if len(messages) == 0 {
@@ -286,7 +285,7 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, messages []chat
 
 	stream := c.client.Chat.Completions.NewStreaming(ctx, params)
 
-	slog.DebugContext(ctx, "DMR chat completion stream created successfully", "model", c.ModelConfig.Model, "base_url", c.baseURL)
+	slog.DebugContext(ctx, "DMR chat completion stream created successfully", "model", c.ModelConfig.Model, "base_url", c.BaseURL)
 	return newStreamAdapter(stream, trackUsage), nil
 }
 
