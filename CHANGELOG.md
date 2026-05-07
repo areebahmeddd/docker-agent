@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.56.0] - 2026-05-07
+
+This release adds snapshot management capabilities and expands secret detection with 20 new patterns.
+
+## What's New
+- Adds `/snapshots` command to list and restore captured snapshots from the current session
+- Adds 20 new secret detection patterns including Discord bot tokens, Telegram bot tokens, Fly.io macaroons, Groq API keys, Perplexity API keys, and xAI/Grok API keys
+
+## Technical Changes
+- Freezes config v8 and starts v9 as the latest configuration schema version
+- Moves non-migration config tests to pkg/config for better organization
+- Updates logging to use slog.WarnContext when a context is in scope
+- Simplifies snapshot plumbing implementation
+
+### Pull Requests
+
+- [#2688](https://github.com/docker/docker-agent/pull/2688) - freeze config v8 and start v9 as latest
+- [#2689](https://github.com/docker/docker-agent/pull/2689) - docs: update CHANGELOG.md for v1.55.0
+- [#2690](https://github.com/docker/docker-agent/pull/2690) - feat(tui): add /snapshots command to list and restore captured snapshots
+- [#2692](https://github.com/docker/docker-agent/pull/2692) - feat(secretsscan): add 20 more secret patterns
+- [#2693](https://github.com/docker/docker-agent/pull/2693) - move non-migration config tests to pkg/config
+
+
 ## [v1.55.0] - 2026-05-07
 
 This release introduces significant security hardening, attachment system foundations, and enhanced configuration capabilities.
@@ -2538,3 +2561,5 @@ This release improves the terminal user interface with better error handling and
 [v1.54.0]: https://github.com/docker/docker-agent/releases/tag/v1.54.0
 
 [v1.55.0]: https://github.com/docker/docker-agent/releases/tag/v1.55.0
+
+[v1.56.0]: https://github.com/docker/docker-agent/releases/tag/v1.56.0
