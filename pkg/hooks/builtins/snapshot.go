@@ -19,6 +19,11 @@ type SnapshotInfo struct {
 	Files int
 }
 
+// Snapshots tracks per-session shadow-git checkpoints. The same
+// instance is dispatched as the snapshot builtin (registered under
+// [Snapshot] via [Hook]) and exposed to the runtime for /undo,
+// /list-snapshots and /reset (via [UndoLast] / [List] / [Reset]).
+// Construct with [NewSnapshots]; the zero value is not usable.
 type Snapshots struct {
 	manager *snapshot.Manager
 	mu      sync.Mutex
