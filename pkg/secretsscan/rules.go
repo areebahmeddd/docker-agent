@@ -508,9 +508,20 @@ var rules = sync.OnceValue(func() []rule {
 			keywords:   []string{"dockerc"},
 		},
 		{
-			// docker pat
-			expression: `(?i)(dckr_pat_[-0-9a-zA-Z]{27})`,
-			keywords:   []string{"dckr_pat"},
+			// docker-hub-personal-access-token. The `dckr_pat_` prefix
+			// is followed by a strictly alphanumeric 27-char body —
+			// per Docker's PAT issuance, no dashes / dots / underscores
+			// appear in the body, so the char class stays tight.
+			expression: `dckr_pat_[A-Za-z0-9]{27}`,
+			keywords:   []string{"dckr_pat_"},
+		},
+		{
+			// docker-hub-organization-access-token. Issued from the
+			// Docker Hub admin console for organization-scoped API
+			// access; same `<prefix>_<27 alnum>` shape as the PAT but
+			// with the `dckr_oat_` prefix.
+			expression: `dckr_oat_[A-Za-z0-9]{27}`,
+			keywords:   []string{"dckr_oat_"},
 		},
 
 		// --- Patterns added on top of the upstream Trivy / mcp-gateway

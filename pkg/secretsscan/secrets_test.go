@@ -23,6 +23,7 @@ func TestContainsSecretsRecognisesKnownTokens(t *testing.T) {
 	}{
 		{"github_pat", "ghp_cxLeRrvbJfmYdUtr70xnNE3Q7Gvli43s19PD"},
 		{"docker_pat", "dckr_pat_" + "AAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+		{"docker_oat", "dckr_oat_" + "AAAAAAAAAAAAAAAAAAAAAAAAAAA"},
 		// Patterns added on top of the upstream catalogue. Each value
 		// is split across string concatenation so the verbatim token
 		// never appears on a single source line in case downstream
