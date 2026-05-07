@@ -8,11 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/model/provider/dmr"
 )
 
 // Unload is the registered name of the on_agent_switch builtin that
@@ -31,6 +31,11 @@ import (
 // net/http. It carries no runtime-side coupling and silently skips any
 // model whose endpoint isn't reachable as plain HTTP (e.g. cloud
 // providers that don't expose [hooks.ModelEndpoint.BaseURL]).
+//
+// Provider dispatch and URL resolution are owned by
+// [pkg/model/provider/dmr] (see [dmr.ProviderType] and [dmr.UnloadURL]),
+// so this builtin stays a dumb dispatcher and DMR keeps full control
+// of its conventions.
 const Unload = "unload"
 
 // unloadTimeout caps each per-model Unload call so a stalled engine
@@ -47,7 +52,7 @@ func unload(ctx context.Context, in *hooks.Input, _ []string) (*hooks.Output, er
 		return nil, nil
 	}
 	for _, m := range in.FromAgentModels {
-		if m.Provider != "dmr" {
+		if m.Provider != dmr.ProviderType {
 			continue
 		}
 		if err := unloadOne(ctx, m); err != nil {
@@ -63,7 +68,7 @@ func unload(ctx context.Context, in *hooks.Input, _ []string) (*hooks.Output, er
 // (no base_url and no unload_api) is a silent no-op so the hook stays
 // harmless on test / in-process providers.
 func unloadOne(parent context.Context, m hooks.ModelEndpoint) error {
-	endpoint, err := unloadURL(m)
+	endpoint, err := dmr.UnloadURL(m.BaseURL, m.UnloadAPI)
 	if err != nil || endpoint == "" {
 		return err
 	}
@@ -79,6 +84,11 @@ func unloadOne(parent context.Context, m hooks.ModelEndpoint) error {
 
 	slog.DebugContext(ctx, "Unloading model", "url", endpoint, "model", m.Model)
 
+	// Unlike the http_post builtin, the unload target is the
+	// operator-configured DMR base URL — typically a loopback engine
+	// (Docker Desktop socket, 127.0.0.1:12434, …). The SSRF-safe
+	// dialer used by http_post would refuse those addresses by
+	// design, so we use the default client here.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("calling unload endpoint %s: %w", endpoint, err)
@@ -95,37 +105,4 @@ func unloadOne(parent context.Context, m hooks.ModelEndpoint) error {
 	// body has been read to EOF and closed).
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
-}
-
-// unloadURL picks the unload endpoint for one model, in this order:
-//
-//  1. unload_api is an absolute URL — used verbatim (lets users point
-//     at a different host than the model's base_url);
-//  2. unload_api is set but relative — rebased onto base_url's
-//     scheme + host (the model's path is dropped);
-//  3. unload_api is unset — the default `_unload` URL is derived from
-//     base_url by replacing its trailing `/v1` segment.
-//
-// Returns ("", nil) when neither base_url nor unload_api is set, so
-// the caller can skip without erroring.
-func unloadURL(m hooks.ModelEndpoint) (string, error) {
-	if strings.HasPrefix(m.UnloadAPI, "http://") || strings.HasPrefix(m.UnloadAPI, "https://") {
-		return m.UnloadAPI, nil
-	}
-	if m.BaseURL == "" && m.UnloadAPI == "" {
-		return "", nil
-	}
-	u, err := url.Parse(m.BaseURL)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("base_url %q is not absolute; cannot resolve unload endpoint", m.BaseURL)
-	}
-	switch {
-	case m.UnloadAPI == "":
-		u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), "/v1") + "/_unload"
-	case strings.HasPrefix(m.UnloadAPI, "/"):
-		u.Path = m.UnloadAPI
-	default:
-		u.Path = "/" + m.UnloadAPI
-	}
-	return u.String(), nil
 }

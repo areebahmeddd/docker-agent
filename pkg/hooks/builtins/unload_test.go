@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/model/provider/dmr"
 )
 
 // dmrInput builds an on_agent_switch [hooks.Input] carrying a single
@@ -26,7 +27,7 @@ func dmrInput(server *httptest.Server, unloadAPI string, opts ...func(*hooks.Inp
 		FromAgent: "from",
 		ToAgent:   "to",
 		FromAgentModels: []hooks.ModelEndpoint{{
-			Provider:  "dmr",
+			Provider:  dmr.ProviderType,
 			Model:     "ai/qwen3",
 			BaseURL:   server.URL + "/engines/v1",
 			UnloadAPI: unloadAPI,
@@ -108,6 +109,43 @@ func TestUnload_HonoursOverrideUnloadAPI(t *testing.T) {
 	assert.Equal(t, "/custom/unload", gotPath)
 }
 
+// TestUnload_FiltersPerElement pins the per-element provider filter:
+// when the snapshot mixes DMR and non-DMR endpoints, only the DMR
+// ones are POSTed to. The non-DMR entries (cloud providers without a
+// reachable unload endpoint) must be silently skipped, not errored
+// on, not POSTed to a fabricated URL.
+func TestUnload_FiltersPerElement(t *testing.T) {
+	t.Parallel()
+
+	var gotModels []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotModels = append(gotModels, body.Model)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	in := &hooks.Input{
+		FromAgent: "from",
+		ToAgent:   "to",
+		FromAgentModels: []hooks.ModelEndpoint{
+			{Provider: "openai", Model: "gpt-4", BaseURL: "https://api.openai.com/v1"},
+			{Provider: dmr.ProviderType, Model: "ai/qwen3", BaseURL: server.URL + "/engines/v1"},
+			{Provider: "anthropic", Model: "claude", BaseURL: "https://api.anthropic.com"},
+			{Provider: dmr.ProviderType, Model: "ai/llama3.2", BaseURL: server.URL + "/engines/llama.cpp/v1"},
+		},
+	}
+
+	out, err := unload(t.Context(), in, nil)
+	require.NoError(t, err)
+	assert.Nil(t, out)
+	assert.ElementsMatch(t, []string{"ai/qwen3", "ai/llama3.2"}, gotModels,
+		"only DMR models must be POSTed; cloud providers must be silently skipped")
+}
+
 // TestUnload_NoOpInputs pins the cheap-path properties the agent loop
 // relies on: the hook MUST NOT fire any HTTP call when the input
 // describes a transition where unloading would be wrong (back to the
@@ -156,7 +194,7 @@ func TestUnload_NoOpInputs(t *testing.T) {
 			in: func(*httptest.Server) *hooks.Input {
 				return &hooks.Input{
 					FromAgent: "from", ToAgent: "to",
-					FromAgentModels: []hooks.ModelEndpoint{{Provider: "dmr", Model: "ai/qwen3"}},
+					FromAgentModels: []hooks.ModelEndpoint{{Provider: dmr.ProviderType, Model: "ai/qwen3"}},
 				}
 			},
 		},
@@ -192,95 +230,4 @@ func TestUnload_SwallowsServerErrors(t *testing.T) {
 	out, err := unload(t.Context(), dmrInput(server, ""), nil)
 	require.NoError(t, err)
 	assert.Nil(t, out)
-}
-
-// TestUnloadURL covers every branch of the URL-resolution algorithm in
-// one table. Replaces what used to be two separate tables for the now
-// inlined `defaultUnloadURL` and `rebaseURL` helpers.
-func TestUnloadURL(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		baseURL     string
-		unloadAPI   string
-		want        string
-		errContains string // empty ⇒ expect success
-	}{
-		// Default derivation (no unload_api set).
-		{
-			name:    "default: standard engines path",
-			baseURL: "http://127.0.0.1:12434/engines/v1/",
-			want:    "http://127.0.0.1:12434/engines/_unload",
-		},
-		{
-			name:    "default: no trailing slash",
-			baseURL: "http://127.0.0.1:12434/engines/v1",
-			want:    "http://127.0.0.1:12434/engines/_unload",
-		},
-		{
-			name:    "default: Docker Desktop experimental prefix",
-			baseURL: "http://_/exp/vDD4.40/engines/v1",
-			want:    "http://_/exp/vDD4.40/engines/_unload",
-		},
-		{
-			name:    "default: backend-scoped path",
-			baseURL: "http://127.0.0.1:12434/engines/llama.cpp/v1/",
-			want:    "http://127.0.0.1:12434/engines/llama.cpp/_unload",
-		},
-
-		// Override paths and absolute URLs.
-		{
-			name:      "override: absolute https URL is returned verbatim",
-			baseURL:   "http://anything",
-			unloadAPI: "https://api.example.com/unload",
-			want:      "https://api.example.com/unload",
-		},
-		{
-			name:      "override: rooted path drops base path",
-			baseURL:   "http://localhost:12434/engines/v1",
-			unloadAPI: "/engines/_unload",
-			want:      "http://localhost:12434/engines/_unload",
-		},
-		{
-			name:      "override: relative path is rooted",
-			baseURL:   "http://localhost:12434/engines/v1",
-			unloadAPI: "engines/_unload",
-			want:      "http://localhost:12434/engines/_unload",
-		},
-
-		// Skip / error cases.
-		{
-			name: "skip: no base_url and no unload_api",
-			want: "",
-		},
-		{
-			name:        "error: unload_api set but base_url empty",
-			unloadAPI:   "/engines/_unload",
-			errContains: "is not absolute",
-		},
-		{
-			name:        "error: base_url without scheme",
-			baseURL:     "localhost:12434/engines/v1",
-			unloadAPI:   "/engines/_unload",
-			errContains: "is not absolute",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := unloadURL(hooks.ModelEndpoint{
-				BaseURL:   tt.baseURL,
-				UnloadAPI: tt.unloadAPI,
-			})
-			if tt.errContains != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errContains)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
 }

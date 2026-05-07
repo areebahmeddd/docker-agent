@@ -279,7 +279,17 @@ const (
 // changes the active agent. Observational; failures are logged. The
 // hook runs alongside the existing [AgentSwitching] event, so users
 // who already consume that event see no behaviour change.
+//
+// The previous agent's model-endpoint snapshot is built only when at
+// least one hook is configured for this event so audit-free
+// deployments don't pay the team-lookup + per-model allocation on
+// every agent switch (matches the cheap-when-unused property of the
+// other hook callsites).
 func (r *LocalRuntime) executeOnAgentSwitchHooks(ctx context.Context, a *agent.Agent, sessionID, fromAgent, toAgent, kind string) {
+	exec := r.hooksExec(a)
+	if exec == nil || !exec.Has(hooks.EventOnAgentSwitch) {
+		return
+	}
 	r.dispatchHook(ctx, a, hooks.EventOnAgentSwitch, &hooks.Input{
 		SessionID:       sessionID,
 		FromAgent:       fromAgent,
