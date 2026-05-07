@@ -193,7 +193,7 @@ func thoughtSignatureOrDefault(sig []byte) []byte {
 }
 
 // convertMessagesToGemini converts chat.Messages into Gemini Contents
-func convertMessagesToGemini(messages []chat.Message) []*genai.Content {
+func convertMessagesToGemini(ctx context.Context, messages []chat.Message, modelID string) []*genai.Content {
 	contents := make([]*genai.Content, 0, len(messages))
 	for i := range messages {
 		msg := &messages[i]
@@ -258,7 +258,7 @@ func convertMessagesToGemini(messages []chat.Message) []*genai.Content {
 
 		// Handle regular messages
 		if len(msg.MultiContent) > 0 {
-			parts := convertMultiContent(msg.MultiContent, msg.ThoughtSignature)
+			parts := convertMultiContent(ctx, msg.MultiContent, msg.ThoughtSignature, modelID)
 			if len(parts) > 0 {
 				contents = append(contents, genai.NewContentFromParts(parts, role))
 			}
@@ -288,15 +288,27 @@ func newTextPartWithSignature(text string, signature []byte) *genai.Part {
 }
 
 // convertMultiContent converts multi-part content to Gemini parts
-func convertMultiContent(multiContent []chat.MessagePart, thoughtSignature []byte) []*genai.Part {
+func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, thoughtSignature []byte, modelID string) []*genai.Part {
 	parts := make([]*genai.Part, 0, len(multiContent))
 	for _, part := range multiContent {
 		switch part.Type {
 		case chat.MessagePartTypeText:
 			parts = append(parts, newTextPartWithSignature(part.Text, thoughtSignature))
 		case chat.MessagePartTypeImageURL:
+			// Note: superseded by MessagePartTypeDocument.
 			if imgPart := convertImageURLToPart(part.ImageURL); imgPart != nil {
 				parts = append(parts, imgPart)
+			}
+		case chat.MessagePartTypeDocument:
+			if part.Document != nil {
+				docPart, err := convertDocument(ctx, *part.Document, modelID)
+				if err != nil {
+					slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
+					continue
+				}
+				if docPart != nil {
+					parts = append(parts, docPart)
+				}
 			}
 		}
 	}
@@ -589,7 +601,7 @@ func (c *Client) CreateChatCompletionStream(
 		}
 	}
 
-	contents := convertMessagesToGemini(messages)
+	contents := convertMessagesToGemini(ctx, messages, c.ModelConfig.Model)
 
 	// Debug: Log the messages we're sending
 	slog.DebugContext(ctx, "Gemini messages", "count", len(contents))
