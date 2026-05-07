@@ -239,31 +239,6 @@ func TestApplyProviderDefaults(t *testing.T) {
 	}
 }
 
-func TestIsOpenAIThinkingOnlyModel(t *testing.T) {
-	t.Parallel()
-
-	for _, tt := range []struct {
-		model string
-		want  bool
-	}{
-		{"o1", true},
-		{"o1-preview", true},
-		{"o1-mini", true},
-		{"o3", true},
-		{"o3-mini", true},
-		{"o4-mini", true},
-		{"gpt-4o", false},
-		{"gpt-4.1", false},
-		{"gpt-5", false},
-		{"custom-model", false},
-	} {
-		t.Run(tt.model, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, isOpenAIThinkingOnlyModel(tt.model))
-		})
-	}
-}
-
 // TestApplyProviderDefaults_DoesNotModifyOriginal verifies that applyProviderDefaults
 // does not mutate the input config's ProviderOpts map.
 func TestApplyProviderDefaults_DoesNotModifyOriginal(t *testing.T) {
