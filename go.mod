@@ -28,7 +28,7 @@ require (
 	github.com/clipperhouse/displaywidth v0.11.0
 	github.com/clipperhouse/uax29/v2 v2.7.0
 	github.com/coder/acp-go-sdk v0.12.2
-	github.com/docker/cli v29.4.2+incompatible
+	github.com/docker/cli v29.4.3+incompatible
 	github.com/docker/go-units v0.5.0
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/fatih/color v1.19.0
