@@ -2,66 +2,38 @@ package dialog
 
 import (
 	"fmt"
-	"strings"
 
-	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
 
-// Layout constants for the snapshots dialog.
 const (
-	snapshotsDialogWidthPercent  = 60
-	snapshotsDialogMinWidth      = 40
-	snapshotsDialogMaxWidth      = 70
-	snapshotsDialogHeightPercent = 70
-	snapshotsDialogMaxHeight     = 30
+	snapshotsDialogWidthPercent = 60
+	snapshotsDialogMinWidth     = 40
+	snapshotsDialogMaxWidth     = 70
 )
 
-// snapshotsKeyMap defines the navigation keys for the snapshots dialog.
-type snapshotsKeyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Top     key.Binding
-	Bottom  key.Binding
-	Restore key.Binding
-	Escape  key.Binding
-}
-
-func defaultSnapshotsKeyMap() snapshotsKeyMap {
-	return snapshotsKeyMap{
-		Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		Top:     key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g", "first")),
-		Bottom:  key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G", "last")),
-		Restore: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
-		Escape:  key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
-	}
-}
-
 // snapshotsDialog lists every captured snapshot and lets the user reset the
-// workspace to the state of any of them (or to the original pre-agent state).
+// workspace to one of them (or to the original pre-agent state).
 type snapshotsDialog struct {
 	BaseDialog
 
-	snapshots []app.SnapshotInfo
-	keyMap    snapshotsKeyMap
-	selected  int // 0 = <original>; 1..len(snapshots) = snapshot N
+	// fileCounts holds the number of files captured in each snapshot, oldest
+	// first. An empty slice puts the dialog in its empty state.
+	fileCounts []int
+	// selected is the highlighted entry. 0 = <original>, N = snapshot N.
+	selected int
 }
 
-// NewSnapshotsDialog creates a snapshots dialog showing every captured
-// checkpoint. Pass the snapshots in chronological order (oldest first).
-func NewSnapshotsDialog(snapshots []app.SnapshotInfo) Dialog {
-	return &snapshotsDialog{
-		snapshots: snapshots,
-		keyMap:    defaultSnapshotsKeyMap(),
-	}
+// NewSnapshotsDialog creates a snapshots dialog. fileCounts must be in
+// chronological order (oldest first).
+func NewSnapshotsDialog(fileCounts []int) Dialog {
+	return &snapshotsDialog{fileCounts: fileCounts}
 }
 
 func (d *snapshotsDialog) Init() tea.Cmd { return nil }
@@ -76,120 +48,116 @@ func (d *snapshotsDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		if cmd := HandleQuit(msg); cmd != nil {
 			return d, cmd
 		}
-		switch {
-		case key.Matches(msg, d.keyMap.Escape):
-			return d, core.CmdHandler(CloseDialogMsg{})
-		case key.Matches(msg, d.keyMap.Up):
-			if d.selected > 0 {
-				d.selected--
-			}
-			return d, nil
-		case key.Matches(msg, d.keyMap.Down):
-			if d.selected < d.maxIndex() {
-				d.selected++
-			}
-			return d, nil
-		case key.Matches(msg, d.keyMap.Top):
-			d.selected = 0
-			return d, nil
-		case key.Matches(msg, d.keyMap.Bottom):
-			d.selected = d.maxIndex()
-			return d, nil
-		case key.Matches(msg, d.keyMap.Restore):
-			if len(d.snapshots) == 0 {
-				return d, nil
-			}
-			return d, tea.Sequence(
-				core.CmdHandler(CloseDialogMsg{}),
-				core.CmdHandler(messages.ResetSnapshotMsg{Keep: d.selected}),
-			)
-		}
+		cmd := d.handleKey(msg)
+		return d, cmd
 	}
 	return d, nil
 }
 
-// maxIndex is the index of the last selectable item. With N snapshots there
-// are N+1 selectable items (<original> + each snapshot).
-func (d *snapshotsDialog) maxIndex() int {
-	return len(d.snapshots)
+func (d *snapshotsDialog) handleKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "q":
+		return core.CmdHandler(CloseDialogMsg{})
+	case "up", "k":
+		if d.selected > 0 {
+			d.selected--
+		}
+	case "down", "j":
+		if d.selected < len(d.fileCounts) {
+			d.selected++
+		}
+	case "home", "g":
+		d.selected = 0
+	case "end", "G":
+		d.selected = len(d.fileCounts)
+	case "r":
+		if len(d.fileCounts) == 0 {
+			return nil
+		}
+		return tea.Sequence(
+			core.CmdHandler(CloseDialogMsg{}),
+			core.CmdHandler(messages.ResetSnapshotMsg{Keep: d.selected}),
+		)
+	}
+	return nil
 }
 
 func (d *snapshotsDialog) Position() (row, col int) {
-	dialogWidth, maxHeight := d.dialogSize()
-	return CenterPosition(d.Width(), d.Height(), dialogWidth, maxHeight)
-}
-
-func (d *snapshotsDialog) dialogSize() (dialogWidth, dialogHeight int) {
-	dialogWidth = d.ComputeDialogWidth(snapshotsDialogWidthPercent, snapshotsDialogMinWidth, snapshotsDialogMaxWidth)
-	dialogHeight = min(d.Height()*snapshotsDialogHeightPercent/100, snapshotsDialogMaxHeight)
-	return dialogWidth, dialogHeight
+	return d.CenterDialog(d.View())
 }
 
 func (d *snapshotsDialog) View() string {
-	dialogWidth, _ := d.dialogSize()
-	contentWidth := d.ContentWidth(dialogWidth, 2)
+	width := d.ComputeDialogWidth(snapshotsDialogWidthPercent, snapshotsDialogMinWidth, snapshotsDialogMaxWidth)
+	inner := d.ContentWidth(width, 2)
 
-	builder := NewContent(contentWidth).
-		AddTitle("Snapshots").
-		AddSeparator().
-		AddSpace()
+	content := NewContent(inner).AddTitle("Snapshots").AddSeparator().AddSpace()
 
-	if len(d.snapshots) == 0 {
-		empty := styles.DialogContentStyle.Italic(true).
-			Foreground(styles.TextMuted).
-			Width(contentWidth).
-			Align(lipgloss.Center).
-			Render("No snapshots taken yet.")
-		content := builder.
-			AddContent(empty).
-			AddSpace().
-			AddHelpKeys("esc", "close").
-			Build()
-		return styles.DialogStyle.Width(dialogWidth).Render(content)
+	if len(d.fileCounts) > 0 {
+		count := pluralize(len(d.fileCounts), "snapshot", "snapshots") + " captured"
+		content = content.
+			AddContent(styles.DialogOptionsStyle.Width(inner).Render(count)).
+			AddSpace()
 	}
 
-	count := fmt.Sprintf("%d snapshot", len(d.snapshots))
-	if len(d.snapshots) != 1 {
-		count += "s"
-	}
-	count += " captured"
-
-	content := builder.
-		AddContent(styles.DialogOptionsStyle.Width(contentWidth).Render(count)).
+	body := content.
+		AddContent(d.bodyContent(inner)).
 		AddSpace().
-		AddContent(d.renderList(contentWidth)).
-		AddSpace().
-		AddHelpKeys("↑/↓", "navigate", "r", "restore", "esc", "close").
+		AddHelpKeys(d.helpKeys()...).
 		Build()
 
-	return styles.DialogStyle.Width(dialogWidth).Render(content)
+	return styles.DialogStyle.Width(width).Render(body)
 }
 
-// renderList renders every selectable item (<original> + each snapshot).
-func (d *snapshotsDialog) renderList(contentWidth int) string {
-	rows := make([]string, 0, len(d.snapshots)+1)
-	rows = append(rows, d.renderRow("<original>", "restore the initial state", d.selected == 0, contentWidth))
-	for i, snap := range d.snapshots {
-		filesLabel := fmt.Sprintf("%d file", snap.Files)
-		if snap.Files != 1 {
-			filesLabel += "s"
-		}
-		label := fmt.Sprintf("Snapshot %d", i+1)
-		rows = append(rows, d.renderRow(label, filesLabel, i+1 == d.selected, contentWidth))
+// bodyContent returns either the empty-state line or the snapshot list,
+// depending on whether any snapshots were captured.
+func (d *snapshotsDialog) bodyContent(inner int) string {
+	if len(d.fileCounts) == 0 {
+		return styles.DialogContentStyle.
+			Italic(true).
+			Foreground(styles.TextMuted).
+			Width(inner).
+			Align(lipgloss.Center).
+			Render("No snapshots taken yet.")
+	}
+
+	rows := make([]string, 0, len(d.fileCounts)+1)
+	rows = append(rows, d.renderRow("<original>", "restore the initial state", d.selected == 0, inner))
+	for i, count := range d.fileCounts {
+		rows = append(rows, d.renderRow(
+			fmt.Sprintf("Snapshot %d", i+1),
+			pluralize(count, "file", "files"),
+			d.selected == i+1,
+			inner,
+		))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
-// renderRow renders a single item line with name on the left and description
-// on the right, highlighting the row when selected.
+func (d *snapshotsDialog) helpKeys() []string {
+	if len(d.fileCounts) == 0 {
+		return []string{"esc", "close"}
+	}
+	return []string{"↑/↓", "navigate", "r", "restore", "esc", "close"}
+}
+
+// renderRow draws a single list entry with the name on the left and a short
+// description right-aligned within width.
 func (d *snapshotsDialog) renderRow(name, desc string, selected bool, width int) string {
 	nameStyle, descStyle := styles.PaletteUnselectedActionStyle, styles.PaletteUnselectedDescStyle
 	if selected {
 		nameStyle, descStyle = styles.PaletteSelectedActionStyle, styles.PaletteSelectedDescStyle
 	}
-
 	left := nameStyle.Render(" " + name + " ")
 	right := descStyle.Render(" " + desc + " ")
-	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
-	return left + descStyle.Render(strings.Repeat(" ", gap)) + right
+	gap := max(0, width-lipgloss.Width(left))
+	return left + lipgloss.PlaceHorizontal(gap, lipgloss.Right, right,
+		lipgloss.WithWhitespaceStyle(descStyle))
+}
+
+func pluralize(n int, singular, plural string) string {
+	word := plural
+	if n == 1 {
+		word = singular
+	}
+	return fmt.Sprintf("%d %s", n, word)
 }

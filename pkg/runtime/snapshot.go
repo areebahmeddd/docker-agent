@@ -23,10 +23,7 @@ func (r *LocalRuntime) SnapshotsEnabled() bool {
 }
 
 // UndoLastSnapshot restores files recorded for the latest completed snapshot hook checkpoint.
-func (r *LocalRuntime) UndoLastSnapshot(ctx context.Context, sess *session.Session) (files int, ok bool, err error) {
-	if r == nil || sess == nil {
-		return 0, false, nil
-	}
+func (r *LocalRuntime) UndoLastSnapshot(ctx context.Context, sess *session.Session) (int, bool, error) {
 	cwd := r.snapshotCwd(sess)
 	if cwd == "" {
 		return 0, false, nil
@@ -46,10 +43,7 @@ func (r *LocalRuntime) ListSnapshots(sess *session.Session) []builtins.SnapshotI
 // ResetSnapshot reverts every checkpoint past index keep so the workspace
 // returns to the state captured at that snapshot. keep == 0 resets to the
 // original (pre-agent) state.
-func (r *LocalRuntime) ResetSnapshot(ctx context.Context, sess *session.Session, keep int) (files int, ok bool, err error) {
-	if r == nil || sess == nil {
-		return 0, false, nil
-	}
+func (r *LocalRuntime) ResetSnapshot(ctx context.Context, sess *session.Session, keep int) (int, bool, error) {
 	cwd := r.snapshotCwd(sess)
 	if cwd == "" {
 		return 0, false, nil
@@ -58,14 +52,17 @@ func (r *LocalRuntime) ResetSnapshot(ctx context.Context, sess *session.Session,
 }
 
 // snapshotCwd resolves the working directory used to open the shadow
-// repository for snapshot operations.
+// repository for snapshot operations. Returns "" when no candidate is usable.
 func (r *LocalRuntime) snapshotCwd(sess *session.Session) string {
-	cwd := sess.WorkingDir
-	if cwd == "" {
-		cwd = r.workingDir
+	if r == nil || sess == nil {
+		return ""
 	}
-	if cwd == "" {
-		cwd, _ = os.Getwd()
+	if sess.WorkingDir != "" {
+		return sess.WorkingDir
 	}
+	if r.workingDir != "" {
+		return r.workingDir
+	}
+	cwd, _ := os.Getwd()
 	return cwd
 }
