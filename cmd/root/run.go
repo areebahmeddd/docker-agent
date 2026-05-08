@@ -241,36 +241,21 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		out.Println("Recording mode enabled, cassette: " + cassettePath)
 	}
 
-	// Remote runtime
-	if f.remoteAddress != "" {
-		if f.dryRun {
-			out.Println("Dry run mode enabled. Agent initialized but will not execute.")
-			return nil
-		}
-		rt, sess, err := f.createRemoteRuntimeAndSession(ctx, agentFileName)
-		if err != nil {
-			return err
-		}
-		return f.launchTUI(ctx, out, rt, sess, args, useTUI)
-	}
-
-	// Local runtime
-	agentSource, err := config.Resolve(agentFileName, f.runConfig.EnvProvider())
+	b, err := f.selectBackend(agentFileName)
 	if err != nil {
 		return err
 	}
-
-	var b backend = &localBackend{flags: f, agentSource: agentSource}
-	rt, sess, cleanup, err := b.CreateRuntimeAndSession(ctx)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
 
 	if f.dryRun {
 		out.Println("Dry run mode enabled. Agent initialized but will not execute.")
 		return nil
 	}
+
+	rt, sess, cleanup, err := b.CreateRuntimeAndSession(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	if !useTUI {
 		return f.handleExecMode(ctx, out, rt, sess, args)
@@ -282,8 +267,7 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		return err
 	}
 
-	sessStore := rt.SessionStore()
-	return runTUI(ctx, rt, sess, f.createSessionSpawner(agentSource, sessStore), cleanup, f.tuiOpts(), opts...)
+	return runTUI(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(), opts...)
 }
 
 func (f *runExecFlags) loadAgentFrom(ctx context.Context, agentSource config.Source) (*teamloader.LoadResult, error) {
@@ -323,33 +307,6 @@ func (f *runExecFlags) runtimeOpts(loadResult *teamloader.LoadResult, runConfig 
 		opts = append(opts, runtime.WithSnapshots(true))
 	}
 	return opts
-}
-
-func (f *runExecFlags) createRemoteRuntimeAndSession(ctx context.Context, originalFilename string) (runtime.Runtime, *session.Session, error) {
-	client, err := runtime.NewClient(f.remoteAddress)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create remote client: %w", err)
-	}
-
-	sessTemplate := session.New(
-		session.WithToolsApproved(f.autoApprove),
-	)
-
-	sess, err := client.CreateSession(ctx, sessTemplate)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	remoteRt, err := runtime.NewRemoteRuntime(client,
-		runtime.WithRemoteCurrentAgent(f.agentName),
-		runtime.WithRemoteAgentFilename(originalFilename),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create remote runtime: %w", err)
-	}
-
-	slog.DebugContext(ctx, "Using remote runtime", "address", f.remoteAddress, "agent", f.agentName)
-	return remoteRt, sess, nil
 }
 
 func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult) (runtime.Runtime, *session.Session, error) {
@@ -456,23 +413,6 @@ func readInitialMessage(args []string) (*string, error) {
 	}
 
 	return &args[1], nil
-}
-
-func (f *runExecFlags) launchTUI(ctx context.Context, out *cli.Printer, rt runtime.Runtime, sess *session.Session, args []string, useTUI bool) error {
-	if useTUI {
-		applyTheme()
-	}
-
-	if !useTUI {
-		return f.handleExecMode(ctx, out, rt, sess, args)
-	}
-
-	opts, err := f.buildAppOpts(args)
-	if err != nil {
-		return err
-	}
-
-	return runTUI(ctx, rt, sess, nil, nil, f.tuiOpts(), opts...)
 }
 
 // tuiOpts returns the TUI options derived from the current flags.
