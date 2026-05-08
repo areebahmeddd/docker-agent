@@ -285,7 +285,8 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		return f.handleExecMode(ctx, out, rt, sess, args)
 	}
 
-	if err := f.startAttachedServer(ctx, out, rt, sess); err != nil {
+	listenOpt, err := f.startAttachedServer(ctx, out, rt, sess)
+	if err != nil {
 		return err
 	}
 
@@ -293,6 +294,9 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 	opts, err := f.buildAppOpts(args)
 	if err != nil {
 		return err
+	}
+	if listenOpt != nil {
+		opts = append(opts, listenOpt)
 	}
 
 	sessStore := rt.SessionStore()

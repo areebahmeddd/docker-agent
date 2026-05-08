@@ -62,6 +62,7 @@ func (s *Server) registerRoutes() {
 	group.POST("/sessions/:id/elicitation", s.elicitation)
 	group.POST("/sessions/:id/steer", s.steerSession)
 	group.POST("/sessions/:id/followup", s.followUpSession)
+	group.GET("/sessions/:id/events", s.sessionEvents)
 
 	group.GET("/agents/:id/:agent_name/tools/count", s.getAgentToolCount)
 
@@ -337,6 +338,31 @@ func (s *Server) steerSession(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued"})
+}
+
+// sessionEvents streams events for a session as Server-Sent Events. The
+// stream lasts until the client disconnects or the session ends.
+func (s *Server) sessionEvents(c echo.Context) error {
+	source, ok := s.sm.GetEventSource(c.Param("id"))
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "no event source for session")
+	}
+
+	c.Response().Header().Set("Content-Type", "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().WriteHeader(http.StatusOK)
+	c.Response().Flush()
+
+	source(c.Request().Context(), func(event any) {
+		data, err := json.Marshal(event)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(c.Response(), "data: %s\n\n", data)
+		c.Response().Flush()
+	})
+	return nil
 }
 
 func (s *Server) followUpSession(c echo.Context) error {

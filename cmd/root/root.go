@@ -155,6 +155,7 @@ We collect anonymous usage data to help improve docker agent. To disable:
 		newVersionCmd(),
 		newRunCmd(),
 		newSendCmd(),
+		newWatchCmd(),
 		newNewCmd(),
 		newEvalCmd(),
 		newShareCmd(),
