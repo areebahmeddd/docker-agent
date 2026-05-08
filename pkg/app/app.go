@@ -119,7 +119,7 @@ func New(ctx context.Context, rt runtime.Runtime, sess *session.Session, opts ..
 
 	// Subscribe to tool list changes so the sidebar updates immediately
 	// when an MCP server adds or removes tools (outside of a RunStream).
-	if tcs, ok := rt.(runtime.ToolsChangeSubscriber); ok {
+	if tcs := runtime.ToolsChangeSubscriberOf(rt); tcs != nil {
 		tcs.OnToolsChanged(func(event runtime.Event) {
 			select {
 			case app.events <- event:
@@ -570,11 +570,11 @@ func (a *App) Resume(req runtime.ResumeRequest) {
 // doesn't support pausing (e.g. remote runtimes), in which case the first
 // return value is meaningless.
 func (a *App) TogglePause() (paused, supported bool) {
-	rt, ok := a.runtime.(interface{ TogglePause() bool })
-	if !ok {
+	p := runtime.PauserOf(a.runtime)
+	if p == nil {
 		return false, false
 	}
-	return rt.TogglePause(), true
+	return p.TogglePause(), true
 }
 
 // ResumeElicitation resumes an elicitation request with the given action and content
@@ -685,8 +685,8 @@ func (a *App) SwitchAgent(agentName string) error {
 // supported by the runtime (e.g., remote runtimes).
 // Pass an empty modelRef to clear the override and use the agent's default model.
 func (a *App) SetCurrentAgentModel(ctx context.Context, modelRef string) error {
-	modelSwitcher, ok := a.runtime.(runtime.ModelSwitcher)
-	if !ok {
+	modelSwitcher := runtime.ModelSwitcherOf(a.runtime)
+	if modelSwitcher == nil {
 		return errors.New("model switching not supported by this runtime")
 	}
 
@@ -733,8 +733,8 @@ func (a *App) SetCurrentAgentModel(ctx context.Context, modelRef string) error {
 // AvailableModels returns the list of models available for selection.
 // Returns nil if model switching is not supported.
 func (a *App) AvailableModels(ctx context.Context) []runtime.ModelChoice {
-	modelSwitcher, ok := a.runtime.(runtime.ModelSwitcher)
-	if !ok {
+	modelSwitcher := runtime.ModelSwitcherOf(a.runtime)
+	if modelSwitcher == nil {
 		return nil
 	}
 	models := modelSwitcher.AvailableModels(ctx)
@@ -826,8 +826,7 @@ func (a *App) trackCustomModel(modelRef string) {
 
 // SupportsModelSwitching returns true if the runtime supports model switching.
 func (a *App) SupportsModelSwitching() bool {
-	_, ok := a.runtime.(runtime.ModelSwitcher)
-	return ok
+	return runtime.ModelSwitcherOf(a.runtime) != nil
 }
 
 // ShouldExitAfterFirstResponse returns true if the app is configured to exit
@@ -896,8 +895,8 @@ func (a *App) applySessionModelOverrides(ctx context.Context, sess *session.Sess
 	}
 
 	// Check if runtime supports model switching
-	modelSwitcher, ok := a.runtime.(runtime.ModelSwitcher)
-	if !ok {
+	modelSwitcher := runtime.ModelSwitcherOf(a.runtime)
+	if modelSwitcher == nil {
 		slog.DebugContext(ctx, "Runtime does not support model switching, skipping overrides")
 		return
 	}

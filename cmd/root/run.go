@@ -357,7 +357,7 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 
 		// Apply any stored model overrides from the session
 		if len(sess.AgentModelOverrides) > 0 {
-			if modelSwitcher, ok := localRt.(runtime.ModelSwitcher); ok {
+			if modelSwitcher := runtime.ModelSwitcherOf(localRt); modelSwitcher != nil {
 				for agentName, modelRef := range sess.AgentModelOverrides {
 					if err := modelSwitcher.SetAgentModel(ctx, agentName, modelRef); err != nil {
 						slog.WarnContext(ctx, "Failed to apply stored model override", "agent", agentName, "model", modelRef, "error", err)
