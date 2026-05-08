@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -261,27 +260,12 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		return err
 	}
 
-	loadResult, err := f.loadAgentFrom(ctx, agentSource)
+	var b backend = &localBackend{flags: f, agentSource: agentSource}
+	rt, sess, cleanup, err := b.CreateRuntimeAndSession(ctx)
 	if err != nil {
 		return err
 	}
-
-	rt, sess, err := f.createLocalRuntimeAndSession(ctx, loadResult)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := rt.Close(); err != nil {
-			slog.ErrorContext(ctx, "Failed to close runtime", "error", err)
-		}
-	}()
-	var initialTeamCleanupOnce sync.Once
-	initialTeamCleanup := func() {
-		initialTeamCleanupOnce.Do(func() {
-			stopToolSets(loadResult.Team)
-		})
-	}
-	defer initialTeamCleanup()
+	defer cleanup()
 
 	if f.dryRun {
 		out.Println("Dry run mode enabled. Agent initialized but will not execute.")
@@ -299,7 +283,7 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 	}
 
 	sessStore := rt.SessionStore()
-	return runTUI(ctx, rt, sess, f.createSessionSpawner(agentSource, sessStore), initialTeamCleanup, f.tuiOpts(), opts...)
+	return runTUI(ctx, rt, sess, f.createSessionSpawner(agentSource, sessStore), cleanup, f.tuiOpts(), opts...)
 }
 
 func (f *runExecFlags) loadAgentFrom(ctx context.Context, agentSource config.Source) (*teamloader.LoadResult, error) {
