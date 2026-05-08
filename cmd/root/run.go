@@ -61,6 +61,7 @@ type runExecFlags struct {
 	// Run only
 	hideToolResults bool
 	lean            bool
+	listenAddr      string
 
 	// globalPermissions holds the user-level global permission checker built
 	// from user config settings. Nil when no global permissions are configured.
@@ -113,6 +114,8 @@ func addRunOrExecFlags(cmd *cobra.Command, flags *runExecFlags) {
 	cmd.PersistentFlags().Lookup("record").NoOptDefVal = "true"
 	cmd.PersistentFlags().BoolVar(&flags.exitAfterResponse, "exit-after-response", false, "Exit TUI after first assistant response completes")
 	_ = cmd.PersistentFlags().MarkHidden("exit-after-response")
+	cmd.PersistentFlags().StringVar(&flags.listenAddr, "listen", "", "Expose this run's control plane on the given address (e.g. 127.0.0.1:0)")
+	_ = cmd.PersistentFlags().MarkHidden("listen")
 	cmd.PersistentFlags().StringVar(&flags.cpuProfile, "cpuprofile", "", "Write CPU profile to file")
 	_ = cmd.PersistentFlags().MarkHidden("cpuprofile")
 	cmd.PersistentFlags().StringVar(&flags.memProfile, "memprofile", "", "Write memory profile to file")
@@ -280,6 +283,10 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 
 	if !useTUI {
 		return f.handleExecMode(ctx, out, rt, sess, args)
+	}
+
+	if err := f.startAttachedServer(ctx, out, rt, sess); err != nil {
+		return err
 	}
 
 	applyTheme()
