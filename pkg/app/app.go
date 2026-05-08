@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +45,10 @@ type App struct {
 	exitAfterFirstResponse bool                    // Exit TUI after first assistant response completes
 	titleGenerating        atomic.Bool             // True when title generation is in progress
 	titleGen               *sessiontitle.Generator // Title generator for local runtime (nil for remote)
+
+	subsMu     sync.Mutex
+	subs       []chan tea.Msg
+	fanoutOnce sync.Once
 }
 
 // Opt is an option for creating a new App.
@@ -542,22 +547,60 @@ func (a *App) RunBangCommand(ctx context.Context, command string) {
 }
 
 // SubscribeWith subscribes to app events using a custom send function.
-// This allows callers to wrap or transform messages before sending them
-// to the Bubble Tea program (e.g. to tag events with a session ID for routing).
+// Multiple concurrent subscribers are supported: a single fan-out goroutine
+// drains the throttled event stream and dispatches a copy to each one.
+// Slow subscribers drop events rather than block the bus.
 func (a *App) SubscribeWith(ctx context.Context, send func(tea.Msg)) {
-	throttledChan := a.throttleEvents(ctx, a.events)
+	ch := make(chan tea.Msg, subscriberBufferSize)
+	a.addSubscriber(ch)
+	defer a.removeSubscriber(ch)
+
+	a.fanoutOnce.Do(a.startFanOut)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-throttledChan:
-			if !ok {
-				return
-			}
-
+		case msg := <-ch:
 			send(msg)
 		}
 	}
+}
+
+const subscriberBufferSize = 1024
+
+func (a *App) addSubscriber(ch chan tea.Msg) {
+	a.subsMu.Lock()
+	defer a.subsMu.Unlock()
+	a.subs = append(a.subs, ch)
+}
+
+func (a *App) removeSubscriber(ch chan tea.Msg) {
+	a.subsMu.Lock()
+	defer a.subsMu.Unlock()
+	a.subs = slices.DeleteFunc(a.subs, func(c chan tea.Msg) bool { return c == ch })
+}
+
+// startFanOut runs once per App. It throttles the raw events channel and
+// scatters every message to all currently-registered subscribers. Sends are
+// non-blocking; if a subscriber's buffer is full the event is dropped for
+// that subscriber so one slow consumer cannot stall the others.
+func (a *App) startFanOut() {
+	throttled := a.throttleEvents(context.Background(), a.events)
+	go func() {
+		for msg := range throttled {
+			a.subsMu.Lock()
+			subs := slices.Clone(a.subs)
+			a.subsMu.Unlock()
+			for _, ch := range subs {
+				select {
+				case ch <- msg:
+				default:
+					slog.Warn("app: subscriber buffer full, dropping event")
+				}
+			}
+		}
+	}()
 }
 
 // Resume resumes the runtime with the given confirmation request
