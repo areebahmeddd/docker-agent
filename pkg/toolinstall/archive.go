@@ -26,6 +26,23 @@ var templateFuncs = template.FuncMap{
 	"trimV": func(s string) string { return strings.TrimPrefix(s, "v") },
 }
 
+// Conservative bounds preventing zip-bomb / tar-bomb attacks from
+// adversaries that control a GitHub release referenced by a tool
+// resolver. The limits are deliberately generous for legitimate CLI
+// releases, which typically weigh single-digit MB compressed. They
+// are vars rather than consts so tests can lower them.
+var (
+	maxArchiveCompressed   int64 = 1 << 30   // 1 GiB
+	maxArchiveUncompressed int64 = 2 << 30   // 2 GiB
+	maxFileUncompressed    int64 = 500 << 20 // 500 MiB
+	maxArchiveEntries            = 100_000
+)
+
+// errExtractTooLarge is returned when an archive (or a single entry
+// within it) exceeds the configured extraction size or entry-count
+// limit. It is the sentinel for zip-bomb / tar-bomb defenses.
+var errExtractTooLarge = errors.New("archive exceeds extraction size limit")
+
 // renderTemplate renders a Go template string with the given data.
 func renderTemplate(tmplStr string, data templateData) (string, error) {
 	tmpl, err := template.New("asset").Funcs(templateFuncs).Parse(tmplStr)
@@ -57,14 +74,18 @@ func extractRelease(body io.ReadCloser, destDir, format string, files []PackageF
 }
 
 // writeRawBinary writes a raw (non-archived) binary stream directly to destPath
-// with executable permissions.
+// with executable permissions. The body is bounded by maxFileUncompressed
+// to avoid an attacker-controlled release asset from filling the disk.
 func writeRawBinary(r io.Reader, destPath string) error {
 	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return fmt.Errorf("creating raw binary %s: %w", destPath, err)
 	}
 
-	_, copyErr := io.Copy(f, r) //nolint:gosec // binary size bounded by GitHub release asset limits
+	n, copyErr := io.Copy(f, io.LimitReader(r, maxFileUncompressed+1))
+	if copyErr == nil && n > maxFileUncompressed {
+		copyErr = errExtractTooLarge
+	}
 	closeErr := f.Close()
 
 	if copyErr != nil {
@@ -94,6 +115,8 @@ func extractTarGz(r io.Reader, destDir string, files []PackageFile, tmplData tem
 		return err
 	}
 
+	var totalBytes int64
+	var entries int
 	for {
 		header, err := tarReader.Next()
 		if errors.Is(err, io.EOF) {
@@ -103,6 +126,11 @@ func extractTarGz(r io.Reader, destDir string, files []PackageFile, tmplData tem
 			return fmt.Errorf("extracting tar.gz: %w", err)
 		}
 
+		entries++
+		if entries > maxArchiveEntries {
+			return errExtractTooLarge
+		}
+
 		if header.Typeflag != tar.TypeReg {
 			continue
 		}
@@ -110,6 +138,14 @@ func extractTarGz(r io.Reader, destDir string, files []PackageFile, tmplData tem
 		destName, ok := matchFile(header.Name, fileMap)
 		if !ok {
 			continue
+		}
+
+		// header.Size is attacker-controlled, but a header that
+		// already advertises a too-large size lets us fail without
+		// spending CPU on decompression. The LimitReader below
+		// guards against headers that lie.
+		if header.Size > maxFileUncompressed {
+			return errExtractTooLarge
 		}
 
 		destPath, err := safePath(destDir, destName)
@@ -125,10 +161,17 @@ func extractTarGz(r io.Reader, destDir string, files []PackageFile, tmplData tem
 			return err
 		}
 
-		_, copyErr := io.Copy(f, tarReader) //nolint:gosec // archive size bounded by GitHub release asset limits
+		n, copyErr := io.Copy(f, io.LimitReader(tarReader, maxFileUncompressed+1))
 		f.Close()
 		if copyErr != nil {
 			return copyErr
+		}
+		if n > maxFileUncompressed {
+			return errExtractTooLarge
+		}
+		totalBytes += n
+		if totalBytes > maxArchiveUncompressed {
+			return errExtractTooLarge
 		}
 	}
 
@@ -144,11 +187,16 @@ func extractZip(ra io.ReaderAt, size int64, destDir string, files []PackageFile,
 		return fmt.Errorf("extracting zip: %w", err)
 	}
 
+	if len(reader.File) > maxArchiveEntries {
+		return errExtractTooLarge
+	}
+
 	fileMap, err := buildFileMap(files, tmplData)
 	if err != nil {
 		return err
 	}
 
+	var totalBytes int64
 	for _, f := range reader.File {
 		if f.FileInfo().IsDir() {
 			continue
@@ -159,38 +207,56 @@ func extractZip(ra io.ReaderAt, size int64, destDir string, files []PackageFile,
 			continue
 		}
 
+		// UncompressedSize64 comes from the central directory and
+		// is attacker-controlled, but lets us reject obvious bombs
+		// without spending CPU on decompression first.
+		if f.UncompressedSize64 > uint64(maxFileUncompressed) {
+			return errExtractTooLarge
+		}
+
 		destPath, err := safePath(destDir, destName)
 		if err != nil {
 			return err
 		}
 
-		if err := extractZipFile(f, destPath); err != nil {
+		n, err := extractZipFile(f, destPath)
+		if err != nil {
 			return err
+		}
+		totalBytes += n
+		if totalBytes > maxArchiveUncompressed {
+			return errExtractTooLarge
 		}
 	}
 
 	return nil
 }
 
-func extractZipFile(f *zip.File, destPath string) error {
+func extractZipFile(f *zip.File, destPath string) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-		return err
+		return 0, err
 	}
 
 	rc, err := f.Open()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer rc.Close()
 
 	outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer outFile.Close()
 
-	_, err = io.Copy(outFile, rc) //nolint:gosec // archive size bounded by GitHub release asset limits
-	return err
+	n, err := io.Copy(outFile, io.LimitReader(rc, maxFileUncompressed+1))
+	if err != nil {
+		return n, err
+	}
+	if n > maxFileUncompressed {
+		return n, errExtractTooLarge
+	}
+	return n, nil
 }
 
 // extractZipFromStream spools an io.Reader to a temporary file and then
@@ -204,9 +270,12 @@ func extractZipFromStream(r io.Reader, destDir string, files []PackageFile, tmpl
 	defer os.Remove(tmpFile.Name())
 	defer tmpFile.Close()
 
-	size, err := io.Copy(tmpFile, r) //nolint:gosec // archive size bounded by GitHub release asset limits
+	size, err := io.Copy(tmpFile, io.LimitReader(r, maxArchiveCompressed+1))
 	if err != nil {
 		return fmt.Errorf("spooling zip to temp file: %w", err)
+	}
+	if size > maxArchiveCompressed {
+		return errExtractTooLarge
 	}
 
 	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {

@@ -266,3 +266,64 @@ func TestExtractZip_PathTraversal(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errPathTraversal)
 }
+
+// withFileLimit lowers the per-file extraction cap for the duration of
+// a test, restoring it on cleanup.
+func withFileLimit(t *testing.T, n int64) {
+	t.Helper()
+	prev := maxFileUncompressed
+	maxFileUncompressed = n
+	t.Cleanup(func() { maxFileUncompressed = prev })
+}
+
+func TestExtractTarGz_TooLarge(t *testing.T) {
+	withFileLimit(t, 32)
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	// Header advertises a small size but the body is larger; the
+	// LimitReader-based check must catch the overflow regardless.
+	content := bytes.Repeat([]byte("A"), 1024)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "tool/bin/mytool",
+		Mode: 0o755,
+		Size: int64(len(content)),
+	}))
+	_, err := tw.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+	require.NoError(t, gw.Close())
+
+	files := []PackageFile{{Name: "mytool", Src: "tool/bin/mytool"}}
+	err = extractTarGz(&buf, t.TempDir(), files, templateData{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errExtractTooLarge)
+}
+
+func TestExtractZip_TooLarge(t *testing.T) {
+	withFileLimit(t, 32)
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	fw, err := zw.Create("tool/bin/mytool")
+	require.NoError(t, err)
+	_, err = fw.Write(bytes.Repeat([]byte("A"), 1024))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+
+	files := []PackageFile{{Name: "mytool", Src: "tool/bin/mytool"}}
+	err = extractZip(bytes.NewReader(buf.Bytes()), int64(buf.Len()), t.TempDir(), files, templateData{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errExtractTooLarge)
+}
+
+func TestWriteRawBinary_TooLarge(t *testing.T) {
+	withFileLimit(t, 32)
+
+	dest := filepath.Join(t.TempDir(), "big")
+	err := writeRawBinary(strings.NewReader(strings.Repeat("A", 1024)), dest)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errExtractTooLarge)
+}
