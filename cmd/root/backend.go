@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/docker/docker-agent/pkg/config"
@@ -40,12 +41,13 @@ type localBackend struct {
 }
 
 func (b *localBackend) CreateRuntimeAndSession(ctx context.Context) (runtime.Runtime, *session.Session, func(), error) {
-	loadResult, err := b.flags.loadAgentFrom(ctx, b.agentSource)
+	loadResult, err := b.flags.loadAgentFrom(ctx, b.flags.loadTeamRequest(b.agentSource))
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	rt, sess, err := b.flags.createLocalRuntimeAndSession(ctx, loadResult)
+	wd, _ := os.Getwd()
+	rt, sess, err := b.flags.createLocalRuntimeAndSession(ctx, loadResult, b.flags.createSessionRequest(wd))
 	if err != nil {
 		stopToolSets(loadResult.Team)
 		return nil, nil, nil, err

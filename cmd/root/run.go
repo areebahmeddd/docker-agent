@@ -270,19 +270,14 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 	return runTUI(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(), opts...)
 }
 
-func (f *runExecFlags) loadAgentFrom(ctx context.Context, agentSource config.Source) (*teamloader.LoadResult, error) {
-	return teamloader.LoadWithConfig(ctx, agentSource, &f.runConfig, f.teamOpts()...)
-}
-
-// teamOpts returns the team-loader options derived from the current flags.
-func (f *runExecFlags) teamOpts() []teamloader.Opt {
+func (f *runExecFlags) loadAgentFrom(ctx context.Context, req LoadTeamRequest) (*teamloader.LoadResult, error) {
 	opts := []teamloader.Opt{
-		teamloader.WithModelOverrides(f.modelOverrides),
+		teamloader.WithModelOverrides(req.ModelOverrides),
 	}
-	if len(f.promptFiles) > 0 {
-		opts = append(opts, teamloader.WithPromptFiles(f.promptFiles))
+	if len(req.PromptFiles) > 0 {
+		opts = append(opts, teamloader.WithPromptFiles(req.PromptFiles))
 	}
-	return opts
+	return teamloader.LoadWithConfig(ctx, req.Source, req.RunConfig, opts...)
 }
 
 // runtimeOpts returns the runtime options derived from the current flags,
@@ -309,22 +304,22 @@ func (f *runExecFlags) runtimeOpts(loadResult *teamloader.LoadResult, runConfig 
 	return opts
 }
 
-func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult) (runtime.Runtime, *session.Session, error) {
+func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req CreateSessionRequest) (runtime.Runtime, *session.Session, error) {
 	t := loadResult.Team
 
 	// Merge user-level global permissions into the team's checker so the
 	// runtime receives a single, already-merged permission set.
-	if f.globalPermissions != nil && !f.globalPermissions.IsEmpty() {
-		t.SetPermissions(permissions.Merge(t.Permissions(), f.globalPermissions))
+	if req.GlobalPermissions != nil && !req.GlobalPermissions.IsEmpty() {
+		t.SetPermissions(permissions.Merge(t.Permissions(), req.GlobalPermissions))
 	}
 
-	agt, err := t.AgentOrDefault(f.agentName)
+	agt, err := t.AgentOrDefault(req.AgentName)
 	if err != nil {
 		return nil, nil, err
 	}
 	agentName := agt.Name()
 
-	sessionDB, err := pathx.ExpandHomeDir(f.sessionDB)
+	sessionDB, err := pathx.ExpandHomeDir(req.SessionDB)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -340,11 +335,11 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 	}
 
 	var sess *session.Session
-	if f.sessionID != "" {
+	if req.ResumeSessionID != "" {
 		// Resolve relative session references (e.g., "-1" for last session)
-		resolvedID, err := session.ResolveSessionID(ctx, sessStore, f.sessionID)
+		resolvedID, err := session.ResolveSessionID(ctx, sessStore, req.ResumeSessionID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolving session %q: %w", f.sessionID, err)
+			return nil, nil, fmt.Errorf("resolving session %q: %w", req.ResumeSessionID, err)
 		}
 
 		// Load existing session
@@ -352,8 +347,8 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		if err != nil {
 			return nil, nil, fmt.Errorf("loading session %q: %w", resolvedID, err)
 		}
-		sess.ToolsApproved = f.autoApprove
-		sess.HideToolResults = f.hideToolResults
+		sess.ToolsApproved = req.ToolsApproved
+		sess.HideToolResults = req.HideToolResults
 
 		// Apply any stored model overrides from the session
 		if len(sess.AgentModelOverrides) > 0 {
@@ -366,10 +361,9 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 			}
 		}
 
-		slog.DebugContext(ctx, "Loaded existing session", "session_id", resolvedID, "session_ref", f.sessionID, "agent", agentName)
+		slog.DebugContext(ctx, "Loaded existing session", "session_id", resolvedID, "session_ref", req.ResumeSessionID, "agent", agentName)
 	} else {
-		wd, _ := os.Getwd()
-		sess = session.New(f.buildSessionOpts(agt, wd)...)
+		sess = session.New(f.buildSessionOpts(agt, req)...)
 		// Session is stored lazily on first UpdateSession call (when content is added)
 		// This avoids creating empty sessions in the database
 		slog.DebugContext(ctx, "Using local runtime", "agent", agentName)
@@ -454,14 +448,14 @@ func (f *runExecFlags) buildAppOpts(args []string) ([]app.Opt, error) {
 // buildSessionOpts returns the canonical set of session options derived from
 // CLI flags and agent configuration. Both the initial session and spawned
 // sessions use this method so their options never drift apart.
-func (f *runExecFlags) buildSessionOpts(agt *agent.Agent, workingDir string) []session.Opt {
+func (f *runExecFlags) buildSessionOpts(agt *agent.Agent, req CreateSessionRequest) []session.Opt {
 	return []session.Opt{
 		session.WithMaxIterations(agt.MaxIterations()),
 		session.WithMaxConsecutiveToolCalls(agt.MaxConsecutiveToolCalls()),
 		session.WithMaxOldToolCallTokens(agt.MaxOldToolCallTokens()),
-		session.WithToolsApproved(f.autoApprove),
-		session.WithHideToolResults(f.hideToolResults),
-		session.WithWorkingDir(workingDir),
+		session.WithToolsApproved(req.ToolsApproved),
+		session.WithHideToolResults(req.HideToolResults),
+		session.WithWorkingDir(req.WorkingDir),
 	}
 }
 
@@ -495,7 +489,10 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 		}
 
 		// Create a new session
-		newSess := session.New(f.buildSessionOpts(agt, workingDir)...)
+		wd := workingDir
+		spawnReq := f.createSessionRequest(wd)
+		spawnReq.AgentName = agt.Name()
+		newSess := session.New(f.buildSessionOpts(agt, spawnReq)...)
 
 		// Create cleanup function
 		cleanup := func() {
