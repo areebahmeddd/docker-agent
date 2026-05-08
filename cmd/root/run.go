@@ -244,6 +244,10 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 
 	// Remote runtime
 	if f.remoteAddress != "" {
+		if f.dryRun {
+			out.Println("Dry run mode enabled. Agent initialized but will not execute.")
+			return nil
+		}
 		rt, sess, err := f.createRemoteRuntimeAndSession(ctx, agentFileName)
 		if err != nil {
 			return err
@@ -462,11 +466,6 @@ func readInitialMessage(args []string) (*string, error) {
 func (f *runExecFlags) launchTUI(ctx context.Context, out *cli.Printer, rt runtime.Runtime, sess *session.Session, args []string, useTUI bool) error {
 	if useTUI {
 		applyTheme()
-	}
-
-	if f.dryRun {
-		out.Println("Dry run mode enabled. Agent initialized but will not execute.")
-		return nil
 	}
 
 	if !useTUI {
