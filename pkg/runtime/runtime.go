@@ -107,6 +107,11 @@ type Runtime interface {
 	// gets a full undivided agent turn. Returns an error if the queue is full.
 	FollowUp(msg QueuedMessage) error
 
+	// TogglePause toggles whether the run loop is paused at iteration
+	// boundaries. Returns the new state (true if now paused). Returns
+	// [ErrUnsupported] for runtimes that don't expose pause control.
+	TogglePause(ctx context.Context) (paused bool, err error)
+
 	// Close releases resources held by the runtime (e.g., session store connections).
 	Close() error
 }

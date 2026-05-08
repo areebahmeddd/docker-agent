@@ -570,11 +570,15 @@ func (a *App) Resume(req runtime.ResumeRequest) {
 // doesn't support pausing (e.g. remote runtimes), in which case the first
 // return value is meaningless.
 func (a *App) TogglePause() (paused, supported bool) {
-	p := runtime.PauserOf(a.runtime)
-	if p == nil {
+	p, err := a.runtime.TogglePause(context.Background())
+	if errors.Is(err, runtime.ErrUnsupported) {
 		return false, false
 	}
-	return p.TogglePause(), true
+	if err != nil {
+		slog.Error("Failed to toggle pause", "error", err)
+		return false, false
+	}
+	return p, true
 }
 
 // ResumeElicitation resumes an elicitation request with the given action and content

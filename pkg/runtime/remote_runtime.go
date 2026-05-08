@@ -532,6 +532,11 @@ func (r *RemoteRuntime) TitleGenerator() *sessiontitle.Generator {
 	return nil
 }
 
+// TogglePause is not yet supported on remote runtimes.
+func (r *RemoteRuntime) TogglePause(context.Context) (bool, error) {
+	return false, fmt.Errorf("pause: %w", ErrUnsupported)
+}
+
 // Close is a no-op for remote runtimes.
 func (r *RemoteRuntime) Close() error {
 	return nil
