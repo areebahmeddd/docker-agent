@@ -38,6 +38,7 @@ import (
 	"github.com/openai/openai-go/v3"
 
 	"github.com/docker/docker-agent/pkg/config"
+	"github.com/docker/docker-agent/pkg/echolog"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
@@ -202,7 +203,7 @@ func newRouter(s *server, opts Options) http.Handler {
 		timeout = defaultRequestTimeout
 	}
 
-	e.Use(middleware.RequestLogger())
+	e.Use(echolog.RedactedRequestLogger())
 	e.Use(middleware.BodyLimit(strconv.FormatInt(maxBytes, 10)))
 	e.Use(requestTimeoutMiddleware(timeout))
 
