@@ -66,6 +66,18 @@ func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore
 	return sm
 }
 
+// AttachRuntime registers a pre-built runtime + session under sessionID so
+// that subsequent calls (RunSession, Steer, Resume...) reuse it instead of
+// building one from agentFilename. This is what lets a single in-process
+// runtime be shared between the TUI and an HTTP control plane.
+func (sm *SessionManager) AttachRuntime(sessionID string, rt runtime.Runtime, sess *session.Session) {
+	sm.runtimeSessions.Store(sessionID, &activeRuntimes{
+		runtime: rt,
+		cancel:  func() {},
+		session: sess,
+	})
+}
+
 // GetSession retrieves a session by ID.
 func (sm *SessionManager) GetSession(ctx context.Context, id string) (*session.Session, error) {
 	sess, err := sm.sessionStore.GetSession(ctx, id)
