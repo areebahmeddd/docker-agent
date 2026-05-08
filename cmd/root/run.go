@@ -303,13 +303,42 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 }
 
 func (f *runExecFlags) loadAgentFrom(ctx context.Context, agentSource config.Source) (*teamloader.LoadResult, error) {
+	return teamloader.LoadWithConfig(ctx, agentSource, &f.runConfig, f.teamOpts()...)
+}
+
+// teamOpts returns the team-loader options derived from the current flags.
+func (f *runExecFlags) teamOpts() []teamloader.Opt {
 	opts := []teamloader.Opt{
 		teamloader.WithModelOverrides(f.modelOverrides),
 	}
 	if len(f.promptFiles) > 0 {
 		opts = append(opts, teamloader.WithPromptFiles(f.promptFiles))
 	}
-	return teamloader.LoadWithConfig(ctx, agentSource, &f.runConfig, opts...)
+	return opts
+}
+
+// runtimeOpts returns the runtime options derived from the current flags,
+// the loaded team and the runtime configuration. The session store and the
+// current agent name are passed in because they're resolved by callers from
+// different sources (e.g. the spawner uses the same store as the parent).
+func (f *runExecFlags) runtimeOpts(loadResult *teamloader.LoadResult, runConfig *config.RuntimeConfig, sessStore session.Store, agentName string) []runtime.Opt {
+	modelSwitcherCfg := &runtime.ModelSwitcherConfig{
+		Models:             loadResult.Models,
+		Providers:          loadResult.Providers,
+		ModelsGateway:      runConfig.ModelsGateway,
+		EnvProvider:        runConfig.EnvProvider(),
+		AgentDefaultModels: loadResult.AgentDefaultModels,
+	}
+	opts := []runtime.Opt{
+		runtime.WithSessionStore(sessStore),
+		runtime.WithCurrentAgent(agentName),
+		runtime.WithTracer(otel.Tracer(AppName)),
+		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
+	}
+	if f.snapshotsEnabled {
+		opts = append(opts, runtime.WithSnapshots(true))
+	}
+	return opts
 }
 
 func (f *runExecFlags) createRemoteRuntimeAndSession(ctx context.Context, originalFilename string) (runtime.Runtime, *session.Session, error) {
@@ -364,25 +393,7 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		return nil, nil, fmt.Errorf("creating session store: %w", err)
 	}
 
-	// Create model switcher config for runtime model switching support
-	modelSwitcherCfg := &runtime.ModelSwitcherConfig{
-		Models:             loadResult.Models,
-		Providers:          loadResult.Providers,
-		ModelsGateway:      f.runConfig.ModelsGateway,
-		EnvProvider:        f.runConfig.EnvProvider(),
-		AgentDefaultModels: loadResult.AgentDefaultModels,
-	}
-
-	runtimeOpts := []runtime.Opt{
-		runtime.WithSessionStore(sessStore),
-		runtime.WithCurrentAgent(agentName),
-		runtime.WithTracer(otel.Tracer(AppName)),
-		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
-	}
-	if f.snapshotsEnabled {
-		runtimeOpts = append(runtimeOpts, runtime.WithSnapshots(true))
-	}
-	localRt, err := runtime.New(t, runtimeOpts...)
+	localRt, err := runtime.New(t, f.runtimeOpts(loadResult, &f.runConfig, sessStore, agentName)...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating runtime: %w", err)
 	}
@@ -549,31 +560,12 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 			return nil, nil, nil, err
 		}
 
-		// Create model switcher config
-		modelSwitcherCfg := &runtime.ModelSwitcherConfig{
-			Models:             loadResult.Models,
-			Providers:          loadResult.Providers,
-			ModelsGateway:      runConfigCopy.ModelsGateway,
-			EnvProvider:        runConfigCopy.EnvProvider(),
-			AgentDefaultModels: loadResult.AgentDefaultModels,
-		}
-
 		// Merge global permissions into the team's checker
 		if f.globalPermissions != nil && !f.globalPermissions.IsEmpty() {
 			t.SetPermissions(permissions.Merge(t.Permissions(), f.globalPermissions))
 		}
 
-		// Create the local runtime
-		runtimeOpts := []runtime.Opt{
-			runtime.WithSessionStore(sessStore),
-			runtime.WithCurrentAgent(agt.Name()),
-			runtime.WithTracer(otel.Tracer(AppName)),
-			runtime.WithModelSwitcherConfig(modelSwitcherCfg),
-		}
-		if f.snapshotsEnabled {
-			runtimeOpts = append(runtimeOpts, runtime.WithSnapshots(true))
-		}
-		localRt, err := runtime.New(t, runtimeOpts...)
+		localRt, err := runtime.New(t, f.runtimeOpts(loadResult, runConfigCopy, sessStore, agt.Name())...)
 		if err != nil {
 			return nil, nil, nil, err
 		}
