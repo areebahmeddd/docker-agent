@@ -125,6 +125,11 @@ func addRunOrExecFlags(cmd *cobra.Command, flags *runExecFlags) {
 	cmd.PersistentFlags().StringVar(&flags.sandboxTemplate, "template", "docker/sandbox-templates:docker-agent", "Template image for the sandbox (passed to docker sandbox create -t)")
 	cmd.PersistentFlags().BoolVar(&flags.sbx, "sbx", true, "Prefer the sbx CLI backend when available (set --sbx=false to force docker sandbox)")
 	cmd.MarkFlagsMutuallyExclusive("fake", "record")
+	cmd.MarkFlagsMutuallyExclusive("remote", "sandbox")
+	cmd.MarkFlagsMutuallyExclusive("remote", "session-db")
+	cmd.MarkFlagsMutuallyExclusive("remote", "session")
+	cmd.MarkFlagsMutuallyExclusive("remote", "record")
+	cmd.MarkFlagsMutuallyExclusive("remote", "fake")
 
 	// --exec only
 	cmd.PersistentFlags().BoolVar(&flags.exec, "exec", false, "Execute without a TUI")
