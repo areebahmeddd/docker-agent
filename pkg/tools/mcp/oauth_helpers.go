@@ -17,7 +17,21 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/docker/docker-agent/pkg/browser"
+	"github.com/docker/docker-agent/pkg/httpclient"
 )
+
+// oauthHTTPClient is the *http.Client used for outbound OAuth requests
+// (token exchange, refresh, dynamic client registration). The endpoint
+// URLs come from MCP server metadata, i.e. effectively the remote
+// server's choice — so a hostile MCP server could otherwise redirect us
+// at, or hold a connection open to, an internal address. The dialer
+// rejects non-public IPs (defeating SSRF and DNS rebinding to loopback /
+// link-local / RFC1918 / cloud metadata), and the wall-clock timeout
+// puts an upper bound on a slow-loris token endpoint.
+//
+// Tests in this package replace the var via TestMain (see main_test.go)
+// because httptest.NewServer binds to 127.0.0.1.
+var oauthHTTPClient = httpclient.NewSafeClient(30*time.Second, false)
 
 // GenerateState generates a random state parameter for OAuth CSRF protection
 func GenerateState() (string, error) {
@@ -63,7 +77,7 @@ func ExchangeCodeForToken(ctx context.Context, tokenEndpoint, code, codeVerifier
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
 	}
@@ -233,7 +247,7 @@ func RegisterClient(ctx context.Context, authMetadata *AuthorizationServerMetada
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to register client: %w", err)
 	}
@@ -281,7 +295,7 @@ func RefreshAccessToken(ctx context.Context, tokenEndpoint, refreshToken, client
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
