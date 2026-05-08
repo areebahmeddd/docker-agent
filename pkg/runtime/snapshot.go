@@ -28,7 +28,7 @@ func (r *LocalRuntime) UndoLastSnapshot(ctx context.Context, sess *session.Sessi
 	if cwd == "" {
 		return 0, false, nil
 	}
-	return r.builtinsState.UndoLastSnapshot(ctx, sess.ID, cwd)
+	return r.snapshots.UndoLast(ctx, sess.ID, cwd)
 }
 
 // ListSnapshots returns the completed snapshot checkpoints recorded for the
@@ -37,7 +37,7 @@ func (r *LocalRuntime) ListSnapshots(sess *session.Session) []builtins.SnapshotI
 	if r == nil || sess == nil {
 		return nil
 	}
-	return r.builtinsState.ListSnapshots(sess.ID)
+	return r.snapshots.List(sess.ID)
 }
 
 // ResetSnapshot reverts every checkpoint past index keep so the workspace
@@ -48,7 +48,7 @@ func (r *LocalRuntime) ResetSnapshot(ctx context.Context, sess *session.Session,
 	if cwd == "" {
 		return 0, false, nil
 	}
-	return r.builtinsState.ResetSnapshot(ctx, sess.ID, cwd, keep)
+	return r.snapshots.Reset(ctx, sess.ID, cwd, keep)
 }
 
 // snapshotCwd resolves the working directory used to open the shadow

@@ -19,7 +19,12 @@ type SnapshotInfo struct {
 	Files int
 }
 
-type snapshotBuiltin struct {
+// Snapshots tracks per-session shadow-git checkpoints. The same
+// instance is dispatched as the snapshot builtin (registered under
+// [Snapshot] via [Hook]) and exposed to the runtime for /undo,
+// /list-snapshots and /reset (via [UndoLast] / [List] / [Reset]).
+// Construct with [NewSnapshots]; the zero value is not usable.
+type Snapshots struct {
 	manager *snapshot.Manager
 	mu      sync.Mutex
 	session map[string]*snapshotSession
@@ -36,14 +41,21 @@ type snapshotCheckpoint struct {
 	files []string
 }
 
-func newSnapshotBuiltin() *snapshotBuiltin {
-	return &snapshotBuiltin{
+// NewSnapshots returns a fresh snapshot tracker. Held by the runtime
+// for /undo, /list-snapshots and /reset; the same instance backs the
+// snapshot hook registered under [Snapshot].
+func NewSnapshots() *Snapshots {
+	return &Snapshots{
 		manager: snapshot.NewManager(""),
 		session: map[string]*snapshotSession{},
 	}
 }
 
-func (b *snapshotBuiltin) hook(ctx context.Context, in *hooks.Input, _ []string) (*hooks.Output, error) {
+// Hook is the [hooks.BuiltinFunc] dispatched on every snapshot event.
+// It tracks per-session turn/tool hashes, captures patches at
+// turn_end / post_tool_use, and runs the shadow-repo cleanup at
+// session_end.
+func (b *Snapshots) Hook(ctx context.Context, in *hooks.Input, _ []string) (*hooks.Output, error) {
 	if in == nil || in.Cwd == "" || in.SessionID == "" {
 		return nil, nil
 	}
@@ -116,7 +128,7 @@ func (b *snapshotBuiltin) hook(ctx context.Context, in *hooks.Input, _ []string)
 	return nil, nil
 }
 
-func (b *snapshotBuiltin) getSession(sessionID string) *snapshotSession {
+func (b *Snapshots) getSession(sessionID string) *snapshotSession {
 	s := b.session[sessionID]
 	if s == nil {
 		s = &snapshotSession{tools: map[string]string{}}
@@ -125,13 +137,13 @@ func (b *snapshotBuiltin) getSession(sessionID string) *snapshotSession {
 	return s
 }
 
-func (b *snapshotBuiltin) setTurn(sessionID, hash string) {
+func (b *Snapshots) setTurn(sessionID, hash string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.getSession(sessionID).turn = hash
 }
 
-func (b *snapshotBuiltin) popTurn(sessionID string) string {
+func (b *Snapshots) popTurn(sessionID string) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s := b.session[sessionID]
@@ -143,7 +155,7 @@ func (b *snapshotBuiltin) popTurn(sessionID string) string {
 	return hash
 }
 
-func (b *snapshotBuiltin) setTool(sessionID, toolUseID, hash string) {
+func (b *Snapshots) setTool(sessionID, toolUseID, hash string) {
 	if toolUseID == "" {
 		return
 	}
@@ -152,7 +164,7 @@ func (b *snapshotBuiltin) setTool(sessionID, toolUseID, hash string) {
 	b.getSession(sessionID).tools[toolUseID] = hash
 }
 
-func (b *snapshotBuiltin) popTool(sessionID, toolUseID string) string {
+func (b *Snapshots) popTool(sessionID, toolUseID string) string {
 	if toolUseID == "" {
 		return ""
 	}
@@ -167,7 +179,7 @@ func (b *snapshotBuiltin) popTool(sessionID, toolUseID string) string {
 	return hash
 }
 
-func (b *snapshotBuiltin) pushCheckpoint(sessionID string, checkpoint snapshotCheckpoint) {
+func (b *Snapshots) pushCheckpoint(sessionID string, checkpoint snapshotCheckpoint) {
 	if len(checkpoint.files) == 0 {
 		return
 	}
@@ -177,7 +189,7 @@ func (b *snapshotBuiltin) pushCheckpoint(sessionID string, checkpoint snapshotCh
 	s.history = append(s.history, checkpoint)
 }
 
-func (b *snapshotBuiltin) popCheckpoint(sessionID string) (snapshotCheckpoint, bool) {
+func (b *Snapshots) popCheckpoint(sessionID string) (snapshotCheckpoint, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s := b.session[sessionID]
@@ -191,7 +203,10 @@ func (b *snapshotBuiltin) popCheckpoint(sessionID string) (snapshotCheckpoint, b
 	return checkpoint, true
 }
 
-func (b *snapshotBuiltin) undoLast(ctx context.Context, sessionID, cwd string) (files int, ok bool, err error) {
+// UndoLast restores the files captured by the most recent checkpoint.
+// Returns (filesRestored, true, nil) on success, (0, false, nil) when
+// there is nothing to undo.
+func (b *Snapshots) UndoLast(ctx context.Context, sessionID, cwd string) (files int, ok bool, err error) {
 	checkpoint, ok := b.popCheckpoint(sessionID)
 	if !ok {
 		return 0, false, nil
@@ -210,9 +225,9 @@ func (b *snapshotBuiltin) undoLast(ctx context.Context, sessionID, cwd string) (
 	return len(checkpoint.files), true, nil
 }
 
-// listSnapshots returns the completed checkpoints for a session in chronological
+// List returns the completed checkpoints for a session in chronological
 // order (oldest first). The returned slice may be empty.
-func (b *snapshotBuiltin) listSnapshots(sessionID string) []SnapshotInfo {
+func (b *Snapshots) List(sessionID string) []SnapshotInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s := b.session[sessionID]
@@ -226,11 +241,12 @@ func (b *snapshotBuiltin) listSnapshots(sessionID string) []SnapshotInfo {
 	return out
 }
 
-// resetSnapshot reverts every checkpoint with index >= keep so the workspace
-// returns to the state captured at snapshot keep. keep == 0 means "reset to
-// the original state". A keep value greater than or equal to the snapshot
-// count is a no-op. Reverted checkpoints are dropped from the session history.
-func (b *snapshotBuiltin) resetSnapshot(ctx context.Context, sessionID, cwd string, keep int) (files int, ok bool, err error) {
+// Reset reverts every checkpoint with index >= keep so the workspace
+// returns to the state captured at snapshot keep. keep == 0 means
+// "reset to the original state". A keep value greater than or equal
+// to the snapshot count is a no-op. Reverted checkpoints are dropped
+// from the session history.
+func (b *Snapshots) Reset(ctx context.Context, sessionID, cwd string, keep int) (files int, ok bool, err error) {
 	tail := b.popHistoryTail(sessionID, keep)
 	if len(tail) == 0 {
 		return 0, false, nil
@@ -257,7 +273,7 @@ func (b *snapshotBuiltin) resetSnapshot(ctx context.Context, sessionID, cwd stri
 // the surviving prefix in the session history. keep is clamped to [0, len].
 // The popped slots in the backing array are zeroed so the dropped file lists
 // can be garbage-collected before the slice grows past them again.
-func (b *snapshotBuiltin) popHistoryTail(sessionID string, keep int) []snapshotCheckpoint {
+func (b *Snapshots) popHistoryTail(sessionID string, keep int) []snapshotCheckpoint {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s := b.session[sessionID]

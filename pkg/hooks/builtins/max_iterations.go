@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"sync"
 
 	"github.com/docker/docker-agent/pkg/hooks"
 )
@@ -13,9 +12,8 @@ import (
 // MaxIterations is the registered name of the max_iterations builtin.
 const MaxIterations = "max_iterations"
 
-// maxIterationsBuiltin counts before_llm_call invocations per session
-// and signals a terminating verdict once the configured limit is
-// exceeded.
+// maxIterations signals a terminating verdict once the runtime has
+// dispatched more before_llm_call events than the configured budget.
 //
 // This is a hard stop with no resume protocol — distinct from the
 // agent.MaxIterations flag, which has its own special UX
@@ -25,19 +23,10 @@ const MaxIterations = "max_iterations"
 //
 // Args layout: `[limit]`. Missing or invalid args make the hook a
 // no-op so a misconfigured YAML doesn't accidentally cap a run at
-// zero. State is per-session, keyed by [hooks.Input.SessionID], and
-// cleared from session_end via [State.ClearSession].
-type maxIterationsBuiltin struct {
-	mu     sync.Mutex
-	counts map[string]int // SessionID -> calls observed
-}
-
-func newMaxIterations() *maxIterationsBuiltin {
-	return &maxIterationsBuiltin{counts: map[string]int{}}
-}
-
-func (b *maxIterationsBuiltin) hook(_ context.Context, in *hooks.Input, args []string) (*hooks.Output, error) {
-	if in == nil || in.SessionID == "" || len(args) == 0 {
+// zero. Stateless: the runtime supplies the 1-based iteration counter
+// via [hooks.Input.Iteration].
+func maxIterations(_ context.Context, in *hooks.Input, args []string) (*hooks.Output, error) {
+	if in == nil || in.Iteration <= 0 || len(args) == 0 {
 		return nil, nil
 	}
 	limit, err := strconv.Atoi(args[0])
@@ -46,17 +35,12 @@ func (b *maxIterationsBuiltin) hook(_ context.Context, in *hooks.Input, args []s
 		return nil, nil
 	}
 
-	b.mu.Lock()
-	b.counts[in.SessionID]++
-	count := b.counts[in.SessionID]
-	b.mu.Unlock()
-
-	if count <= limit {
+	if in.Iteration <= limit {
 		return nil, nil
 	}
 
 	slog.Warn("max_iterations tripped",
-		"count", count, "limit", limit, "session_id", in.SessionID)
+		"iteration", in.Iteration, "limit", limit, "session_id", in.SessionID)
 
 	return &hooks.Output{
 		Decision: hooks.DecisionBlockValue,
@@ -64,10 +48,4 @@ func (b *maxIterationsBuiltin) hook(_ context.Context, in *hooks.Input, args []s
 			"Agent terminated: max_iterations builtin reached its limit of %d model call(s).",
 			limit),
 	}, nil
-}
-
-func (b *maxIterationsBuiltin) clearSession(sessionID string) {
-	b.mu.Lock()
-	delete(b.counts, sessionID)
-	b.mu.Unlock()
 }

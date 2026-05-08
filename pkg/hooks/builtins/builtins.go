@@ -36,13 +36,11 @@
 //
 // turn_start builtins recompute every turn (date, git state).
 // session_start builtins run once per session for context that's
-// stable for its duration. max_iterations is stateful: its
-// per-session counter lives on the [State] returned by [Register];
-// the runtime clears it via [State.ClearSession] from session_end.
-// snapshot is also stateful: it keeps per-session turn/tool snapshot
-// hashes and undo checkpoints in memory while the shadow git objects live
-// under the data directory. Undo checkpoints intentionally survive the
-// RunStream session_end cleanup so /undo can run after the response stops.
+// stable for its duration. snapshot is stateful: it keeps per-session
+// turn/tool snapshot hashes and undo checkpoints in memory while the
+// shadow git objects live under the data directory. Undo checkpoints
+// intentionally survive the RunStream session_end cleanup so /undo
+// can run after the response stops.
 //
 // LLM-as-a-judge hooks are NOT shipped here: write `type: model` with
 // `schema: pre_tool_use_decision` instead — see
@@ -50,63 +48,17 @@
 package builtins
 
 import (
-	"context"
 	"errors"
 
 	"github.com/docker/docker-agent/pkg/hooks"
 )
 
-// State holds the per-runtime state of the stateful builtins.
-// It is returned by [Register] so callers can clear per-session
-// entries on session_end. Stateless builtins don't appear here.
-type State struct {
-	maxIterations *maxIterationsBuiltin
-	snapshot      *snapshotBuiltin
-}
-
-// ClearSession drops per-RunStream state that should not survive stream teardown.
-// A nil receiver is a no-op.
-func (s *State) ClearSession(sessionID string) {
-	if s == nil || sessionID == "" {
-		return
-	}
-	s.maxIterations.clearSession(sessionID)
-}
-
-// UndoLastSnapshot restores files from the latest completed snapshot checkpoint.
-func (s *State) UndoLastSnapshot(ctx context.Context, sessionID, cwd string) (files int, ok bool, err error) {
-	if s == nil || s.snapshot == nil || sessionID == "" || cwd == "" {
-		return 0, false, nil
-	}
-	return s.snapshot.undoLast(ctx, sessionID, cwd)
-}
-
-// ListSnapshots returns the completed snapshot checkpoints for a session in
-// chronological order (oldest first). Returns nil when no snapshots exist.
-func (s *State) ListSnapshots(sessionID string) []SnapshotInfo {
-	if s == nil || s.snapshot == nil || sessionID == "" {
-		return nil
-	}
-	return s.snapshot.listSnapshots(sessionID)
-}
-
-// ResetSnapshot reverts every checkpoint past index keep so the workspace
-// returns to the state captured at that snapshot. keep == 0 resets to the
-// original (pre-agent) state.
-func (s *State) ResetSnapshot(ctx context.Context, sessionID, cwd string, keep int) (files int, ok bool, err error) {
-	if s == nil || s.snapshot == nil || sessionID == "" || cwd == "" {
-		return 0, false, nil
-	}
-	return s.snapshot.resetSnapshot(ctx, sessionID, cwd, keep)
-}
-
-// Register installs the stock builtin hooks on r and returns a [State]
-// handle the caller can use for stateful builtin operations.
-func Register(r *hooks.Registry) (*State, error) {
-	state := &State{
-		maxIterations: newMaxIterations(),
-		snapshot:      newSnapshotBuiltin(),
-	}
+// Register installs the stock builtin hooks on r and returns the
+// shared [*Snapshots] tracker so the caller (typically the runtime)
+// can drive /undo, /list-snapshots, and /reset against the same
+// in-memory checkpoint history the snapshot hook is writing to.
+func Register(r *hooks.Registry) (*Snapshots, error) {
+	snapshots := NewSnapshots()
 	if err := errors.Join(
 		r.RegisterBuiltin(AddDate, addDate),
 		r.RegisterBuiltin(AddEnvironmentInfo, addEnvironmentInfo),
@@ -116,14 +68,14 @@ func Register(r *hooks.Registry) (*State, error) {
 		r.RegisterBuiltin(AddDirectoryListing, addDirectoryListing),
 		r.RegisterBuiltin(AddUserInfo, addUserInfo),
 		r.RegisterBuiltin(AddRecentCommits, addRecentCommits),
-		r.RegisterBuiltin(MaxIterations, state.maxIterations.hook),
-		r.RegisterBuiltin(Snapshot, state.snapshot.hook),
+		r.RegisterBuiltin(MaxIterations, maxIterations),
+		r.RegisterBuiltin(Snapshot, snapshots.Hook),
 		r.RegisterBuiltin(RedactSecrets, redactSecrets),
 		r.RegisterBuiltin(HTTPPost, httpPost),
 	); err != nil {
 		return nil, err
 	}
-	return state, nil
+	return snapshots, nil
 }
 
 // AgentDefaults captures defaults that map onto stock builtin hook entries.
