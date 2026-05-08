@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"time"
 
 	"github.com/docker/docker-agent/pkg/cli"
+	"github.com/docker/docker-agent/pkg/runregistry"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/server"
 	"github.com/docker/docker-agent/pkg/session"
@@ -27,6 +30,19 @@ func (f *runExecFlags) startAttachedServer(ctx context.Context, out *cli.Printer
 		return fmt.Errorf("listen %s: %w", f.listenAddr, err)
 	}
 	context.AfterFunc(ctx, func() { _ = ln.Close() })
+
+	cleanup, err := runregistry.Write(runregistry.Record{
+		PID:       os.Getpid(),
+		Addr:      "http://" + ln.Addr().String(),
+		SessionID: sess.ID,
+		Agent:     f.agentName,
+		StartedAt: time.Now(),
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "Could not write run registry record", "error", err)
+	} else {
+		context.AfterFunc(ctx, cleanup)
+	}
 
 	out.Println("Control plane listening on", ln.Addr().String())
 	warnIfNotLoopback(out, ln.Addr())
