@@ -155,6 +155,74 @@ func TestNewScriptShellTool_NumberArg(t *testing.T) {
 	assert.Equal(t, "hello\nhello\nhello\n", result.Output)
 }
 
+func TestScriptShellTool_DropsUndeclaredArgs(t *testing.T) {
+	// `env` lists the spawned process's full environment. With base env
+	// set to an empty slice, the only entries should be those forwarded
+	// from declared args.
+	shellTools := map[string]latest.ScriptShellToolConfig{
+		"echo_name": {
+			Cmd: "env",
+			Args: map[string]any{
+				"name": map[string]any{
+					"description": "who to greet",
+					"type":        "string",
+				},
+			},
+			Required: []string{"name"},
+		},
+	}
+
+	tool, err := NewScriptShellTool(shellTools, []string{})
+	require.NoError(t, err)
+
+	allTools, err := tool.Tools(t.Context())
+	require.NoError(t, err)
+	require.Len(t, allTools, 1)
+
+	// The LLM hallucinates LD_PRELOAD alongside the declared `name`.
+	// Only `name` should reach execve; LD_PRELOAD must be dropped.
+	result, err := allTools[0].Handler(t.Context(), tools.ToolCall{
+		Function: tools.FunctionCall{
+			Arguments: `{"name": "alice", "LD_PRELOAD": "/tmp/evil.so"}`,
+		},
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError, "unexpected error: %s", result.Output)
+	assert.Contains(t, result.Output, "name=alice")
+	assert.NotContains(t, result.Output, "LD_PRELOAD")
+}
+
+func TestScriptShellTool_RejectsNULInValue(t *testing.T) {
+	shellTools := map[string]latest.ScriptShellToolConfig{
+		"echo_name": {
+			Cmd: "echo $name",
+			Args: map[string]any{
+				"name": map[string]any{
+					"description": "who to greet",
+					"type":        "string",
+				},
+			},
+			Required: []string{"name"},
+		},
+	}
+
+	tool, err := NewScriptShellTool(shellTools, []string{})
+	require.NoError(t, err)
+
+	allTools, err := tool.Tools(t.Context())
+	require.NoError(t, err)
+	require.Len(t, allTools, 1)
+
+	result, err := allTools[0].Handler(t.Context(), tools.ToolCall{
+		Function: tools.FunctionCall{
+			Arguments: "{\"name\": \"alice\\u0000extra\"}",
+		},
+	})
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Output, "NUL byte")
+}
+
 func TestNewScriptShellTool_ArgWithoutType(t *testing.T) {
 	shellTools := map[string]latest.ScriptShellToolConfig{
 		"greet": {
