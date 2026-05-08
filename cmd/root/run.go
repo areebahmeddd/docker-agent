@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/cli"
 	"github.com/docker/docker-agent/pkg/config"
+	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/permissions"
 	"github.com/docker/docker-agent/pkg/profiling"
@@ -344,8 +345,7 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 	}
 	agentName := agt.Name()
 
-	// Expand tilde in session database path
-	sessionDB, err := expandTilde(f.sessionDB)
+	sessionDB, err := pathx.ExpandHomeDir(f.sessionDB)
 	if err != nil {
 		return nil, nil, err
 	}

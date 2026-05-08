@@ -1,10 +1,6 @@
 package path
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "os"
 
 // ExpandPath expands shell-like patterns in a file path:
 //   - ~ or ~/ at the start is replaced with the user's home directory
@@ -17,14 +13,8 @@ func ExpandPath(p string) string {
 	// Expand environment variables
 	p = os.ExpandEnv(p)
 
-	// Expand tilde to home directory
-	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~"+string(filepath.Separator)) {
-		if home, err := os.UserHomeDir(); err == nil {
-			if p == "~" {
-				return home
-			}
-			return filepath.Join(home, p[2:])
-		}
+	if expanded, err := ExpandHomeDir(p); err == nil {
+		return expanded
 	}
 
 	return p

@@ -17,6 +17,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/fsx"
+	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -500,32 +501,14 @@ func (t *Tool) executePostEditCommands(ctx context.Context, filePath string) err
 // [resolveAndCheckPath] when those checks are required (i.e. for any path
 // that originates from a tool argument).
 func (t *Tool) resolvePath(path string) string {
-	path = expandHomeDir(path)
+	if expandedPath, err := pathx.ExpandHomeDir(path); err == nil {
+		path = expandedPath
+	}
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path)
 	}
 
 	return filepath.Clean(filepath.Join(t.workingDir, path))
-}
-
-// expandHomeDir replaces a leading "~" or "~/" (or "~\\" on Windows) with
-// the user's home directory. Returns the path unchanged when it isn't a
-// home-relative reference or when the home directory cannot be determined;
-// the caller will then resolve it as a literal name and likely surface a
-// "not found" error, which is preferable to a hard failure inside path
-// resolution.
-func expandHomeDir(path string) string {
-	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
-		return path
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	if path == "~" {
-		return home
-	}
-	return filepath.Join(home, path[2:])
 }
 
 // resolveAndCheckPath is the canonical entry point used by every filesystem

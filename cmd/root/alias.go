@@ -1,7 +1,6 @@
 package root
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -13,7 +12,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/cli"
 	"github.com/docker/docker-agent/pkg/config"
-	"github.com/docker/docker-agent/pkg/paths"
+	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/userconfig"
 )
@@ -121,14 +120,12 @@ func runAliasAddCommand(cmd *cobra.Command, args []string, flags *aliasAddFlags)
 	name := args[0]
 	agentPath := args[1]
 
-	// Load existing config
 	cfg, err := userconfig.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Expand tilde in path if present
-	absAgentPath, err := expandTilde(agentPath)
+	absAgentPath, err := pathx.ExpandHomeDir(agentPath)
 	if err != nil {
 		return err
 	}
@@ -264,18 +261,4 @@ func runAliasRemoveCommand(cmd *cobra.Command, args []string) (commandErr error)
 
 	out.Printf("Alias '%s' removed successfully\n", name)
 	return nil
-}
-
-// expandTilde expands the tilde in a path to the user's home directory
-func expandTilde(path string) (string, error) {
-	if !strings.HasPrefix(path, "~/") {
-		return path, nil
-	}
-
-	homeDir := paths.GetHomeDir()
-	if homeDir == "" {
-		return "", errors.New("failed to get user home directory")
-	}
-
-	return filepath.Join(homeDir, strings.TrimPrefix(path, "~/")), nil
 }
