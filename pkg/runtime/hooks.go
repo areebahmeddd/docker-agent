@@ -15,11 +15,13 @@ import (
 )
 
 // buildHooksExecutors builds a [hooks.Executor] for every agent in the
-// team that has user-configured hooks, an agent-flag or runtime setting
-// that maps to a builtin (AddDate / AddEnvironmentInfo / AddPromptFiles /
-// Snapshot), or a configured response cache (which auto-injects a
-// cache_response stop hook). Agents with no hooks have no entry; lookups fall through to
-// nil so callers can short-circuit cheaply.
+// team that has user-configured hooks, an agent-flag setting that maps
+// to a builtin (AddDate / AddEnvironmentInfo / AddPromptFiles), an
+// [builtins.AutoInjector] supplied via [WithAutoInjector] (today the
+// snapshot controller), or a configured response cache (which
+// auto-injects a cache_response stop hook). Agents with no hooks have
+// no entry; lookups fall through to nil so callers can short-circuit
+// cheaply.
 //
 // Called once from [NewLocalRuntime] after r.workingDir, r.env and
 // r.hooksRegistry are finalized; the resulting map is read-only for
@@ -37,14 +39,36 @@ func (r *LocalRuntime) buildHooksExecutors() {
 			AddEnvironmentInfo: a.AddEnvironmentInfo(),
 			AddPromptFiles:     a.AddPromptFiles(),
 			RedactSecrets:      a.RedactSecrets(),
-			Snapshot:           r.snapshotsEnabled,
 		})
+		cfg = applyAutoInjectors(cfg, r.autoInjectors)
 		cfg = applyCacheDefault(cfg, a)
 		if cfg == nil {
 			continue
 		}
 		r.hooksExecByAgent[name] = hooks.NewExecutorWithRegistry(cfg, r.workingDir, r.env, r.hooksRegistry)
 	}
+}
+
+// applyAutoInjectors runs each AutoInjector against cfg, allocating a
+// fresh Config when needed so a previously-empty agent picks up the
+// injector's hooks. Returns nil iff cfg ends up empty after every
+// injector has run, mirroring [ApplyAgentDefaults].
+func applyAutoInjectors(cfg *hooks.Config, injectors []builtins.AutoInjector) *hooks.Config {
+	if len(injectors) == 0 {
+		return cfg
+	}
+	if cfg == nil {
+		cfg = &hooks.Config{}
+	}
+	for _, inj := range injectors {
+		if inj != nil {
+			inj.AutoInject(cfg)
+		}
+	}
+	if cfg.IsEmpty() {
+		return nil
+	}
+	return cfg
 }
 
 // hooksExec returns the pre-built [hooks.Executor] for a, or nil when

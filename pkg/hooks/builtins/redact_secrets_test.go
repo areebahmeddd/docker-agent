@@ -128,8 +128,7 @@ func TestRedactSecretsIsRegistered(t *testing.T) {
 	t.Parallel()
 
 	reg := hooks.NewRegistry()
-	_, err := Register(reg)
-	require.NoError(t, err)
+	require.NoError(t, Register(reg))
 
 	handler, ok := reg.LookupBuiltin(RedactSecrets)
 	require.Truef(t, ok, "builtin %q must be registered", RedactSecrets)

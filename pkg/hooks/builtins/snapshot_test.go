@@ -22,7 +22,7 @@ func TestSnapshotBuiltinUndoSurvivesStreamEnd(t *testing.T) {
 	t.Cleanup(func() { paths.SetDataDir("") })
 
 	r := hooks.NewRegistry()
-	snapshots, err := builtins.Register(r)
+	ctrl, err := builtins.RegisterSnapshot(r, true)
 	require.NoError(t, err)
 	fn, ok := r.LookupBuiltin(builtins.Snapshot)
 	require.True(t, ok)
@@ -74,7 +74,7 @@ func TestSnapshotBuiltinUndoSurvivesStreamEnd(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.DirExists(t, filepath.Join(paths.GetDataDir(), "snapshot", entries[0].Name()))
 
-	files, restored, err := snapshots.UndoLast(t.Context(), "s", dir)
+	files, restored, err := ctrl.UndoLast(t.Context(), "s", dir)
 	require.NoError(t, err)
 	assert.True(t, restored)
 	assert.Equal(t, 1, files)
@@ -89,7 +89,7 @@ func TestSnapshotBuiltinListAndReset(t *testing.T) {
 	t.Cleanup(func() { paths.SetDataDir("") })
 
 	r := hooks.NewRegistry()
-	snapshots, err := builtins.Register(r)
+	ctrl, err := builtins.RegisterSnapshot(r, true)
 	require.NoError(t, err)
 	fn, ok := r.LookupBuiltin(builtins.Snapshot)
 	require.True(t, ok)
@@ -97,7 +97,7 @@ func TestSnapshotBuiltinListAndReset(t *testing.T) {
 	dir := snapshotBuiltinRepo(t)
 
 	// Initially: no checkpoints.
-	assert.Empty(t, snapshots.List("s"))
+	assert.Empty(t, ctrl.List("s"))
 
 	// Capture three snapshots: each turn modifies one file.
 	recordTurn := func(t *testing.T, name, contents string) {
@@ -122,33 +122,33 @@ func TestSnapshotBuiltinListAndReset(t *testing.T) {
 	recordTurn(t, "b.txt", "b")
 	recordTurn(t, "c.txt", "c")
 
-	snaps := snapshots.List("s")
+	snaps := ctrl.List("s")
 	require.Len(t, snaps, 3)
 	assert.Equal(t, 1, snaps[0].Files)
 	assert.Equal(t, 1, snaps[1].Files)
 	assert.Equal(t, 1, snaps[2].Files)
 
 	// Reset to snapshot 2: revert turn 3 only, leaving a.txt and b.txt intact.
-	files, restored, err := snapshots.Reset(t.Context(), "s", dir, 2)
+	files, restored, err := ctrl.Reset(t.Context(), "s", dir, 2)
 	require.NoError(t, err)
 	assert.True(t, restored)
 	assert.Equal(t, 1, files)
 	assert.FileExists(t, filepath.Join(dir, "a.txt"))
 	assert.FileExists(t, filepath.Join(dir, "b.txt"))
 	assert.NoFileExists(t, filepath.Join(dir, "c.txt"))
-	require.Len(t, snapshots.List("s"), 2)
+	require.Len(t, ctrl.List("s"), 2)
 
 	// Reset to original: revert remaining checkpoints, deleting all three files.
-	files, restored, err = snapshots.Reset(t.Context(), "s", dir, 0)
+	files, restored, err = ctrl.Reset(t.Context(), "s", dir, 0)
 	require.NoError(t, err)
 	assert.True(t, restored)
 	assert.Equal(t, 2, files)
 	assert.NoFileExists(t, filepath.Join(dir, "a.txt"))
 	assert.NoFileExists(t, filepath.Join(dir, "b.txt"))
-	assert.Empty(t, snapshots.List("s"))
+	assert.Empty(t, ctrl.List("s"))
 
 	// Subsequent reset is a no-op (nothing to revert).
-	_, restored, err = snapshots.Reset(t.Context(), "s", dir, 0)
+	_, restored, err = ctrl.Reset(t.Context(), "s", dir, 0)
 	require.NoError(t, err)
 	assert.False(t, restored)
 }
@@ -161,7 +161,7 @@ func TestSnapshotBuiltinResetKeepBeyondHistoryIsNoop(t *testing.T) {
 	t.Cleanup(func() { paths.SetDataDir("") })
 
 	r := hooks.NewRegistry()
-	snapshots, err := builtins.Register(r)
+	ctrl, err := builtins.RegisterSnapshot(r, true)
 	require.NoError(t, err)
 	fn, ok := r.LookupBuiltin(builtins.Snapshot)
 	require.True(t, ok)
@@ -183,18 +183,18 @@ func TestSnapshotBuiltinResetKeepBeyondHistoryIsNoop(t *testing.T) {
 	require.NoError(t, err)
 
 	// keep == len(history) means "keep everything" — no checkpoints reverted.
-	files, restored, err := snapshots.Reset(t.Context(), "s", dir, 1)
+	files, restored, err := ctrl.Reset(t.Context(), "s", dir, 1)
 	require.NoError(t, err)
 	assert.False(t, restored)
 	assert.Equal(t, 0, files)
 	assert.FileExists(t, filepath.Join(dir, "a.txt"))
-	require.Len(t, snapshots.List("s"), 1)
+	require.Len(t, ctrl.List("s"), 1)
 
 	// keep way past the end is also a no-op.
-	_, restored, err = snapshots.Reset(t.Context(), "s", dir, 99)
+	_, restored, err = ctrl.Reset(t.Context(), "s", dir, 99)
 	require.NoError(t, err)
 	assert.False(t, restored)
-	require.Len(t, snapshots.List("s"), 1)
+	require.Len(t, ctrl.List("s"), 1)
 }
 
 func snapshotBuiltinRepo(t *testing.T) string {

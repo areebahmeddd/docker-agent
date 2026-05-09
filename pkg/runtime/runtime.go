@@ -161,7 +161,6 @@ type LocalRuntime struct {
 	workingDir           string   // Working directory for hooks execution
 	env                  []string // Environment variables for hooks execution
 	modelSwitcherCfg     *ModelSwitcherConfig
-	snapshotsEnabled     bool
 
 	// hooksRegistry is the runtime-private hooks.Registry used to build
 	// every Executor. It carries the runtime-owned builtin hooks
@@ -170,12 +169,11 @@ type LocalRuntime struct {
 	// touching any process-wide state.
 	hooksRegistry *hooks.Registry
 
-	// snapshots is the shared shadow-git snapshot tracker. The hook
-	// side ([Snapshots.Hook], wired in via [builtins.Register]) writes
-	// checkpoints during the run; the runtime side
-	// ([UndoLastSnapshot] / [ListSnapshots] / [ResetSnapshot])
-	// reads them for /undo and /reset commands.
-	snapshots *builtins.Snapshots
+	// autoInjectors run on every per-agent hook config during
+	// [buildHooksExecutors] so embedders can plug in builtins (today
+	// snapshot via [builtins.SnapshotController]) without the runtime
+	// hard-coding their wiring. Set via [WithAutoInjector].
+	autoInjectors []builtins.AutoInjector
 
 	// hooksExecByAgent holds the per-agent [hooks.Executor], keyed by
 	// agent name. Built once in [NewLocalRuntime.buildHooksExecutors]
@@ -389,6 +387,40 @@ func WithRetryOnRateLimit() Opt {
 	}
 }
 
+// WithAutoInjector adds an [builtins.AutoInjector] that augments every
+// per-agent hook configuration during executor build. The canonical
+// use case is the snapshot controller returned by
+// [builtins.RegisterSnapshot]: pass the same controller to the App via
+// app.WithSnapshotController so /undo and friends drive the same
+// instance that captures the checkpoints.
+//
+// Multiple calls accumulate; injectors run in registration order.
+func WithAutoInjector(inj builtins.AutoInjector) Opt {
+	return func(r *LocalRuntime) {
+		if inj != nil {
+			r.autoInjectors = append(r.autoInjectors, inj)
+		}
+	}
+}
+
+// WithHooksRegistry plugs a pre-populated [hooks.Registry] into the
+// runtime instead of letting it allocate a fresh one. Embedders use
+// this to pre-register builtins they own (today snapshot, tomorrow
+// any custom builtin) so the auto-injection chain set up by
+// [WithAutoInjector] resolves against the same registry.
+//
+// The runtime continues to register its own stateless and
+// closure-bound builtins (add_date, max_iterations, cache_response,
+// unload, ...) on top of the supplied registry, so the embedder only
+// needs to install entries that the runtime can't construct itself.
+func WithHooksRegistry(reg *hooks.Registry) Opt {
+	return func(r *LocalRuntime) {
+		if reg != nil {
+			r.hooksRegistry = reg
+		}
+	}
+}
+
 // New creates a runtime ready to drive an agent loop. It is a thin
 // alias for [NewLocalRuntime] returning the [Runtime] interface, kept
 // for source compatibility with callers written before persistence
@@ -408,13 +440,6 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, err
 	}
 
-	hooksRegistry := hooks.NewRegistry()
-	snapshots, err := builtins.Register(hooksRegistry)
-	if err != nil {
-		return nil, fmt.Errorf("register builtin hooks: %w", err)
-	}
-	registerModelHook(hooksRegistry)
-
 	r := &LocalRuntime{
 		toolMap:                make(map[string]ToolHandlerFunc),
 		team:                   agents,
@@ -426,30 +451,12 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		sessionCompaction:      true,
 		managedOAuth:           true,
 		sessionStore:           session.NewInMemorySessionStore(),
-		hooksRegistry:          hooksRegistry,
-		snapshots:              snapshots,
 		fallback:               newFallbackExecutor(),
 		now:                    time.Now,
 		telemetry:              defaultTelemetry{},
 		maxOverflowCompactions: defaultMaxOverflowCompactions,
 	}
 	r.bgAgents = agenttool.NewHandler(r)
-
-	// cache_response is registered here (not in pkg/hooks/builtins) because
-	// it needs to capture the runtime to resolve the agent referenced by
-	// Input.AgentName. The other builtins are stateless and can stay as
-	// package-level functions registered via builtins.Register above.
-	if err := hooksRegistry.RegisterBuiltin(BuiltinCacheResponse, r.cacheResponseBuiltin); err != nil {
-		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
-	}
-
-	// unload is registered alongside cache_response for the same
-	// reason: it needs to walk Input.FromAgent up to the previous agent's
-	// configured models and dispatch to provider.Unloader implementations,
-	// which the runtime owns through the team.
-	if err := hooksRegistry.RegisterBuiltin(BuiltinUnload, r.unloadBuiltin); err != nil {
-		return nil, fmt.Errorf("register %q builtin: %w", BuiltinUnload, err)
-	}
 
 	// stripUnsupportedModalitiesTransform captures the runtime closure to
 	// resolve the agent from Input.AgentName, so it lives here rather
@@ -472,6 +479,36 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 
 	for _, opt := range opts {
 		opt(r)
+	}
+
+	// Set up the hooks registry. Use the embedder-supplied registry
+	// (via [WithHooksRegistry]) when present so any builtins the
+	// embedder pre-registered — typically the snapshot builtin from
+	// [builtins.RegisterSnapshot] — are visible to the runtime, then
+	// register the runtime-owned builtins on top.
+	if r.hooksRegistry == nil {
+		r.hooksRegistry = hooks.NewRegistry()
+	}
+	if err := builtins.Register(r.hooksRegistry); err != nil {
+		return nil, fmt.Errorf("register builtin hooks: %w", err)
+	}
+	registerModelHook(r.hooksRegistry)
+
+	// cache_response is registered here (not in pkg/hooks/builtins)
+	// because it needs to capture the runtime to resolve the agent
+	// referenced by Input.AgentName. The other builtins are stateless
+	// and can stay as package-level functions registered via
+	// [builtins.Register] above.
+	if err := r.hooksRegistry.RegisterBuiltin(BuiltinCacheResponse, r.cacheResponseBuiltin); err != nil {
+		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
+	}
+
+	// unload is registered alongside cache_response for the same reason:
+	// it needs to walk Input.FromAgent up to the previous agent's
+	// configured models and dispatch to provider.Unloader
+	// implementations, which the runtime owns through the team.
+	if err := r.hooksRegistry.RegisterBuiltin(BuiltinUnload, r.unloadBuiltin); err != nil {
+		return nil, fmt.Errorf("register %q builtin: %w", BuiltinUnload, err)
 	}
 
 	// Build the cooldown manager and wire the fallback executor's
