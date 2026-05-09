@@ -33,9 +33,6 @@ metadata:
     Pro tip: ask the planner to wait for you to modify and approve the plan before delegating tasks:
 
 models:
-  opus:
-    provider: anthropic
-    model: claude-opus-4-6
   sonnet:
     provider: anthropic
     model: claude-sonnet-4-6
@@ -44,13 +41,13 @@ models:
     model: claude-haiku-4-5
   gpt:
     provider: openai
-    model: gpt-5.2
+    model: gpt-5.5
   extramax:
-    model: opus,gpt
+    model: sonnet,gpt
 
 agents:
   root:
-    model: opus
+    model: gpt
     description: Expert Golang developer specializing in the docker agent multi-agent AI system architecture
     instruction: |
       <golang_developer>
