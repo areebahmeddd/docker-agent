@@ -1,10 +1,12 @@
 package sidebar
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"maps"
 	"os"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -134,6 +136,7 @@ type model struct {
 	currentSessionID   string // Session ID of the currently active stream
 	scrollview         *scrollview.Model
 	workingDirectory   string
+	gitBranchName      string   // current git branch, empty if not in a repo
 	queuedMessages     []string // Truncated preview of queued messages
 	streamCancelled    bool     // true after ESC cancel until next StreamStartedEvent
 	collapsed          bool     // true when sidebar is collapsed
@@ -161,6 +164,8 @@ func New(sessionState *service.SessionState) Model {
 	ti.CharLimit = 50
 	ti.Prompt = "" // No prompt to maximize usable width in collapsed sidebar
 
+	wd, branch := getCurrentWorkingDirectory()
+
 	m := &model{
 		width:        20,
 		layoutCfg:    DefaultLayoutConfig(),
@@ -176,7 +181,8 @@ func New(sessionState *service.SessionState) Model {
 			scrollview.WithWheelStep(1),
 			scrollview.WithKeyMap(nil), // Sidebar has no keyboard scroll — only mouse
 		),
-		workingDirectory: getCurrentWorkingDirectory(),
+		workingDirectory: wd,
+		gitBranchName:    branch,
 		preferredWidth:   DefaultWidth,
 		titleInput:       ti,
 		cacheDirty:       true, // Initial render needed
@@ -462,11 +468,7 @@ func (m *model) LoadFromSession(sess *session.Session) {
 
 	// Load working directory from session
 	if sess.WorkingDir != "" {
-		wd := sess.WorkingDir
-		if homeDir := paths.GetHomeDir(); homeDir != "" && strings.HasPrefix(wd, homeDir) {
-			wd = "~" + wd[len(homeDir):]
-		}
-		m.workingDirectory = wd
+		m.workingDirectory, m.gitBranchName = formatWorkingDirectory(sess.WorkingDir)
 	}
 
 	// Session has content if it has messages or token usage
@@ -542,19 +544,61 @@ func (m *model) contextPercent() string {
 	return ""
 }
 
-// getCurrentWorkingDirectory returns the current working directory with home directory replaced by ~/
-func getCurrentWorkingDirectory() string {
-	pwd, err := os.Getwd()
+// gitBranch returns the current git branch name for the given directory,
+// or an empty string if the directory is not inside a git repository.
+func gitBranch(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		return ""
 	}
+	return strings.TrimSpace(string(out))
+}
 
-	// Replace home directory with ~/
-	if homeDir := paths.GetHomeDir(); homeDir != "" && strings.HasPrefix(pwd, homeDir) {
-		pwd = "~" + pwd[len(homeDir):]
+// formatWorkingDirectory formats a raw directory path for display,
+// replacing the home prefix with ~/. Returns the display path and the
+// current git branch (empty if not in a repo).
+func formatWorkingDirectory(rawDir string) (display, branch string) {
+	if rawDir == "" {
+		return "", ""
 	}
 
-	return pwd
+	branch = gitBranch(rawDir)
+
+	display = rawDir
+	if homeDir := paths.GetHomeDir(); homeDir != "" && strings.HasPrefix(display, homeDir) {
+		display = "~" + display[len(homeDir):]
+	}
+
+	return display, branch
+}
+
+// getCurrentWorkingDirectory returns the current working directory with home directory
+// replaced by ~/, along with the current git branch name.
+func getCurrentWorkingDirectory() (string, string) {
+	pwd, err := os.Getwd()
+	if err != nil {
+		return "", ""
+	}
+
+	return formatWorkingDirectory(pwd)
+}
+
+// workingDirWithBranch returns the working directory path with the git branch
+// appended in muted style, suitable for rendering in the sidebar.
+func (m *model) workingDirWithBranch() string {
+	if m.workingDirectory == "" {
+		return ""
+	}
+	result := m.workingDirectory
+	if m.gitBranchName != "" {
+		result += styles.MutedStyle.Render(" (" + m.gitBranchName + ")")
+	}
+	return result
 }
 
 // Update handles messages and updates the component state.
@@ -817,7 +861,7 @@ func (m *model) computeCollapsedViewModel(contentWidth int) CollapsedViewModel {
 	vm := CollapsedViewModel{
 		TitleWithStar:    titleWithStar,
 		WorkingIndicator: m.workingIndicatorCollapsed(),
-		WorkingDir:       m.workingDirectory,
+		WorkingDir:       m.workingDirWithBranch(),
 		UsageSummary:     m.tokenUsageSummary(),
 		ContentWidth:     contentWidth,
 	}
@@ -1098,7 +1142,7 @@ func (m *model) sessionInfo(contentWidth int) string {
 	}
 
 	if m.workingDirectory != "" {
-		lines = append(lines, styles.TabAccentStyle.Render("█")+styles.TabPrimaryStyle.Render(" "+m.workingDirectory))
+		lines = append(lines, styles.TabAccentStyle.Render("█")+styles.TabPrimaryStyle.Render(" "+m.workingDirWithBranch()))
 	}
 
 	return m.renderTab("Session", strings.Join(lines, "\n"), contentWidth)
