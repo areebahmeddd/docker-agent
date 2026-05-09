@@ -531,8 +531,11 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 		runConfigCopy := f.runConfig.Clone()
 		runConfigCopy.WorkingDir = workingDir
 
-		// Load team with the new working directory
-		loadResult, err := teamloader.LoadWithConfig(spawnCtx, agentSource, runConfigCopy, teamloader.WithModelOverrides(f.modelOverrides))
+		// Load team with the new working directory, honouring every flag the
+		// initial load already honours (model overrides AND prompt files).
+		loadReq := f.loadTeamRequest(agentSource)
+		loadReq.RunConfig = runConfigCopy
+		loadResult, err := f.loadAgentFrom(spawnCtx, loadReq)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -559,8 +562,7 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 		}
 
 		// Create a new session
-		wd := workingDir
-		spawnReq := f.createSessionRequest(wd)
+		spawnReq := f.createSessionRequest(workingDir)
 		spawnReq.AgentName = agt.Name()
 		newSess := session.New(f.buildSessionOpts(agt, spawnReq)...)
 
