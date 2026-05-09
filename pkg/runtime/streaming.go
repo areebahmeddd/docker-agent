@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/agent"
@@ -52,8 +53,36 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 	toolCallIndex := make(map[string]int)   // toolCallID -> index in toolCalls slice
 	emittedPartial := make(map[string]bool) // toolCallID -> whether we've emitted a partial event
 	toolDefMap := make(map[string]tools.Tool, len(agentTools))
+
+	// xmlToolCallGate suppresses AgentChoice events once a <tool_call> tag is
+	// seen, preventing raw XML from rendering in the TUI.
+	xmlToolCallGate := false
 	for _, t := range agentTools {
 		toolDefMap[t.Name] = t
+	}
+
+	// applyXMLFallback extracts <tool_call> blocks from accumulated content when
+	// no structured tool calls were received. Called from both the early-return
+	// and EOF paths.
+	applyXMLFallback := func() {
+		if len(toolCalls) > 0 {
+			return
+		}
+		extracted, textBefore, found := extractXMLToolCalls(fullContent.String())
+		if !found {
+			return
+		}
+		slog.DebugContext(ctx, "XML tool call fallback triggered",
+			"agent", a.Name(),
+			"tool_calls", len(extracted),
+		)
+		toolCalls = extracted
+		fullContent.Reset()
+		fullContent.WriteString(textBefore)
+		for _, tc := range toolCalls {
+			toolDef := toolDefMap[tc.Function.Name]
+			events <- PartialToolCall(tc, toolDef, a.Name())
+		}
 	}
 
 	// recordUsage persists the final token counts and emits telemetry exactly
@@ -102,14 +131,19 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 
 		if choice.FinishReason == chat.FinishReasonStop || choice.FinishReason == chat.FinishReasonLength {
 			recordUsage()
+			applyXMLFallback()
+			finishReason := choice.FinishReason
+			if finishReason == chat.FinishReasonStop && len(toolCalls) > 0 {
+				finishReason = chat.FinishReasonToolCalls
+			}
 			return streamResult{
 				Calls:             toolCalls,
 				Content:           fullContent.String(),
 				ReasoningContent:  fullReasoningContent.String(),
 				ThinkingSignature: thinkingSignature,
 				ThoughtSignature:  thoughtSignature,
-				Stopped:           true,
-				FinishReason:      choice.FinishReason,
+				Stopped:           len(toolCalls) == 0, // stop only when there are no tool calls to execute
+				FinishReason:      finishReason,
 				Usage:             messageUsage,
 			}, nil
 		}
@@ -188,12 +222,24 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 		}
 
 		if choice.Delta.Content != "" {
-			events <- AgentChoice(a.Name(), sess.ID, choice.Delta.Content)
+			if !xmlToolCallGate {
+				tagIdx := strings.Index(choice.Delta.Content, "<tool_call>")
+				if tagIdx < 0 {
+					events <- AgentChoice(a.Name(), sess.ID, choice.Delta.Content)
+				} else {
+					xmlToolCallGate = true
+					if tagIdx > 0 {
+						events <- AgentChoice(a.Name(), sess.ID, choice.Delta.Content[:tagIdx])
+					}
+				}
+			}
 			fullContent.WriteString(choice.Delta.Content)
 		}
 	}
 
 	recordUsage()
+
+	applyXMLFallback()
 
 	// If the stream completed without producing any content or tool calls, likely because of a token limit, stop to avoid breaking the request loop
 	// NOTE(krissetto): this can likely be removed once compaction works properly with all providers (aka dmr)
