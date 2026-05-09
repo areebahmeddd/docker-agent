@@ -1,7 +1,9 @@
 package root
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -56,8 +58,13 @@ func (f *watchFlags) run(cmd *cobra.Command, args []string) (commandErr error) {
 	out.Println("Watching", rec.Addr, "(session", rec.SessionID+")")
 
 	stdout := cmd.OutOrStdout()
-	return readEventStream(ctx, body, func(payload json.RawMessage) error {
+	err = readEventStream(ctx, body, func(payload json.RawMessage) error {
 		_, err := fmt.Fprintln(stdout, string(payload))
 		return err
 	})
+	// Ctrl+C is the normal way to stop watching; don't treat it as failure.
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }

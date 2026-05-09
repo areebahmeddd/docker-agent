@@ -135,18 +135,21 @@ func TestFind(t *testing.T) {
 		_, err := Find("999999999")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no live run with pid")
+		assert.ErrorIs(t, err, ErrNoRun)
 	})
 
 	t.Run("unknown addr errors", func(t *testing.T) {
 		_, err := Find("http://nope")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no live run at")
+		assert.ErrorIs(t, err, ErrNoRun)
 	})
 
 	t.Run("unknown session id errors", func(t *testing.T) {
 		_, err := Find("zzz")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no live run matches")
+		assert.ErrorIs(t, err, ErrNoRun)
 	})
 }
 
@@ -160,6 +163,21 @@ func TestFind_AmbiguousSessionID(t *testing.T) {
 	_, err := Find("shared")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous")
+}
+
+// TestFind_ExactMatchBeatsSubstring guards against a regression where an
+// exact session-id match was reported as ambiguous because a longer id
+// contained it as a substring.
+func TestFind_ExactMatchBeatsSubstring(t *testing.T) {
+	withTempDataDir(t)
+
+	pid := os.Getpid()
+	writeRecord(t, "1.json", Record{PID: pid, Addr: "http://a", SessionID: "abc", StartedAt: time.Now()})
+	writeRecord(t, "2.json", Record{PID: pid, Addr: "http://b", SessionID: "abcd", StartedAt: time.Now()})
+
+	rec, err := Find("abc")
+	require.NoError(t, err)
+	assert.Equal(t, "abc", rec.SessionID)
 }
 
 func TestFind_EmptyRegistry(t *testing.T) {

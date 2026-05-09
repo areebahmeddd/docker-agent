@@ -145,9 +145,10 @@ var ErrNoRun = errors.New("no live docker-agent run found; start one with: docke
 // An empty target returns the most recently started run. A numeric target is
 // matched by PID; a target starting with "http://" or "https://" is matched
 // against record addresses; anything else is matched as a (possibly partial)
-// session ID. Matching is exact for PID and addr, prefix-or-substring for
-// session ID; ambiguous matches return an error so callers don't act on the
-// wrong session.
+// session ID. PID and address matches are exact. Session-ID matching prefers
+// exact equality and only falls back to substring matching when no record
+// matches exactly; ambiguous substring matches return an error so callers
+// don't act on the wrong session.
 func Find(target string) (Record, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -175,7 +176,7 @@ func Find(target string) (Record, error) {
 				return r, nil
 			}
 		}
-		return Record{}, fmt.Errorf("no live run with pid %d", pid)
+		return Record{}, fmt.Errorf("no live run with pid %d: %w", pid, ErrNoRun)
 	}
 
 	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
@@ -185,18 +186,25 @@ func Find(target string) (Record, error) {
 				return r, nil
 			}
 		}
-		return Record{}, fmt.Errorf("no live run at %s", target)
+		return Record{}, fmt.Errorf("no live run at %s: %w", target, ErrNoRun)
 	}
 
+	// Prefer an exact session-id match: an unambiguous full id must always
+	// resolve, even when other ids contain it as a substring.
+	for _, r := range records {
+		if r.SessionID == target {
+			return r, nil
+		}
+	}
 	var matches []Record
 	for _, r := range records {
-		if r.SessionID == target || strings.HasPrefix(r.SessionID, target) || strings.Contains(r.SessionID, target) {
+		if strings.Contains(r.SessionID, target) {
 			matches = append(matches, r)
 		}
 	}
 	switch len(matches) {
 	case 0:
-		return Record{}, fmt.Errorf("no live run matches %q (pid, http URL, or session id)", target)
+		return Record{}, fmt.Errorf("no live run matches %q (pid, http URL, or session id): %w", target, ErrNoRun)
 	case 1:
 		return matches[0], nil
 	default:

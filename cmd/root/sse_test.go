@@ -1,6 +1,7 @@
 package root
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -66,4 +67,35 @@ func TestOpenEventStream_StreamsSuccess(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{`{"hello":"world"}`}, got)
+}
+
+// TestOpenEventStream_CapsErrorBody guards against a misbehaving server
+// pushing an unbounded error body into client memory.
+func TestOpenEventStream_CapsErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(strings.Repeat("x", 10*maxErrorBodyBytes)))
+	}))
+	defer srv.Close()
+
+	_, err := openEventStream(t.Context(), srv.URL, "s1")
+	require.Error(t, err)
+	// The error message embeds at most maxErrorBodyBytes of the body.
+	assert.LessOrEqual(t, len(err.Error()), maxErrorBodyBytes+256)
+}
+
+// TestReadEventStream_ReturnsCtxErr verifies the helper surfaces ctx
+// cancellation so callers can distinguish it from a clean stream end.
+func TestReadEventStream_ReturnsCtxErr(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	body := strings.NewReader("data: {}\n\ndata: {}\n\n")
+
+	calls := 0
+	err := readEventStream(ctx, body, func(json.RawMessage) error {
+		calls++
+		cancel()
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, calls)
 }
