@@ -150,12 +150,27 @@ func (t *ScriptShellTool) execute(ctx context.Context, toolConfig *latest.Script
 	if base == nil {
 		base = os.Environ()
 	}
-	envCopy := make([]string, len(base), len(base)+len(params))
+	envCopy := make([]string, len(base), len(base)+len(toolConfig.Args))
 	copy(envCopy, base)
 	for key, value := range params {
-		if value != nil {
-			envCopy = append(envCopy, fmt.Sprintf("%s=%v", key, value))
+		if value == nil {
+			continue
 		}
+		// Only forward arguments declared in the tool's schema. The
+		// LLM may hallucinate extra keys (e.g. LD_PRELOAD, PATH);
+		// without this filter they would land verbatim in the
+		// spawned process's environment.
+		if _, declared := toolConfig.Args[key]; !declared {
+			continue
+		}
+		valueStr := fmt.Sprintf("%v", value)
+		// A NUL byte mid-string silently truncates env entries at the
+		// execve boundary; refuse rather than spawn a process with a
+		// surprising env.
+		if strings.ContainsRune(valueStr, 0) {
+			return tools.ResultError(fmt.Sprintf("argument %q contains a NUL byte", key)), nil
+		}
+		envCopy = append(envCopy, key+"="+valueStr)
 	}
 	cmd.Env = envCopy
 

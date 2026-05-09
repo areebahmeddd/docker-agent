@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/docker/docker-agent/pkg/api"
 	"github.com/docker/docker-agent/pkg/config"
+	"github.com/docker/docker-agent/pkg/echolog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/upstream"
 )
@@ -35,7 +35,7 @@ func New(ctx context.Context, sessionStore session.Store, runConfig *config.Runt
 // only needs to be exposed over HTTP.
 func NewWithManager(sm *SessionManager) *Server {
 	e := echo.New()
-	e.Use(middleware.RequestLogger())
+	e.Use(echolog.RedactedRequestLogger())
 	e.Use(echo.WrapMiddleware(upstream.Handler))
 
 	s := &Server{e: e, sm: sm}
