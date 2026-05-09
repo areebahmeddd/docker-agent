@@ -263,12 +263,21 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		return err
 	}
 
+	loadResult, err := b.LoadTeam(ctx, b.LoadTeamRequest())
+	if err != nil {
+		return err
+	}
+
 	if f.dryRun {
+		if loadResult != nil {
+			stopToolSets(loadResult.Team)
+		}
 		out.Println("Dry run mode enabled. Agent initialized but will not execute.")
 		return nil
 	}
 
-	rt, sess, cleanup, err := b.CreateRuntimeAndSession(ctx)
+	wd, _ := os.Getwd()
+	rt, sess, cleanup, err := b.CreateSession(ctx, loadResult, b.CreateSessionRequest(wd))
 	if err != nil {
 		return err
 	}
