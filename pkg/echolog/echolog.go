@@ -6,7 +6,6 @@
 package echolog
 
 import (
-	"context"
 	"log/slog"
 
 	"github.com/labstack/echo/v4"
@@ -36,7 +35,7 @@ func RedactedRequestLogger() echo.MiddlewareFunc {
 		LogContentLength: true,
 		LogResponseSize:  true,
 		HandleError:      true,
-		LogValuesFunc: func(_ echo.Context, v middleware.RequestLoggerValues) error {
+		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
 			level := slog.LevelInfo
 			msg := "REQUEST"
 			attrs := []slog.Attr{
@@ -56,7 +55,7 @@ func RedactedRequestLogger() echo.MiddlewareFunc {
 				msg = "REQUEST_ERROR"
 				attrs = append(attrs, slog.String("error", v.Error.Error()))
 			}
-			slog.LogAttrs(context.Background(), level, msg, attrs...)
+			slog.LogAttrs(c.Request().Context(), level, msg, attrs...)
 			return nil
 		},
 	})
