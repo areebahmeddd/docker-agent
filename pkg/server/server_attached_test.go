@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -103,4 +104,57 @@ func httpDoTCP(t *testing.T, ctx context.Context, method, url string, payload an
 	require.NoError(t, err)
 	require.Less(t, resp.StatusCode, 400, string(out))
 	return out
+}
+
+// TestAttachedServer_DeleteSessionStopsEventStream verifies that calling
+// DeleteSession on an attached session cancels in-flight SSE event streams
+// and removes the registered event source so a subsequent GET /events 404s.
+func TestAttachedServer_DeleteSessionStopsEventStream(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	store := session.NewInMemorySessionStore()
+	sess := session.New()
+	require.NoError(t, store.AddSession(ctx, sess))
+
+	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
+	sm.AttachRuntime(sess.ID, &fakeRuntime{}, sess)
+
+	sourceCtxDone := make(chan struct{})
+	sm.RegisterEventSource(sess.ID, func(ctx context.Context, _ func(any)) {
+		<-ctx.Done()
+		close(sourceCtxDone)
+	})
+
+	srv := NewWithManager(sm)
+	ln, err := Listen(ctx, "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = srv.Serve(ctx, ln) }()
+
+	addr := "http://" + ln.Addr().String()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/api/sessions/"+sess.ID+"/events", http.NoBody)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	require.NoError(t, sm.DeleteSession(ctx, sess.ID))
+
+	select {
+	case <-sourceCtxDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("event source ctx was not cancelled when session was deleted")
+	}
+
+	_, ok := sm.GetEventSource(sess.ID)
+	assert.False(t, ok, "event source must be removed from the registry on delete")
+
+	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/api/sessions/"+sess.ID+"/events", http.NoBody)
+	require.NoError(t, err)
+	resp2, err := http.DefaultClient.Do(req2)
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp2.StatusCode)
 }

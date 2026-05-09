@@ -343,8 +343,7 @@ func (s *Server) steerSession(c echo.Context) error {
 // sessionEvents streams events for a session as Server-Sent Events. The
 // stream lasts until the client disconnects or the session ends.
 func (s *Server) sessionEvents(c echo.Context) error {
-	source, ok := s.sm.GetEventSource(c.Param("id"))
-	if !ok {
+	if _, ok := s.sm.GetEventSource(c.Param("id")); !ok {
 		return echo.NewHTTPError(http.StatusNotFound, "no event source for session")
 	}
 
@@ -354,7 +353,7 @@ func (s *Server) sessionEvents(c echo.Context) error {
 	c.Response().WriteHeader(http.StatusOK)
 	c.Response().Flush()
 
-	source(c.Request().Context(), func(event any) {
+	s.sm.StreamEvents(c.Request().Context(), c.Param("id"), func(event any) {
 		data, err := json.Marshal(event)
 		if err != nil {
 			return

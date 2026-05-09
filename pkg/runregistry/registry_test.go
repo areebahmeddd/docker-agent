@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -38,6 +39,29 @@ func TestWriteAndList_RoundTrip(t *testing.T) {
 	records, err = List()
 	require.NoError(t, err)
 	assert.Empty(t, records)
+}
+
+// TestWrite_RestrictsDirectoryPermissions verifies that the registry
+// directory is created with 0o700 so other local users cannot enumerate
+// running PIDs/addresses by listing it.
+func TestWrite_RestrictsDirectoryPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mode bits are not enforced on Windows")
+	}
+	withTempDataDir(t)
+
+	cleanup, err := Write(Record{
+		PID:       os.Getpid(),
+		Addr:      "http://127.0.0.1:1",
+		SessionID: "s",
+		StartedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	info, err := os.Stat(Dir())
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(), "registry dir must not be world- or group-readable")
 }
 
 func TestList_DropsStaleRecords(t *testing.T) {

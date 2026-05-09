@@ -26,6 +26,7 @@ import (
 
 type activeRuntimes struct {
 	runtime  runtime.Runtime
+	done     <-chan struct{} // Closed when the session is deleted/detached. Nil for sessions without lifetime tracking.
 	cancel   context.CancelFunc
 	session  *session.Session        // The actual session object used by the runtime
 	titleGen *sessiontitle.Generator // Title generator (includes fallback models)
@@ -85,14 +86,47 @@ func (sm *SessionManager) GetEventSource(sessionID string) (EventSource, bool) {
 	return sm.eventSources.Load(sessionID)
 }
 
+// StreamEvents drives the EventSource registered for sessionID, sending each
+// event through send. It blocks until the source returns, the caller's ctx is
+// cancelled, or the session is detached via [SessionManager.DeleteSession].
+// Returns false when no source is registered.
+func (sm *SessionManager) StreamEvents(ctx context.Context, sessionID string, send func(any)) bool {
+	src, ok := sm.eventSources.Load(sessionID)
+	if !ok {
+		return false
+	}
+
+	if rs, ok := sm.runtimeSessions.Load(sessionID); ok && rs.done != nil {
+		derived, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-rs.done:
+				cancel()
+			case <-derived.Done():
+			}
+		}()
+		ctx = derived
+	}
+
+	src(ctx, send)
+	return true
+}
+
 // AttachRuntime registers a pre-built runtime + session under sessionID so
 // that subsequent calls (RunSession, Steer, Resume...) reuse it instead of
 // building one from agentFilename. This is what lets a single in-process
 // runtime be shared between the TUI and an HTTP control plane.
+//
+// The internal cancellation signal is fired by [SessionManager.DeleteSession];
+// SSE streams and other lifetime-bound consumers use it (via
+// [SessionManager.StreamEvents]) to terminate when the session is detached.
 func (sm *SessionManager) AttachRuntime(sessionID string, rt runtime.Runtime, sess *session.Session) {
+	ctx, cancel := context.WithCancel(context.Background())
 	sm.runtimeSessions.Store(sessionID, &activeRuntimes{
 		runtime: rt,
-		cancel:  func() {},
+		done:    ctx.Done(),
+		cancel:  cancel,
 		session: sess,
 	})
 }
@@ -165,6 +199,7 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 		sessionRuntime.cancel()
 		sm.runtimeSessions.Delete(sess.ID)
 	}
+	sm.eventSources.Delete(sess.ID)
 
 	return nil
 }

@@ -35,8 +35,12 @@ func Dir() string {
 
 // Write atomically persists a record for the current process and returns a
 // cleanup func that removes it. Cleanup is safe to call more than once.
+//
+// The registry directory is created with 0o700 so other local users cannot
+// enumerate live PIDs/addresses by listing it. Individual records are still
+// written with 0o600 for the same reason.
 func Write(rec Record) (func(), error) {
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+	if err := os.MkdirAll(Dir(), 0o700); err != nil {
 		return nil, fmt.Errorf("creating run registry dir: %w", err)
 	}
 
