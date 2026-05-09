@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	pathx "github.com/docker/docker-agent/pkg/path"
 )
 
 // pathRootSet is a set of filesystem roots, used to back the filesystem
@@ -131,20 +133,18 @@ func expandPathToken(workingDir, token string) (string, error) {
 		return "", fmt.Errorf("path entry %q expands to an empty string (undefined environment variable?)", original)
 	}
 
+	if expandedToken, err := pathx.ExpandHomeDir(token); err != nil {
+		return "", err
+	} else if expandedToken != token || token == "~" {
+		return expandedToken, nil
+	}
+
 	switch {
 	case token == ".":
 		if workingDir == "" {
 			return os.Getwd()
 		}
 		return workingDir, nil
-	case token == "~":
-		return os.UserHomeDir()
-	case strings.HasPrefix(token, "~/") || strings.HasPrefix(token, "~"+string(filepath.Separator)):
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, token[2:]), nil
 	case filepath.IsAbs(token):
 		return token, nil
 	default:

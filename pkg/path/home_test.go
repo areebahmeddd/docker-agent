@@ -1,4 +1,4 @@
-package root
+package path
 
 import (
 	"path/filepath"
@@ -6,69 +6,70 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/docker/docker-agent/pkg/paths"
 )
 
-func TestExpandTilde(t *testing.T) {
-	t.Parallel()
-
-	homeDir := paths.GetHomeDir()
-	require.NotEmpty(t, homeDir, "Home directory should be available for tests")
+func TestExpandHomeDir(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 
 	tests := []struct {
 		name     string
 		input    string
 		expected string
-		wantErr  bool
 	}{
 		{
-			name:     "expands_tilde_prefix",
+			name:     "tilde only",
+			input:    "~",
+			expected: homeDir,
+		},
+		{
+			name:     "expands tilde prefix",
 			input:    "~/session.db",
 			expected: filepath.Join(homeDir, "session.db"),
 		},
 		{
-			name:     "expands_tilde_with_nested_path",
+			name:     "expands tilde with nested path",
 			input:    "~/.cagent/session.db",
 			expected: filepath.Join(homeDir, ".cagent", "session.db"),
 		},
 		{
-			name:     "expands_tilde_with_deep_path",
+			name:     "expands tilde with deep path",
 			input:    "~/path/to/some/file.db",
 			expected: filepath.Join(homeDir, "path", "to", "some", "file.db"),
 		},
 		{
-			name:     "absolute_path_unchanged",
+			name:     "absolute path unchanged",
 			input:    "/absolute/path/session.db",
 			expected: "/absolute/path/session.db",
 		},
 		{
-			name:     "relative_path_unchanged",
+			name:     "relative path unchanged",
 			input:    "relative/path/session.db",
 			expected: "relative/path/session.db",
 		},
 		{
-			name:     "tilde_in_middle_unchanged",
+			name:     "tilde in middle unchanged",
 			input:    "/some/~/path/session.db",
 			expected: "/some/~/path/session.db",
 		},
 		{
-			name:     "tilde_without_slash_unchanged",
+			name:     "tilde without separator unchanged",
 			input:    "~something",
 			expected: "~something",
 		},
 		{
-			name:     "just_tilde_slash_expands",
+			name:     "tilde slash expands",
 			input:    "~/",
 			expected: homeDir,
 		},
 		{
-			name:     "empty_string_unchanged",
+			name:     "empty string unchanged",
 			input:    "",
 			expected: "",
 		},
 		{
-			name:     "dot_path_unchanged",
+			name:     "dot path unchanged",
 			input:    "./session.db",
 			expected: "./session.db",
 		},
@@ -76,14 +77,7 @@ func TestExpandTilde(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			result, err := expandTilde(tt.input)
-
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
+			result, err := ExpandHomeDir(tt.input)
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result)

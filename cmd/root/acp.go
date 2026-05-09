@@ -7,6 +7,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/acp"
 	"github.com/docker/docker-agent/pkg/config"
+	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/telemetry"
 )
@@ -46,7 +47,7 @@ func (f *acpFlags) runACPCommand(cmd *cobra.Command, args []string) (commandErr 
 	agentFilename := args[0]
 
 	// Expand tilde in session database path
-	sessionDB, err := expandTilde(f.sessionDB)
+	sessionDB, err := pathx.ExpandHomeDir(f.sessionDB)
 	if err != nil {
 		return err
 	}
