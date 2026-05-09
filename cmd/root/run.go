@@ -303,7 +303,7 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 	return runTUI(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(), opts...)
 }
 
-func (f *runExecFlags) loadAgentFrom(ctx context.Context, req LoadTeamRequest) (*teamloader.LoadResult, error) {
+func (f *runExecFlags) loadAgentFrom(ctx context.Context, req runtime.LoadTeamRequest) (*teamloader.LoadResult, error) {
 	opts := []teamloader.Opt{
 		teamloader.WithModelOverrides(req.ModelOverrides),
 	}
@@ -360,7 +360,7 @@ func (f *runExecFlags) snapshotRuntimeOpts() ([]runtime.Opt, builtins.SnapshotCo
 	}, ctrl, nil
 }
 
-func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req CreateSessionRequest) (runtime.Runtime, *session.Session, error) {
+func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, error) {
 	t := loadResult.Team
 
 	// Merge user-level global permissions into the team's checker so the
@@ -511,7 +511,7 @@ func (f *runExecFlags) buildAppOpts(args []string) ([]app.Opt, error) {
 // buildSessionOpts returns the canonical set of session options derived from
 // CLI flags and agent configuration. Both the initial session and spawned
 // sessions use this method so their options never drift apart.
-func (f *runExecFlags) buildSessionOpts(agt *agent.Agent, req CreateSessionRequest) []session.Opt {
+func (f *runExecFlags) buildSessionOpts(agt *agent.Agent, req runtime.CreateSessionRequest) []session.Opt {
 	return []session.Opt{
 		session.WithMaxIterations(agt.MaxIterations()),
 		session.WithMaxConsecutiveToolCalls(agt.MaxConsecutiveToolCalls()),
