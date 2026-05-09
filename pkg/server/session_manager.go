@@ -26,6 +26,7 @@ import (
 
 type activeRuntimes struct {
 	runtime  runtime.Runtime
+	done     <-chan struct{} // Closed when the session is deleted/detached. Nil for sessions without lifetime tracking.
 	cancel   context.CancelFunc
 	session  *session.Session        // The actual session object used by the runtime
 	titleGen *sessiontitle.Generator // Title generator (includes fallback models)
@@ -36,6 +37,7 @@ type activeRuntimes struct {
 // SessionManager manages sessions for HTTP and Connect-RPC servers.
 type SessionManager struct {
 	runtimeSessions *concurrent.Map[string, *activeRuntimes]
+	eventSources    *concurrent.Map[string, EventSource]
 	sessionStore    session.Store
 	Sources         config.Sources
 
@@ -48,6 +50,11 @@ type SessionManager struct {
 	mux sync.Mutex
 }
 
+// EventSource pushes session events to send for the lifetime of ctx. The
+// callback is invoked from request goroutines (e.g. an SSE handler), so it
+// must be safe to call concurrently across requests.
+type EventSource func(ctx context.Context, send func(any))
+
 // NewSessionManager creates a new session manager.
 func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore session.Store, refreshInterval time.Duration, runConfig *config.RuntimeConfig) *SessionManager {
 	loaders := make(config.Sources)
@@ -57,6 +64,7 @@ func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore
 
 	sm := &SessionManager{
 		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
+		eventSources:    concurrent.NewMap[string, EventSource](),
 		sessionStore:    sessionStore,
 		Sources:         loaders,
 		refreshInterval: refreshInterval,
@@ -64,6 +72,63 @@ func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore
 	}
 
 	return sm
+}
+
+// RegisterEventSource attaches an event source for sessionID. It is used by
+// callers that own a runtime out-of-band (e.g. the TUI) so that HTTP clients
+// can subscribe to events via GET /api/sessions/:id/events.
+func (sm *SessionManager) RegisterEventSource(sessionID string, src EventSource) {
+	sm.eventSources.Store(sessionID, src)
+}
+
+// GetEventSource returns the registered event source for sessionID.
+func (sm *SessionManager) GetEventSource(sessionID string) (EventSource, bool) {
+	return sm.eventSources.Load(sessionID)
+}
+
+// StreamEvents drives the EventSource registered for sessionID, sending each
+// event through send. It blocks until the source returns, the caller's ctx is
+// cancelled, or the session is detached via [SessionManager.DeleteSession].
+// Returns false when no source is registered.
+func (sm *SessionManager) StreamEvents(ctx context.Context, sessionID string, send func(any)) bool {
+	src, ok := sm.eventSources.Load(sessionID)
+	if !ok {
+		return false
+	}
+
+	if rs, ok := sm.runtimeSessions.Load(sessionID); ok && rs.done != nil {
+		derived, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-rs.done:
+				cancel()
+			case <-derived.Done():
+			}
+		}()
+		ctx = derived
+	}
+
+	src(ctx, send)
+	return true
+}
+
+// AttachRuntime registers a pre-built runtime + session under sessionID so
+// that subsequent calls (RunSession, Steer, Resume...) reuse it instead of
+// building one from agentFilename. This is what lets a single in-process
+// runtime be shared between the TUI and an HTTP control plane.
+//
+// The internal cancellation signal is fired by [SessionManager.DeleteSession];
+// SSE streams and other lifetime-bound consumers use it (via
+// [SessionManager.StreamEvents]) to terminate when the session is detached.
+func (sm *SessionManager) AttachRuntime(sessionID string, rt runtime.Runtime, sess *session.Session) {
+	ctx, cancel := context.WithCancel(context.Background())
+	sm.runtimeSessions.Store(sessionID, &activeRuntimes{
+		runtime: rt,
+		done:    ctx.Done(),
+		cancel:  cancel,
+		session: sess,
+	})
 }
 
 // GetSession retrieves a session by ID.
@@ -134,6 +199,7 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 		sessionRuntime.cancel()
 		sm.runtimeSessions.Delete(sess.ID)
 	}
+	sm.eventSources.Delete(sess.ID)
 
 	return nil
 }

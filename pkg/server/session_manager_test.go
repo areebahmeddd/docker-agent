@@ -48,6 +48,10 @@ func (f *fakeRuntime) RunStream(_ context.Context, _ *session.Session) <-chan ru
 
 func (f *fakeRuntime) Resume(_ context.Context, _ runtime.ResumeRequest) {}
 
+func (f *fakeRuntime) Steer(_ runtime.QueuedMessage) error { return nil }
+
+func (f *fakeRuntime) FollowUp(_ runtime.QueuedMessage) error { return nil }
+
 func (f *fakeRuntime) ResumeElicitation(_ context.Context, _ tools.ElicitationAction, _ map[string]any) error {
 	return nil
 }
@@ -74,6 +78,25 @@ func newTestSessionManager(t *testing.T, sess *session.Session, fake *fakeRuntim
 	})
 
 	return sm
+}
+
+// TestAttachRuntime_RegistersRuntimeForExternalDriver verifies that a
+// pre-built runtime is reachable through the manager API after AttachRuntime.
+// This is what lets the TUI hand its in-process runtime to an HTTP server.
+func TestAttachRuntime_RegistersRuntimeForExternalDriver(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	store := session.NewInMemorySessionStore()
+	sess := session.New()
+	require.NoError(t, store.AddSession(ctx, sess))
+
+	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
+	fake := &fakeRuntime{streamDelay: 10 * time.Millisecond}
+	sm.AttachRuntime(sess.ID, fake, sess)
+
+	// Steer routes through the attached runtime, not a freshly built one.
+	require.NoError(t, sm.SteerSession(ctx, sess.ID, []api.Message{{Content: "hi"}}))
 }
 
 // TestRunSession_ConcurrentRequestReturnsErrSessionBusy verifies that a

@@ -27,56 +27,48 @@ type Server struct {
 }
 
 func New(ctx context.Context, sessionStore session.Store, runConfig *config.RuntimeConfig, refreshInterval time.Duration, agentSources config.Sources) (*Server, error) {
+	return NewWithManager(NewSessionManager(ctx, agentSources, sessionStore, refreshInterval, runConfig)), nil
+}
+
+// NewWithManager builds a Server around an already-constructed SessionManager.
+// Useful when the runtime is owned by another component (e.g. the TUI) and
+// only needs to be exposed over HTTP.
+func NewWithManager(sm *SessionManager) *Server {
 	e := echo.New()
 	e.Use(middleware.RequestLogger())
 	e.Use(echo.WrapMiddleware(upstream.Handler))
 
-	s := &Server{
-		e:  e,
-		sm: NewSessionManager(ctx, agentSources, sessionStore, refreshInterval, runConfig),
-	}
+	s := &Server{e: e, sm: sm}
+	s.registerRoutes()
+	return s
+}
 
-	group := e.Group("/api")
+func (s *Server) registerRoutes() {
+	group := s.e.Group("/api")
 
-	// List all available agents
 	group.GET("/agents", s.getAgents)
-	// Get an agent by id
 	group.GET("/agents/:id", s.getAgentConfig)
 
-	// List all sessions
 	group.GET("/sessions", s.getSessions)
-	// Get a session by id
 	group.GET("/sessions/:id", s.getSession)
-	// Resume a session by id
 	group.POST("/sessions/:id/resume", s.resumeSession)
-	// Toggle YOLO mode for a session
 	group.POST("/sessions/:id/tools/toggle", s.toggleSessionYolo)
-	// Update session permissions
 	group.PATCH("/sessions/:id/permissions", s.updateSessionPermissions)
-	// Update session title
 	group.PATCH("/sessions/:id/title", s.updateSessionTitle)
-	// Create a new session
 	group.POST("/sessions", s.createSession)
-	// Delete a session
 	group.DELETE("/sessions/:id", s.deleteSession)
-	// Run an agent loop
 	group.POST("/sessions/:id/agent/:agent", s.runAgent)
 	group.POST("/sessions/:id/agent/:agent/:agent_name", s.runAgent)
 	group.POST("/sessions/:id/elicitation", s.elicitation)
-	// Steer: inject user messages into a running agent session mid-turn
 	group.POST("/sessions/:id/steer", s.steerSession)
-	// Follow-up: queue messages for end-of-turn processing
 	group.POST("/sessions/:id/followup", s.followUpSession)
+	group.GET("/sessions/:id/events", s.sessionEvents)
 
-	// Agent tool count
 	group.GET("/agents/:id/:agent_name/tools/count", s.getAgentToolCount)
 
-	// Health check endpoint
 	group.GET("/ping", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-
-	return s, nil
 }
 
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
@@ -346,6 +338,30 @@ func (s *Server) steerSession(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued"})
+}
+
+// sessionEvents streams events for a session as Server-Sent Events. The
+// stream lasts until the client disconnects or the session ends.
+func (s *Server) sessionEvents(c echo.Context) error {
+	if _, ok := s.sm.GetEventSource(c.Param("id")); !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "no event source for session")
+	}
+
+	c.Response().Header().Set("Content-Type", "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().WriteHeader(http.StatusOK)
+	c.Response().Flush()
+
+	s.sm.StreamEvents(c.Request().Context(), c.Param("id"), func(event any) {
+		data, err := json.Marshal(event)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(c.Response(), "data: %s\n\n", data)
+		c.Response().Flush()
+	})
+	return nil
 }
 
 func (s *Server) followUpSession(c echo.Context) error {
