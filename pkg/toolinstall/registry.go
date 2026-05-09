@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/goccy/go-yaml"
 
 	"github.com/docker/docker-agent/pkg/atomicfile"
+	"github.com/docker/docker-agent/pkg/httpclient"
 )
 
 // githubToken returns a GitHub personal access token from the environment,
@@ -116,7 +118,13 @@ var (
 // NewRegistry creates a new Registry with default settings.
 func NewRegistry() *Registry {
 	return &Registry{
-		httpClient: http.DefaultClient,
+		// httpclient.NewSafeClient enforces dial-time SSRF protection
+		// even though baseURL is hard-coded — a hostname that today
+		// resolves to a public IP can be DNS-rebound to 127.0.0.1 or
+		// 169.254.169.254 and we want the request to fail at dial,
+		// not after exfiltration. The 30s timeout matches the de-facto
+		// upper bound the request context already enforces.
+		httpClient: httpclient.NewSafeClient(30*time.Second, false),
 		baseURL:    registryBaseURL,
 		cacheDir:   RegistryDir(),
 	}
