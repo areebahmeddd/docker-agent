@@ -61,22 +61,6 @@ type ModelChoice struct {
 	OutputModalities []string
 }
 
-// ModelSwitcher is an optional interface for runtimes that support changing the model
-// for the current agent at runtime. This is used by the TUI for model switching.
-type ModelSwitcher interface {
-	// SetAgentModel sets a model override for the specified agent.
-	// modelRef can be:
-	// - "" (empty) to clear the override and use the agent's default model
-	// - A model name from the config (e.g., "my_fast_model")
-	// - An inline model spec (e.g., "openai/gpt-4o")
-	SetAgentModel(ctx context.Context, agentName, modelRef string) error
-
-	// AvailableModels returns the list of models available for selection.
-	// This includes all models defined in the config, with the current agent's
-	// default model marked as IsDefault.
-	AvailableModels(ctx context.Context) []ModelChoice
-}
-
 // ModelSwitcherConfig holds the configuration needed for model switching.
 // This is populated by the app layer when creating the runtime.
 type ModelSwitcherConfig struct {
@@ -92,10 +76,17 @@ type ModelSwitcherConfig struct {
 	AgentDefaultModels map[string]string
 }
 
-// SetAgentModel implements ModelSwitcher for LocalRuntime.
+// SetAgentModel implements [Runtime.SetAgentModel] for LocalRuntime.
 func (r *LocalRuntime) SetAgentModel(ctx context.Context, agentName, modelRef string) error {
 	_, err := r.setAgentModelInternal(ctx, agentName, modelRef)
 	return err
+}
+
+// SupportsModelSwitching reports whether the runtime was built with a
+// [ModelSwitcherConfig], i.e. whether [SetAgentModel] / [AvailableModels]
+// will return real data instead of the no-config empty path.
+func (r *LocalRuntime) SupportsModelSwitching() bool {
+	return r.modelSwitcherCfg != nil
 }
 
 // setAgentModelInternal applies modelRef as the agent's model override and
@@ -291,7 +282,7 @@ func (r *LocalRuntime) resolveModelRefs(ctx context.Context, commaSeparatedRefs 
 	return providers, nil
 }
 
-// AvailableModels implements ModelSwitcher for LocalRuntime.
+// AvailableModels implements [Runtime.AvailableModels] for LocalRuntime.
 func (r *LocalRuntime) AvailableModels(ctx context.Context) []ModelChoice {
 	if r.modelSwitcherCfg == nil {
 		return nil
@@ -572,6 +563,3 @@ func WithModelSwitcherConfig(cfg *ModelSwitcherConfig) Opt {
 		r.modelSwitcherCfg = cfg
 	}
 }
-
-// Ensure LocalRuntime implements ModelSwitcher
-var _ ModelSwitcher = (*LocalRuntime)(nil)

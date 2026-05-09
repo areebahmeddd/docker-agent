@@ -557,6 +557,23 @@ func (r *RemoteRuntime) TogglePause(context.Context) (bool, error) {
 	return false, fmt.Errorf("pause: %w", ErrUnsupported)
 }
 
+// SetAgentModel is not yet supported on remote runtimes; the server owns
+// the model selection.
+func (r *RemoteRuntime) SetAgentModel(context.Context, string, string) error {
+	return fmt.Errorf("set agent model: %w", ErrUnsupported)
+}
+
+// AvailableModels is not yet supported on remote runtimes; the wire
+// protocol cannot enumerate the models the server has access to.
+func (r *RemoteRuntime) AvailableModels(context.Context) []ModelChoice {
+	return nil
+}
+
+// SupportsModelSwitching is false for remote runtimes.
+func (r *RemoteRuntime) SupportsModelSwitching() bool {
+	return false
+}
+
 // Close is a no-op for remote runtimes.
 func (r *RemoteRuntime) Close() error {
 	return nil
