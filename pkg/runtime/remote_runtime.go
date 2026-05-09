@@ -133,10 +133,12 @@ func (r *RemoteRuntime) SetCurrentAgent(agentName string) error {
 	return nil
 }
 
-// CurrentAgentTools returns the tools for the current agent.
-// For remote runtime, this returns nil as tools are managed server-side.
+// CurrentAgentTools is not exposed by the remote wire protocol today.
+// The server has the real list; the client cannot enumerate it. Return
+// ErrUnsupported so callers (TUI tools dialog, programmatic introspection)
+// can show an explanatory message instead of a silently-empty list.
 func (r *RemoteRuntime) CurrentAgentTools(_ context.Context) ([]tools.Tool, error) {
-	return nil, nil
+	return nil, fmt.Errorf("list tools: %w", ErrUnsupported)
 }
 
 // CurrentAgentToolsetStatuses is not implemented for remote runtimes; the
@@ -307,10 +309,13 @@ func (r *RemoteRuntime) Resume(ctx context.Context, req ResumeRequest) {
 	}
 }
 
-// Summarize generates a summary for the session
-func (r *RemoteRuntime) Summarize(_ context.Context, sess *session.Session, _ string, events chan Event) {
+// Summarize is not yet supported on remote runtimes. Emit an Error
+// event so the TUI surfaces a clear failure instead of persisting a
+// bogus "not yet implemented" SessionSummary into the session store
+// (the persistence observer writes every SessionSummaryEvent unchanged).
+func (r *RemoteRuntime) Summarize(_ context.Context, _ *session.Session, _ string, events chan Event) {
 	slog.Debug("Summarize not yet implemented for remote runtime", "session_id", r.sessionID)
-	events <- SessionSummary(sess.ID, "Summary generation not yet implemented for remote runtime", r.currentAgent, 0)
+	events <- Error(fmt.Sprintf("summarize: %s", ErrUnsupported))
 }
 
 func (r *RemoteRuntime) convertSessionMessages(sess *session.Session) []api.Message {
