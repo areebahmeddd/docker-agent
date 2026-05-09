@@ -155,7 +155,7 @@ func buildConfigureBackendConfig(contextSize *int64, runtimeFlags []string, spec
 		KeepAlive:    keepAlive,
 	}
 	if contextSize != nil {
-		cs := int32(*contextSize)
+		cs := int32(*contextSize) //nolint:gosec // user-configured context size; realistic values fit in int32
 		cfg.ContextSize = &cs
 	}
 	if specOpts != nil {
@@ -284,7 +284,7 @@ func buildLlamaCppConfig(cfg *latest.ModelConfig) *llamaCppConfig {
 	if !ok {
 		return nil
 	}
-	v := int32(budget)
+	v := int32(budget) //nolint:gosec // resolved reasoning budget fits in int32
 	return &llamaCppConfig{ReasoningBudget: &v}
 }
 

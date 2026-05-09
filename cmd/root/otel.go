@@ -74,7 +74,7 @@ func initOTelSDK(ctx context.Context) (err error) {
 		propagation.Baggage{},
 	))
 
-	go func() {
+	go func() { //nolint:gosec // shutdown runs after parent ctx is already canceled; needs a fresh background ctx for the timeout
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

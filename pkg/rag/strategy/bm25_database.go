@@ -128,7 +128,8 @@ func (d *bm25DB) DeleteDocumentsByPath(ctx context.Context, sourcePath string) e
 }
 
 func (d *bm25DB) GetAllDocuments(ctx context.Context) ([]database.Document, error) {
-	query := fmt.Sprintf(`
+	query := fmt.Sprintf( //nolint:gosec // table name is internal, no user input
+		`
 	SELECT id, source_path, chunk_index, content, file_hash, created_at
 	FROM %s
 	`, d.docsTable)
@@ -169,7 +170,8 @@ func (d *bm25DB) GetFileMetadata(ctx context.Context, sourcePath string) (*datab
 }
 
 func (d *bm25DB) SetFileMetadata(ctx context.Context, metadata database.FileMetadata) error {
-	query := fmt.Sprintf(`
+	query := fmt.Sprintf( //nolint:gosec // table name is internal, values are bound parameters
+		`
 	INSERT INTO %s (source_path, file_hash, last_indexed, chunk_count)
 	VALUES (?, ?, CURRENT_TIMESTAMP, ?)
 	ON CONFLICT(source_path) DO UPDATE SET
@@ -184,7 +186,7 @@ func (d *bm25DB) SetFileMetadata(ctx context.Context, metadata database.FileMeta
 
 func (d *bm25DB) GetAllFileMetadata(ctx context.Context) ([]database.FileMetadata, error) {
 	rows, err := d.db.QueryContext(ctx,
-		"SELECT source_path, file_hash, last_indexed, chunk_count FROM "+d.metadataTable)
+		"SELECT source_path, file_hash, last_indexed, chunk_count FROM "+d.metadataTable) //nolint:gosec // table name is internal, no user input
 	if err != nil {
 		return nil, fmt.Errorf("failed to query file metadata: %w", err)
 	}

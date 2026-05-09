@@ -73,7 +73,8 @@ func (s *Server) registerRoutes() {
 
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	srv := http.Server{
-		Handler: s.e,
+		Handler:           s.e,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	if err := srv.Serve(ln); err != nil && ctx.Err() == nil {

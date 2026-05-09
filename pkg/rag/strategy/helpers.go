@@ -94,7 +94,7 @@ func GetParam[T any](params map[string]any, key string, defaultValue T) T {
 		case int64:
 			return any(int(v)).(T)
 		case uint64:
-			return any(int(v)).(T)
+			return any(int(v)).(T) //nolint:gosec // value comes from validated config; bounds enforced upstream
 		case float64:
 			return any(int(v)).(T)
 		default:
@@ -140,7 +140,7 @@ func GetParamPtr[T any](params map[string]any, key string) *T {
 			val := any(int(v)).(T)
 			return &val
 		case uint64:
-			val := any(int(v)).(T)
+			val := any(int(v)).(T) //nolint:gosec // value comes from validated config; bounds enforced upstream
 			return &val
 		case float64:
 			val := any(int(v)).(T)

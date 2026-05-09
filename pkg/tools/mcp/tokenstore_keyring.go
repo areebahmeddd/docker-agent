@@ -149,7 +149,7 @@ func (s *KeyringTokenStore) migrateLegacyLocked() int {
 // persistLocked writes the in-memory bundle back to the keyring.
 // Caller must hold s.mu.
 func (s *KeyringTokenStore) persistLocked() error {
-	data, err := json.Marshal(s.cache)
+	data, err := json.Marshal(s.cache) //nolint:gosec // OAuth token bundle is intentionally serialized for keyring storage
 	if err != nil {
 		return fmt.Errorf("failed to marshal token bundle: %w", err)
 	}

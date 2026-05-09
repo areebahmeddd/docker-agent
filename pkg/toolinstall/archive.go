@@ -210,7 +210,7 @@ func extractZip(ra io.ReaderAt, size int64, destDir string, files []PackageFile,
 		// UncompressedSize64 comes from the central directory and
 		// is attacker-controlled, but lets us reject obvious bombs
 		// without spending CPU on decompression first.
-		if f.UncompressedSize64 > uint64(maxFileUncompressed) {
+		if f.UncompressedSize64 > uint64(maxFileUncompressed) { //nolint:gosec // maxFileUncompressed is a positive constant
 			return errExtractTooLarge
 		}
 

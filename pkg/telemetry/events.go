@@ -43,7 +43,7 @@ func (tc *Client) track(_ context.Context, structuredEvent StructuredEvent, asyn
 	}
 
 	if async {
-		go tc.sendEvent(&event)
+		go tc.sendEvent(&event) //nolint:gosec // telemetry is fire-and-forget; sendEvent uses its own context internally
 	} else {
 		tc.sendEvent(&event)
 	}

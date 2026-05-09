@@ -2345,11 +2345,11 @@ func (m *appModel) openExternalEditor() (tea.Model, tea.Cmd) {
 	tmpPath := tmpFile.Name()
 
 	if _, err := tmpFile.WriteString(content); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
 		return m, notification.ErrorCmd(fmt.Sprintf("Failed to write temp file: %v", err))
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Get the editor command (VISUAL, EDITOR, or platform default)
 	editorCmd := cmp.Or(os.Getenv("VISUAL"), os.Getenv("EDITOR"))

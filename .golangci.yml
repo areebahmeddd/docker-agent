@@ -130,10 +130,30 @@ linters:
       checks:
         - all
     gosec:
-      includes:
-        - G301 # poor file permissions used when creating a directory
-        - G302 # poor file permissions used with chmod
-        - G306 # poor file permissions used when writing to a new file
+      excludes:
+        # Errors-unhandled is covered better by errcheck (already enabled);
+        # gosec's pattern matches many legitimate Close-on-error-path callsites.
+        - G104
+        # Hardcoded-credentials matches constant names like ToolNameLSPWorkspace*
+        # and intentionally-public client telemetry keys; secretsscan covers real cases.
+        - G101
+        # Subprocess-with-variable: docker-agent intentionally launches user-configured
+        # commands (LSP servers, hooks, agents, editors).
+        - G204
+        # File-inclusion-via-variable: paths come from CLI flags, config, and validated
+        # destinations throughout the codebase.
+        - G304
+        # Weak-RNG: math/rand is used for jitter, model selection, spinner animations —
+        # never for security.
+        - G404
+        # Slice-bounds: false positive on dynamically-validated indices.
+        - G602
+        # Path-traversal/SSRF/command-injection taint analysis: paths, URLs, and
+        # commands are derived from validated config (resolveToolsetPath, configured
+        # OAuth providers, user-set $EDITOR/$VISUAL).
+        - G702
+        - G703
+        - G704
   exclusions:
     generated: lax
     presets:

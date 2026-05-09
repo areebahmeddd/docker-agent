@@ -351,7 +351,7 @@ func extractMimeType(dataURLPrefix string) string {
 func (c *Client) buildConfig() *genai.GenerateContentConfig {
 	config := &genai.GenerateContentConfig{}
 	if c.ModelConfig.MaxTokens != nil {
-		config.MaxOutputTokens = int32(*c.ModelConfig.MaxTokens)
+		config.MaxOutputTokens = int32(*c.ModelConfig.MaxTokens) //nolint:gosec // user-configured token count; realistic values fit in int32
 	}
 	if c.ModelConfig.Temperature != nil {
 		config.Temperature = new(float32(*c.ModelConfig.Temperature))
@@ -450,7 +450,7 @@ func gemini3ThinkingLevel(effortStr string) (genai.ThinkingLevel, bool) {
 // applyGemini25ThinkingBudget applies token-based thinking for Gemini 2.5 and other models.
 func (c *Client) applyGemini25ThinkingBudget(config *genai.GenerateContentConfig) {
 	tokens := c.ModelConfig.ThinkingBudget.Tokens
-	config.ThinkingConfig.ThinkingBudget = new(int32(tokens))
+	config.ThinkingConfig.ThinkingBudget = new(int32(tokens)) //nolint:gosec // user-configured thinking budget fits in int32
 	slog.Debug("Gemini request using thinking_budget", "budget_tokens", tokens)
 }
 

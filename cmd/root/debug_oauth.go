@@ -95,7 +95,7 @@ func printOAuthListJSON(w io.Writer, entries []mcp.OAuthTokenEntry) error {
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return enc.Encode(out) //nolint:gosec // debug command intentionally surfaces (truncated) access tokens
 }
 
 func printOAuthListText(w io.Writer, entries []mcp.OAuthTokenEntry) {
