@@ -452,6 +452,71 @@ func TestToolCallSequence(t *testing.T) {
 	require.True(t, hasEventType(t, events, &StreamStoppedEvent{}), "Expected StreamStoppedEvent")
 }
 
+// TestXMLToolCallFallback verifies that <tool_call> blocks in text content
+// are extracted as tool calls and not leaked as AgentChoice events.
+func TestXMLToolCallFallback(t *testing.T) {
+	xmlPayload := `<tool_call>
+{"name": "shell_exec", "arguments": {"cmd": "ls -la"}}
+</tool_call>`
+
+	stream := newStreamBuilder().
+		AddContent(xmlPayload).
+		AddStopWithUsage(10, 15).
+		Build()
+
+	sess := session.New(session.WithUserMessage("list files"))
+	events := runSession(t, sess, stream)
+
+	// The XML should be promoted to a PartialToolCall, not remain as plain text.
+	require.True(t, hasEventType(t, events, &PartialToolCallEvent{}), "Expected PartialToolCallEvent from XML extraction")
+
+	// No raw XML should have been emitted as an AgentChoice event.
+	for _, ev := range events {
+		if choice, ok := ev.(*AgentChoiceEvent); ok {
+			require.NotContains(t, choice.Content, "<tool_call>", "XML tool call block must not appear in AgentChoice events")
+		}
+	}
+
+	// Verify the extracted tool call fields.
+	for _, ev := range events {
+		if partial, ok := ev.(*PartialToolCallEvent); ok {
+			require.Equal(t, "shell_exec", partial.ToolCall.Function.Name)
+			require.JSONEq(t, `{"cmd": "ls -la"}`, partial.ToolCall.Function.Arguments)
+		}
+	}
+}
+
+// TestXMLToolCallFallback_WithPreamble verifies that preamble text before a
+// <tool_call> block is emitted as AgentChoice while the XML is suppressed.
+func TestXMLToolCallFallback_WithPreamble(t *testing.T) {
+	stream := newStreamBuilder().
+		AddContent("I'll list the files for you.\n").
+		AddContent(`<tool_call>{"name": "ls", "arguments": {"path": "/tmp"}}</tool_call>`).
+		AddStopWithUsage(12, 18).
+		Build()
+
+	sess := session.New(session.WithUserMessage("list /tmp"))
+	events := runSession(t, sess, stream)
+
+	// Preamble text must have been emitted as AgentChoice.
+	var choiceContents []string
+	for _, ev := range events {
+		if choice, ok := ev.(*AgentChoiceEvent); ok {
+			choiceContents = append(choiceContents, choice.Content)
+		}
+	}
+	require.NotEmpty(t, choiceContents, "Expected AgentChoice events for preamble")
+	require.Contains(t, strings.Join(choiceContents, ""), "I'll list the files for you.")
+
+	// XML itself must not leak into AgentChoice.
+	for _, c := range choiceContents {
+		require.NotContains(t, c, "<tool_call>")
+	}
+
+	// Tool must still be extracted.
+	require.True(t, hasEventType(t, events, &PartialToolCallEvent{}))
+}
+
 func TestErrorEvent(t *testing.T) {
 	prov := &mockProviderWithError{id: "test/error-model"}
 	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
