@@ -450,7 +450,7 @@ func (r *Repo) DiffFull(ctx context.Context, from, to string) ([]FileDiff, error
 }
 
 func (r *Repo) ensure(ctx context.Context) error {
-	if err := os.MkdirAll(r.gitdir, 0o755); err != nil {
+	if err := os.MkdirAll(r.gitdir, 0o755); err != nil { //nolint:gosec // 0o755 matches the layout `git init` itself creates
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(r.gitdir, "HEAD")); err == nil {
@@ -616,10 +616,10 @@ func (r *Repo) syncExcludes(ctx context.Context, list []string) error {
 		text += "\n"
 	}
 	target := filepath.Join(r.gitdir, "info", "exclude")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil { //nolint:gosec // mirrors what git writes into .git/info
 		return err
 	}
-	return os.WriteFile(target, []byte(text), 0o644)
+	return os.WriteFile(target, []byte(text), 0o644) //nolint:gosec // mirrors what git writes for .git/info/exclude
 }
 
 func (r *Repo) args(cmd ...string) []string {

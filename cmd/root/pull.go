@@ -64,7 +64,7 @@ func (f *pullFlags) runPullCommand(cmd *cobra.Command, args []string) (commandEr
 	agentName := strings.ReplaceAll(registryRef, "/", "_")
 	fileName := agentName + ".yaml"
 
-	if err := os.WriteFile(fileName, []byte(yamlFile), 0o644); err != nil {
+	if err := os.WriteFile(fileName, []byte(yamlFile), 0o644); err != nil { //nolint:gosec // pulled agent yaml is meant to be readable
 		return err
 	}
 

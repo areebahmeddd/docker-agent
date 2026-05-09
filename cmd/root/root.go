@@ -274,7 +274,7 @@ func isFirstRun() bool {
 	}
 
 	// Atomically create the marker file. If it already exists, OpenFile returns an error.
-	f, err := os.OpenFile(markerFile, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := os.OpenFile(markerFile, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644) //nolint:gosec // empty marker file with no sensitive content
 	if err != nil {
 		return false // File already exists or other error, not first run
 	}

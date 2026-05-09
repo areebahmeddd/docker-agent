@@ -55,7 +55,7 @@ func installGoPackage(ctx context.Context, pkg *Package, version string) (string
 		installVersion = "v" + installVersion
 	}
 
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := os.MkdirAll(binDir, 0o755); err != nil { //nolint:gosec // bin dir holds installed tool binaries; needs traversal/exec
 		return "", fmt.Errorf("creating bin directory: %w", err)
 	}
 
@@ -110,7 +110,7 @@ func (r *Registry) installGitHubRelease(ctx context.Context, pkg *Package, versi
 	}
 	defer body.Close()
 
-	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil { //nolint:gosec // package dir holds installed tool binaries; needs traversal/exec
 		return "", fmt.Errorf("creating package directory: %w", err)
 	}
 
@@ -126,7 +126,7 @@ func (r *Registry) installGitHubRelease(ctx context.Context, pkg *Package, versi
 		}
 	}
 
-	if err := os.Chmod(binaryPath, 0o755); err != nil {
+	if err := os.Chmod(binaryPath, 0o755); err != nil { //nolint:gosec // installed binary must be executable
 		return "", fmt.Errorf("setting executable permissions: %w", err)
 	}
 
@@ -210,7 +210,7 @@ func resolveForPlatform(pkg *Package, version string) platformConfig {
 // goroutines create symlinks concurrently.
 func ensureSymlink(name, target string) error {
 	binDir := BinDir()
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := os.MkdirAll(binDir, 0o755); err != nil { //nolint:gosec // bin dir holds installed tool binaries; needs traversal/exec
 		return fmt.Errorf("creating bin directory: %w", err)
 	}
 

@@ -25,6 +25,7 @@ linters:
     - gochecknoinits
     - gochecksumtype
     - gocritic
+    - gosec
     - gomoddirectives
     - gomodguard_v2
     - goprintffuncname
@@ -128,6 +129,11 @@ linters:
     staticcheck:
       checks:
         - all
+    gosec:
+      includes:
+        - G301 # poor file permissions used when creating a directory
+        - G302 # poor file permissions used with chmod
+        - G306 # poor file permissions used when writing to a new file
   exclusions:
     generated: lax
     presets:
@@ -137,6 +143,9 @@ linters:
       - path-except: _test\.go
         linters:
           - forbidigo
+      - path: _test\.go
+        linters:
+          - gosec
       - path: pkg/model/provider/oaistream/
         linters:
           - staticcheck

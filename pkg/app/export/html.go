@@ -151,7 +151,7 @@ func ToFile(data SessionData, filename string) (string, error) {
 		return "", fmt.Errorf("failed to generate HTML: %w", err)
 	}
 
-	if err := os.WriteFile(filename, []byte(htmlContent), 0o644); err != nil {
+	if err := os.WriteFile(filename, []byte(htmlContent), 0o644); err != nil { //nolint:gosec // exported HTML is meant to be readable by browsers/users
 		return "", fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -360,13 +360,13 @@ func Generate(data SessionData) (string, error) {
 		JS:               template.JS(jsCode),
 		FormattedDate:    data.CreatedAt.Format("January 2, 2006 at 3:04 PM"),
 		SidebarDate:      data.CreatedAt.Format("Jan 2, 2006"),
-		MessagesHTML:     template.HTML(messagesBuilder.String()), //nolint:gosec // Content is already escaped by sub-templates
+		MessagesHTML:     template.HTML(messagesBuilder.String()),
 		PrimaryAgent:     primaryAgent,
 		AgentDescription: data.AgentDescription,
 		ToolsUsedCount:   len(toolsUsed),
 		TotalTokens:      totalTokens,
 		FormattedTokens:  formatTokens(totalTokens),
-		FormattedCost:    template.HTML(formatCost(data.Cost)), //nolint:gosec // formatCost returns safe HTML
+		FormattedCost:    template.HTML(formatCost(data.Cost)),
 	}
 
 	var buf bytes.Buffer
@@ -425,7 +425,7 @@ func renderUserMessage(msg Message, showLabel bool) (string, error) {
 		LabelName:    "you",
 		LabelClasses: "bg-tui-yellow/20 text-tui-yellow",
 		ShowLabel:    showLabel,
-		ContentHTML:  template.HTML(content), //nolint:gosec // Content is escaped above
+		ContentHTML:  template.HTML(content),
 	}
 
 	var buf bytes.Buffer
@@ -446,8 +446,8 @@ func renderAssistantMessage(msg Message, toolResults map[string]string, showLabe
 		LabelName:        agentName,
 		LabelClasses:     "bg-tui-cyan/20 text-tui-cyan",
 		ShowLabel:        showLabel,
-		ChevronRightIcon: template.HTML(svgChevronRight), //nolint:gosec // Constant SVG
-		ChevronDownIcon:  template.HTML(svgChevronDown),  //nolint:gosec // Constant SVG
+		ChevronRightIcon: template.HTML(svgChevronRight),
+		ChevronDownIcon:  template.HTML(svgChevronDown),
 	}
 
 	// Reasoning content (if present)
@@ -455,7 +455,7 @@ func renderAssistantMessage(msg Message, toolResults map[string]string, showLabe
 		reasoning := template.HTMLEscapeString(msg.ReasoningContent)
 		reasoning = strings.ReplaceAll(reasoning, "\n", "<br>")
 		data.HasReasoning = true
-		data.ReasoningHTML = template.HTML(reasoning) //nolint:gosec // Content is escaped above
+		data.ReasoningHTML = template.HTML(reasoning)
 	}
 
 	// Main content - render as Markdown
@@ -464,7 +464,7 @@ func renderAssistantMessage(msg Message, toolResults map[string]string, showLabe
 		if err != nil {
 			return "", fmt.Errorf("failed to render markdown: %w", err)
 		}
-		data.ContentHTML = template.HTML(contentHTML) //nolint:gosec // Markdown renderer produces safe HTML
+		data.ContentHTML = template.HTML(contentHTML)
 	}
 
 	// Tool calls with their results
@@ -485,7 +485,7 @@ func renderAssistantMessage(msg Message, toolResults map[string]string, showLabe
 		}
 		toolsBuilder.WriteString(`</div>`)
 		data.HasToolCalls = true
-		data.ToolCallsHTML = template.HTML(toolsBuilder.String()) //nolint:gosec // Content is escaped by renderToolCall
+		data.ToolCallsHTML = template.HTML(toolsBuilder.String())
 	}
 
 	var buf bytes.Buffer
@@ -502,9 +502,9 @@ func renderToolCall(name, args, result string) (string, error) {
 		Result:            result,
 		HasArguments:      args != "" && args != "{}" && args != "null",
 		HasResult:         result != "",
-		ChevronRightMuted: template.HTML(svgChevronRightMuted), //nolint:gosec // Constant SVG
-		ChevronDownMuted:  template.HTML(svgChevronDownMuted),  //nolint:gosec // Constant SVG
-		CheckCircle:       template.HTML(svgCheckCircle),       //nolint:gosec // Constant SVG
+		ChevronRightMuted: template.HTML(svgChevronRightMuted),
+		ChevronDownMuted:  template.HTML(svgChevronDownMuted),
+		CheckCircle:       template.HTML(svgCheckCircle),
 	}
 
 	var buf bytes.Buffer

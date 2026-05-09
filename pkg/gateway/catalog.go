@@ -137,7 +137,7 @@ func saveToDisk(path string, catalog Catalog, etag string) {
 			slog.Warn("Failed to create MCP catalog temp file", "error", err)
 			return
 		}
-		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil { //nolint:gosec // shared with other docker MCP gateway processes
 			slog.Warn("Failed to create MCP catalog cache directory", "error", mkErr)
 			return
 		}
