@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,7 +39,8 @@ func Dir() string {
 //
 // The registry directory is created with 0o700 so other local users cannot
 // enumerate live PIDs/addresses by listing it. Individual records are still
-// written with 0o600 for the same reason.
+// written with 0o600 for the same reason. Writes go through a sibling temp
+// file + rename so concurrent readers never see torn JSON.
 func Write(rec Record) (func(), error) {
 	if err := os.MkdirAll(Dir(), 0o700); err != nil {
 		return nil, fmt.Errorf("creating run registry dir: %w", err)
@@ -49,11 +51,43 @@ func Write(rec Record) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(path, buf, 0o600); err != nil {
+	if err := writeAtomic(path, buf, 0o600); err != nil {
 		return nil, err
 	}
 
 	return func() { _ = os.Remove(path) }, nil
+}
+
+// writeAtomic writes data to path through a sibling temp file + rename so
+// readers never observe a partially-written file.
+func writeAtomic(path string, data []byte, perm os.FileMode) error {
+	dir, name := filepath.Split(path)
+	tmp, err := os.CreateTemp(dir, name+".*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 // List returns every record currently registered. Stale records (whose pid is
@@ -96,13 +130,82 @@ func Latest() (Record, bool, error) {
 	if err != nil || len(records) == 0 {
 		return Record{}, false, err
 	}
-	latest := records[0]
-	for _, r := range records[1:] {
-		if r.StartedAt.After(latest.StartedAt) {
-			latest = r
+	latest := slices.MaxFunc(records, func(a, b Record) int {
+		return a.StartedAt.Compare(b.StartedAt)
+	})
+	return latest, true, nil
+}
+
+// ErrNoRun is returned when no live run can be found that satisfies the
+// caller's request (empty registry, or no record matches the target).
+var ErrNoRun = errors.New("no live docker-agent run found; start one with: docker-agent run --listen 127.0.0.1:0")
+
+// Find resolves a target reference to a single live record.
+//
+// An empty target returns the most recently started run. A numeric target is
+// matched by PID; a target starting with "http://" or "https://" is matched
+// against record addresses; anything else is matched as a (possibly partial)
+// session ID. Matching is exact for PID and addr, prefix-or-substring for
+// session ID; ambiguous matches return an error so callers don't act on the
+// wrong session.
+func Find(target string) (Record, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		rec, ok, err := Latest()
+		if err != nil {
+			return Record{}, err
+		}
+		if !ok {
+			return Record{}, ErrNoRun
+		}
+		return rec, nil
+	}
+
+	records, err := List()
+	if err != nil {
+		return Record{}, err
+	}
+	if len(records) == 0 {
+		return Record{}, ErrNoRun
+	}
+
+	if pid, err := strconv.Atoi(target); err == nil {
+		for _, r := range records {
+			if r.PID == pid {
+				return r, nil
+			}
+		}
+		return Record{}, fmt.Errorf("no live run with pid %d", pid)
+	}
+
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		want := strings.TrimRight(target, "/")
+		for _, r := range records {
+			if strings.TrimRight(r.Addr, "/") == want {
+				return r, nil
+			}
+		}
+		return Record{}, fmt.Errorf("no live run at %s", target)
+	}
+
+	var matches []Record
+	for _, r := range records {
+		if r.SessionID == target || strings.HasPrefix(r.SessionID, target) || strings.Contains(r.SessionID, target) {
+			matches = append(matches, r)
 		}
 	}
-	return latest, true, nil
+	switch len(matches) {
+	case 0:
+		return Record{}, fmt.Errorf("no live run matches %q (pid, http URL, or session id)", target)
+	case 1:
+		return matches[0], nil
+	default:
+		ids := make([]string, 0, len(matches))
+		for _, r := range matches {
+			ids = append(ids, r.SessionID)
+		}
+		return Record{}, fmt.Errorf("ambiguous target %q: matches sessions %s", target, strings.Join(ids, ", "))
+	}
 }
 
 // pidAlive reports whether the given pid corresponds to a live process.

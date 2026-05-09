@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"sync"
 
 	"github.com/spf13/cobra"
 
 	"github.com/docker/docker-agent/pkg/api"
+	"github.com/docker/docker-agent/pkg/runregistry"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/telemetry"
 )
@@ -41,7 +41,7 @@ Output objects always carry a "type" field.`,
 		RunE:    flags.run,
 	}
 
-	cmd.Flags().StringVar(&flags.target, "to", "", "Target run pid (defaults to the most recent live run)")
+	cmd.Flags().StringVar(&flags.target, "to", "", targetFlagUsage)
 	return cmd
 }
 
@@ -51,7 +51,7 @@ func (f *protoFlags) run(cmd *cobra.Command, args []string) (commandErr error) {
 	telemetry.TrackCommand(ctx, "proto", args)
 	defer func() { telemetry.TrackCommandError(ctx, "proto", args, commandErr) }()
 
-	rec, err := resolveTarget(f.target)
+	rec, err := runregistry.Find(f.target)
 	if err != nil {
 		return err
 	}
@@ -116,75 +116,65 @@ func readCommands(ctx context.Context, in io.Reader, client *runtime.Client, ses
 			continue
 		}
 
-		if err := dispatchProto(ctx, client, sessionID, req, w); err != nil {
+		handled, err := dispatchProto(ctx, client, sessionID, req, w)
+		if err != nil {
 			w.send(map[string]any{"id": req.ID, "type": "error", "message": err.Error()})
 			continue
 		}
-		w.send(map[string]any{"id": req.ID, "type": "ack"})
+		// Skip the generic ack when the dispatcher already produced a
+		// typed reply (e.g. transcript), to avoid two responses per
+		// request.
+		if !handled {
+			w.send(map[string]any{"id": req.ID, "type": "ack"})
+		}
 	}
 	return scanner.Err()
 }
 
-func dispatchProto(ctx context.Context, client *runtime.Client, sessionID string, req protoRequest, w *protoWriter) error {
+// dispatchProto routes a request to the runtime client. The bool return is
+// true when dispatchProto already produced a typed reply on w; in that case
+// the caller MUST NOT emit a generic "ack".
+func dispatchProto(ctx context.Context, client *runtime.Client, sessionID string, req protoRequest, w *protoWriter) (bool, error) {
 	switch req.Type {
 	case "send":
-		return client.SteerSession(ctx, sessionID, []api.Message{{Content: req.Message}})
+		return false, client.SteerSession(ctx, sessionID, []api.Message{{Content: req.Message}})
 	case "followup":
-		return client.FollowUpSession(ctx, sessionID, []api.Message{{Content: req.Message}})
+		return false, client.FollowUpSession(ctx, sessionID, []api.Message{{Content: req.Message}})
 	case "resume":
 		decision := req.Decision
 		if decision == "" {
 			decision = "approve"
 		}
-		return client.ResumeSession(ctx, sessionID, decision, req.Reason, req.ToolName)
+		return false, client.ResumeSession(ctx, sessionID, decision, req.Reason, req.ToolName)
 	case "interrupt":
-		return client.ResumeSession(ctx, sessionID, "reject", req.Reason, req.ToolName)
+		return false, client.ResumeSession(ctx, sessionID, "reject", req.Reason, req.ToolName)
 	case "transcript":
 		sess, err := client.GetSession(ctx, sessionID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		messages := sess.Messages
 		if req.Limit > 0 && len(messages) > req.Limit {
 			messages = messages[len(messages)-req.Limit:]
 		}
 		w.send(map[string]any{"id": req.ID, "type": "transcript", "title": sess.Title, "messages": messages})
-		return nil
+		return true, nil
 	default:
-		return fmt.Errorf("unknown request type %q", req.Type)
+		return false, fmt.Errorf("unknown request type %q", req.Type)
 	}
 }
 
+// streamEvents forwards every SSE event received from the run's control
+// plane as a {"type":"event","event":<raw json>} envelope on w.
 func streamEvents(ctx context.Context, addr, sessionID string, w *protoWriter) {
-	url := addr + "/api/sessions/" + sessionID + "/events"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	body, err := openEventStream(ctx, addr, sessionID)
 	if err != nil {
 		return
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode >= 400 {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return
-	}
-	defer resp.Body.Close()
+	defer body.Close()
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		if ctx.Err() != nil {
-			return
-		}
-		line := scanner.Bytes()
-		after, ok := bytes.CutPrefix(line, []byte("data: "))
-		if !ok {
-			continue
-		}
-		var event any
-		if err := json.Unmarshal(after, &event); err != nil {
-			continue
-		}
-		w.send(map[string]any{"type": "event", "event": event})
-	}
+	_ = readEventStream(ctx, body, func(payload json.RawMessage) error {
+		w.send(map[string]any{"type": "event", "event": payload})
+		return nil
+	})
 }

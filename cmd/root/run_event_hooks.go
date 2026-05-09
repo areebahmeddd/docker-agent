@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/shellpath"
 )
 
 type onEventHook struct {
@@ -67,9 +68,11 @@ func withEventHooks(hooks []onEventHook) app.Opt {
 }
 
 func runEventHook(command string, payload []byte) {
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", command)
+	shell, argsPrefix := shellpath.DetectShell()
+	cmd := exec.CommandContext(context.Background(), shell, append(argsPrefix, command)...)
 	cmd.Stdin = bytes.NewReader(payload)
-	if err := cmd.Run(); err != nil {
-		slog.Warn("on-event hook failed", "command", command, "error", err)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		slog.Warn("on-event hook failed", "command", command, "error", err, "output", strings.TrimSpace(string(out)))
 	}
 }

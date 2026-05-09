@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/mcp"
+	"github.com/docker/docker-agent/pkg/runregistry"
 	"github.com/docker/docker-agent/pkg/telemetry"
 )
 
@@ -38,7 +39,7 @@ func newMCPCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVarP(&flags.agentName, "agent", "a", "", "Name of the agent to run (all agents if not specified)")
 	cmd.PersistentFlags().BoolVar(&flags.http, "http", false, "Use streaming HTTP transport instead of stdio")
 	cmd.PersistentFlags().StringVarP(&flags.listenAddr, "listen", "l", "127.0.0.1:8081", "Address to listen on")
-	cmd.PersistentFlags().StringVar(&flags.attach, "attach", "", "Attach to a running TUI run by pid (or empty for the most recent)")
+	cmd.PersistentFlags().StringVar(&flags.attach, "attach", "", "Attach to a running TUI run by pid, address, or session id (or empty for the most recent)")
 	cmd.PersistentFlags().Lookup("attach").NoOptDefVal = "latest"
 	cmd.PersistentFlags().StringVar(&flags.runConfig.MCPToolName, "tool-name", "", "Override the MCP tool identifier clients call (defaults to agent name); only valid when exposing a single agent")
 	cmd.PersistentFlags().DurationVar(&flags.runConfig.MCPKeepAlive, "mcp-keepalive", 0, "Interval between MCP keep-alive pings (e.g. 30s); 0 disables keep-alive")
@@ -81,7 +82,7 @@ func (f *mcpFlags) runAttach(ctx context.Context) error {
 	if target == "latest" {
 		target = ""
 	}
-	rec, err := resolveTarget(target)
+	rec, err := runregistry.Find(target)
 	if err != nil {
 		return err
 	}
