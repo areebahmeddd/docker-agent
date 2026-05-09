@@ -574,6 +574,11 @@ func (r *RemoteRuntime) SupportsModelSwitching() bool {
 	return false
 }
 
+// OnToolsChanged is a no-op for remote runtimes; tool-list changes are
+// observed server-side and surface through the run-stream events rather
+// than via an out-of-band callback.
+func (r *RemoteRuntime) OnToolsChanged(func(Event)) {}
+
 // Close is a no-op for remote runtimes.
 func (r *RemoteRuntime) Close() error {
 	return nil

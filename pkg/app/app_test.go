@@ -87,6 +87,7 @@ func (m *mockRuntime) SetAgentModel(context.Context, string, string) error {
 }
 func (m *mockRuntime) AvailableModels(context.Context) []runtime.ModelChoice { return nil }
 func (m *mockRuntime) SupportsModelSwitching() bool                          { return false }
+func (m *mockRuntime) OnToolsChanged(func(runtime.Event))                    {}
 
 // Verify mockRuntime implements runtime.Runtime
 var _ runtime.Runtime = (*mockRuntime)(nil)

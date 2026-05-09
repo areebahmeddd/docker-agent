@@ -77,6 +77,7 @@ func (m *mockRuntime) TogglePause(context.Context) (bool, error)           { ret
 func (m *mockRuntime) SetAgentModel(context.Context, string, string) error { return nil }
 func (m *mockRuntime) AvailableModels(context.Context) []ModelChoice       { return nil }
 func (m *mockRuntime) SupportsModelSwitching() bool                        { return false }
+func (m *mockRuntime) OnToolsChanged(func(Event))                          {}
 
 func (m *mockRuntime) RegenerateTitle(context.Context, *session.Session, chan Event) {
 }

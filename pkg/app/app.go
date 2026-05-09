@@ -139,14 +139,12 @@ func New(ctx context.Context, rt runtime.Runtime, sess *session.Session, opts ..
 
 	// Subscribe to tool list changes so the sidebar updates immediately
 	// when an MCP server adds or removes tools (outside of a RunStream).
-	if tcs := runtime.ToolsChangeSubscriberOf(rt); tcs != nil {
-		tcs.OnToolsChanged(func(event runtime.Event) {
-			select {
-			case app.events <- event:
-			case <-ctx.Done():
-			}
-		})
-	}
+	rt.OnToolsChanged(func(event runtime.Event) {
+		select {
+		case app.events <- event:
+		case <-ctx.Done():
+		}
+	})
 
 	return app
 }
