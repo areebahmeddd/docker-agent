@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -130,6 +129,11 @@ func addRunOrExecFlags(cmd *cobra.Command, flags *runExecFlags) {
 	cmd.PersistentFlags().StringVar(&flags.sandboxTemplate, "template", "docker/sandbox-templates:docker-agent", "Template image for the sandbox (passed to docker sandbox create -t)")
 	cmd.PersistentFlags().BoolVar(&flags.sbx, "sbx", true, "Prefer the sbx CLI backend when available (set --sbx=false to force docker sandbox)")
 	cmd.MarkFlagsMutuallyExclusive("fake", "record")
+	cmd.MarkFlagsMutuallyExclusive("remote", "sandbox")
+	cmd.MarkFlagsMutuallyExclusive("remote", "session-db")
+	cmd.MarkFlagsMutuallyExclusive("remote", "session")
+	cmd.MarkFlagsMutuallyExclusive("remote", "record")
+	cmd.MarkFlagsMutuallyExclusive("remote", "fake")
 
 	// --exec only
 	cmd.PersistentFlags().BoolVar(&flags.exec, "exec", false, "Execute without a TUI")
@@ -242,47 +246,21 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		out.Println("Recording mode enabled, cassette: " + cassettePath)
 	}
 
-	// Remote runtime
-	if f.remoteAddress != "" {
-		rt, sess, err := f.createRemoteRuntimeAndSession(ctx, agentFileName)
-		if err != nil {
-			return err
-		}
-		return f.launchTUI(ctx, out, rt, sess, args, useTUI)
-	}
-
-	// Local runtime
-	agentSource, err := config.Resolve(agentFileName, f.runConfig.EnvProvider())
+	b, err := f.selectBackend(agentFileName)
 	if err != nil {
 		return err
 	}
-
-	loadResult, err := f.loadAgentFrom(ctx, agentSource)
-	if err != nil {
-		return err
-	}
-
-	rt, sess, err := f.createLocalRuntimeAndSession(ctx, loadResult)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := rt.Close(); err != nil {
-			slog.ErrorContext(ctx, "Failed to close runtime", "error", err)
-		}
-	}()
-	var initialTeamCleanupOnce sync.Once
-	initialTeamCleanup := func() {
-		initialTeamCleanupOnce.Do(func() {
-			stopToolSets(loadResult.Team)
-		})
-	}
-	defer initialTeamCleanup()
 
 	if f.dryRun {
 		out.Println("Dry run mode enabled. Agent initialized but will not execute.")
 		return nil
 	}
+
+	rt, sess, cleanup, err := b.CreateRuntimeAndSession(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	if !useTUI {
 		return f.handleExecMode(ctx, out, rt, sess, args)
@@ -310,63 +288,59 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		opts = append(opts, hookOpt)
 	}
 
-	sessStore := rt.SessionStore()
-	return runTUI(ctx, rt, sess, f.createSessionSpawner(agentSource, sessStore), initialTeamCleanup, f.tuiOpts(), opts...)
+	return runTUI(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(), opts...)
 }
 
-func (f *runExecFlags) loadAgentFrom(ctx context.Context, agentSource config.Source) (*teamloader.LoadResult, error) {
+func (f *runExecFlags) loadAgentFrom(ctx context.Context, req LoadTeamRequest) (*teamloader.LoadResult, error) {
 	opts := []teamloader.Opt{
-		teamloader.WithModelOverrides(f.modelOverrides),
+		teamloader.WithModelOverrides(req.ModelOverrides),
 	}
-	if len(f.promptFiles) > 0 {
-		opts = append(opts, teamloader.WithPromptFiles(f.promptFiles))
+	if len(req.PromptFiles) > 0 {
+		opts = append(opts, teamloader.WithPromptFiles(req.PromptFiles))
 	}
-	return teamloader.LoadWithConfig(ctx, agentSource, &f.runConfig, opts...)
+	return teamloader.LoadWithConfig(ctx, req.Source, req.RunConfig, opts...)
 }
 
-func (f *runExecFlags) createRemoteRuntimeAndSession(ctx context.Context, originalFilename string) (runtime.Runtime, *session.Session, error) {
-	client, err := runtime.NewClient(f.remoteAddress)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create remote client: %w", err)
+// runtimeOpts returns the runtime options derived from the current flags,
+// the loaded team and the runtime configuration. The session store and the
+// current agent name are passed in because they're resolved by callers from
+// different sources (e.g. the spawner uses the same store as the parent).
+func (f *runExecFlags) runtimeOpts(loadResult *teamloader.LoadResult, runConfig *config.RuntimeConfig, sessStore session.Store, agentName string) []runtime.Opt {
+	modelSwitcherCfg := &runtime.ModelSwitcherConfig{
+		Models:             loadResult.Models,
+		Providers:          loadResult.Providers,
+		ModelsGateway:      runConfig.ModelsGateway,
+		EnvProvider:        runConfig.EnvProvider(),
+		AgentDefaultModels: loadResult.AgentDefaultModels,
 	}
-
-	sessTemplate := session.New(
-		session.WithToolsApproved(f.autoApprove),
-	)
-
-	sess, err := client.CreateSession(ctx, sessTemplate)
-	if err != nil {
-		return nil, nil, err
+	opts := []runtime.Opt{
+		runtime.WithSessionStore(sessStore),
+		runtime.WithCurrentAgent(agentName),
+		runtime.WithTracer(otel.Tracer(AppName)),
+		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
 	}
-
-	remoteRt, err := runtime.NewRemoteRuntime(client,
-		runtime.WithRemoteCurrentAgent(f.agentName),
-		runtime.WithRemoteAgentFilename(originalFilename),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create remote runtime: %w", err)
+	if f.snapshotsEnabled {
+		opts = append(opts, runtime.WithSnapshots(true))
 	}
-
-	slog.DebugContext(ctx, "Using remote runtime", "address", f.remoteAddress, "agent", f.agentName)
-	return remoteRt, sess, nil
+	return opts
 }
 
-func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult) (runtime.Runtime, *session.Session, error) {
+func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req CreateSessionRequest) (runtime.Runtime, *session.Session, error) {
 	t := loadResult.Team
 
 	// Merge user-level global permissions into the team's checker so the
 	// runtime receives a single, already-merged permission set.
-	if f.globalPermissions != nil && !f.globalPermissions.IsEmpty() {
-		t.SetPermissions(permissions.Merge(t.Permissions(), f.globalPermissions))
+	if req.GlobalPermissions != nil && !req.GlobalPermissions.IsEmpty() {
+		t.SetPermissions(permissions.Merge(t.Permissions(), req.GlobalPermissions))
 	}
 
-	agt, err := t.AgentOrDefault(f.agentName)
+	agt, err := t.AgentOrDefault(req.AgentName)
 	if err != nil {
 		return nil, nil, err
 	}
 	agentName := agt.Name()
 
-	sessionDB, err := pathx.ExpandHomeDir(f.sessionDB)
+	sessionDB, err := pathx.ExpandHomeDir(req.SessionDB)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -376,35 +350,17 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		return nil, nil, fmt.Errorf("creating session store: %w", err)
 	}
 
-	// Create model switcher config for runtime model switching support
-	modelSwitcherCfg := &runtime.ModelSwitcherConfig{
-		Models:             loadResult.Models,
-		Providers:          loadResult.Providers,
-		ModelsGateway:      f.runConfig.ModelsGateway,
-		EnvProvider:        f.runConfig.EnvProvider(),
-		AgentDefaultModels: loadResult.AgentDefaultModels,
-	}
-
-	runtimeOpts := []runtime.Opt{
-		runtime.WithSessionStore(sessStore),
-		runtime.WithCurrentAgent(agentName),
-		runtime.WithTracer(otel.Tracer(AppName)),
-		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
-	}
-	if f.snapshotsEnabled {
-		runtimeOpts = append(runtimeOpts, runtime.WithSnapshots(true))
-	}
-	localRt, err := runtime.New(t, runtimeOpts...)
+	localRt, err := runtime.New(t, f.runtimeOpts(loadResult, &f.runConfig, sessStore, agentName)...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating runtime: %w", err)
 	}
 
 	var sess *session.Session
-	if f.sessionID != "" {
+	if req.ResumeSessionID != "" {
 		// Resolve relative session references (e.g., "-1" for last session)
-		resolvedID, err := session.ResolveSessionID(ctx, sessStore, f.sessionID)
+		resolvedID, err := session.ResolveSessionID(ctx, sessStore, req.ResumeSessionID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolving session %q: %w", f.sessionID, err)
+			return nil, nil, fmt.Errorf("resolving session %q: %w", req.ResumeSessionID, err)
 		}
 
 		// Load existing session
@@ -412,12 +368,12 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		if err != nil {
 			return nil, nil, fmt.Errorf("loading session %q: %w", resolvedID, err)
 		}
-		sess.ToolsApproved = f.autoApprove
-		sess.HideToolResults = f.hideToolResults
+		sess.ToolsApproved = req.ToolsApproved
+		sess.HideToolResults = req.HideToolResults
 
 		// Apply any stored model overrides from the session
 		if len(sess.AgentModelOverrides) > 0 {
-			if modelSwitcher, ok := localRt.(runtime.ModelSwitcher); ok {
+			if modelSwitcher := runtime.ModelSwitcherOf(localRt); modelSwitcher != nil {
 				for agentName, modelRef := range sess.AgentModelOverrides {
 					if err := modelSwitcher.SetAgentModel(ctx, agentName, modelRef); err != nil {
 						slog.WarnContext(ctx, "Failed to apply stored model override", "agent", agentName, "model", modelRef, "error", err)
@@ -426,10 +382,9 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 			}
 		}
 
-		slog.DebugContext(ctx, "Loaded existing session", "session_id", resolvedID, "session_ref", f.sessionID, "agent", agentName)
+		slog.DebugContext(ctx, "Loaded existing session", "session_id", resolvedID, "session_ref", req.ResumeSessionID, "agent", agentName)
 	} else {
-		wd, _ := os.Getwd()
-		sess = session.New(f.buildSessionOpts(agt, wd)...)
+		sess = session.New(f.buildSessionOpts(agt, req)...)
 		// Session is stored lazily on first UpdateSession call (when content is added)
 		// This avoids creating empty sessions in the database
 		slog.DebugContext(ctx, "Using local runtime", "agent", agentName)
@@ -475,28 +430,6 @@ func readInitialMessage(args []string) (*string, error) {
 	return &args[1], nil
 }
 
-func (f *runExecFlags) launchTUI(ctx context.Context, out *cli.Printer, rt runtime.Runtime, sess *session.Session, args []string, useTUI bool) error {
-	if useTUI {
-		applyTheme()
-	}
-
-	if f.dryRun {
-		out.Println("Dry run mode enabled. Agent initialized but will not execute.")
-		return nil
-	}
-
-	if !useTUI {
-		return f.handleExecMode(ctx, out, rt, sess, args)
-	}
-
-	opts, err := f.buildAppOpts(args)
-	if err != nil {
-		return err
-	}
-
-	return runTUI(ctx, rt, sess, nil, nil, f.tuiOpts(), opts...)
-}
-
 // tuiOpts returns the TUI options derived from the current flags.
 func (f *runExecFlags) tuiOpts() []tui.Option {
 	var opts []tui.Option
@@ -536,14 +469,14 @@ func (f *runExecFlags) buildAppOpts(args []string) ([]app.Opt, error) {
 // buildSessionOpts returns the canonical set of session options derived from
 // CLI flags and agent configuration. Both the initial session and spawned
 // sessions use this method so their options never drift apart.
-func (f *runExecFlags) buildSessionOpts(agt *agent.Agent, workingDir string) []session.Opt {
+func (f *runExecFlags) buildSessionOpts(agt *agent.Agent, req CreateSessionRequest) []session.Opt {
 	return []session.Opt{
 		session.WithMaxIterations(agt.MaxIterations()),
 		session.WithMaxConsecutiveToolCalls(agt.MaxConsecutiveToolCalls()),
 		session.WithMaxOldToolCallTokens(agt.MaxOldToolCallTokens()),
-		session.WithToolsApproved(f.autoApprove),
-		session.WithHideToolResults(f.hideToolResults),
-		session.WithWorkingDir(workingDir),
+		session.WithToolsApproved(req.ToolsApproved),
+		session.WithHideToolResults(req.HideToolResults),
+		session.WithWorkingDir(req.WorkingDir),
 	}
 }
 
@@ -566,37 +499,21 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 			return nil, nil, nil, err
 		}
 
-		// Create model switcher config
-		modelSwitcherCfg := &runtime.ModelSwitcherConfig{
-			Models:             loadResult.Models,
-			Providers:          loadResult.Providers,
-			ModelsGateway:      runConfigCopy.ModelsGateway,
-			EnvProvider:        runConfigCopy.EnvProvider(),
-			AgentDefaultModels: loadResult.AgentDefaultModels,
-		}
-
 		// Merge global permissions into the team's checker
 		if f.globalPermissions != nil && !f.globalPermissions.IsEmpty() {
 			t.SetPermissions(permissions.Merge(t.Permissions(), f.globalPermissions))
 		}
 
-		// Create the local runtime
-		runtimeOpts := []runtime.Opt{
-			runtime.WithSessionStore(sessStore),
-			runtime.WithCurrentAgent(agt.Name()),
-			runtime.WithTracer(otel.Tracer(AppName)),
-			runtime.WithModelSwitcherConfig(modelSwitcherCfg),
-		}
-		if f.snapshotsEnabled {
-			runtimeOpts = append(runtimeOpts, runtime.WithSnapshots(true))
-		}
-		localRt, err := runtime.New(t, runtimeOpts...)
+		localRt, err := runtime.New(t, f.runtimeOpts(loadResult, runConfigCopy, sessStore, agt.Name())...)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 
 		// Create a new session
-		newSess := session.New(f.buildSessionOpts(agt, workingDir)...)
+		wd := workingDir
+		spawnReq := f.createSessionRequest(wd)
+		spawnReq.AgentName = agt.Name()
+		newSess := session.New(f.buildSessionOpts(agt, spawnReq)...)
 
 		// Create cleanup function
 		cleanup := func() {

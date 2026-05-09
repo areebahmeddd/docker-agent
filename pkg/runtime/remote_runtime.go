@@ -132,10 +132,9 @@ func (r *RemoteRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
 }
 
 // RestartToolset is not implemented for remote runtimes; toolset
-// restart is a server-side concern. Returns an error so the caller
-// can surface a clear message.
+// restart is a server-side concern.
 func (r *RemoteRuntime) RestartToolset(context.Context, string) error {
-	return errors.New("restart-toolset is not supported for remote runtimes")
+	return fmt.Errorf("restart-toolset: %w", ErrUnsupported)
 }
 
 // EmitStartupInfo emits initial agent, team, and toolset information
@@ -525,12 +524,17 @@ func (r *RemoteRuntime) CurrentMCPPrompts(context.Context) map[string]mcp.Prompt
 
 // ExecuteMCPPrompt is not supported on remote runtimes.
 func (r *RemoteRuntime) ExecuteMCPPrompt(context.Context, string, map[string]string) (string, error) {
-	return "", errors.New("MCP prompts are not supported by remote runtimes")
+	return "", fmt.Errorf("MCP prompts: %w", ErrUnsupported)
 }
 
 // TitleGenerator is not supported on remote runtimes (titles are generated server-side).
 func (r *RemoteRuntime) TitleGenerator() *sessiontitle.Generator {
 	return nil
+}
+
+// TogglePause is not yet supported on remote runtimes.
+func (r *RemoteRuntime) TogglePause(context.Context) (bool, error) {
+	return false, fmt.Errorf("pause: %w", ErrUnsupported)
 }
 
 // Close is a no-op for remote runtimes.

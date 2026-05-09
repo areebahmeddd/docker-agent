@@ -74,11 +74,12 @@ func (m *mockRuntime) UpdateSessionTitle(_ context.Context, sess *session.Sessio
 	sess.Title = title
 	return nil
 }
-func (m *mockRuntime) TitleGenerator() *sessiontitle.Generator { return nil }
-func (m *mockRuntime) Close() error                            { return nil }
-func (m *mockRuntime) Stop()                                   {}
-func (m *mockRuntime) Steer(_ runtime.QueuedMessage) error     { return nil }
-func (m *mockRuntime) FollowUp(_ runtime.QueuedMessage) error  { return nil }
+func (m *mockRuntime) TitleGenerator() *sessiontitle.Generator   { return nil }
+func (m *mockRuntime) Close() error                              { return nil }
+func (m *mockRuntime) Stop()                                     {}
+func (m *mockRuntime) Steer(_ runtime.QueuedMessage) error       { return nil }
+func (m *mockRuntime) FollowUp(_ runtime.QueuedMessage) error    { return nil }
+func (m *mockRuntime) TogglePause(context.Context) (bool, error) { return false, nil }
 func (m *mockRuntime) UndoLastSnapshot(context.Context, *session.Session) (int, bool, error) {
 	return m.undoFiles, m.undoOK, m.undoErr
 }

@@ -17,10 +17,17 @@ func TestTogglePause_StateCycles(t *testing.T) {
 
 	r := &LocalRuntime{}
 
-	assert.True(t, r.TogglePause(), "first toggle should pause")
-	assert.False(t, r.TogglePause(), "second toggle should resume")
-	assert.True(t, r.TogglePause(), "third toggle should pause again")
-	assert.False(t, r.TogglePause(), "fourth toggle should resume again")
+	assertToggle := func(want bool, msg string) {
+		t.Helper()
+		got, err := r.TogglePause(t.Context())
+		require.NoError(t, err)
+		assert.Equal(t, want, got, msg)
+	}
+
+	assertToggle(true, "first toggle should pause")
+	assertToggle(false, "second toggle should resume")
+	assertToggle(true, "third toggle should pause again")
+	assertToggle(false, "fourth toggle should resume again")
 }
 
 // TestWaitIfPaused_NotPaused returns immediately when the runtime isn't paused.
@@ -46,7 +53,7 @@ func TestWaitIfPaused_BlocksUntilResumed(t *testing.T) {
 	t.Parallel()
 
 	r := &LocalRuntime{}
-	r.TogglePause() // pause
+	_, _ = r.TogglePause(t.Context()) // pause
 
 	done := make(chan error, 1)
 	go func() { done <- r.waitIfPaused(t.Context()) }()
@@ -58,7 +65,7 @@ func TestWaitIfPaused_BlocksUntilResumed(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	r.TogglePause() // resume
+	_, _ = r.TogglePause(t.Context()) // resume
 
 	select {
 	case err := <-done:
@@ -74,7 +81,7 @@ func TestWaitIfPaused_ContextCancellation(t *testing.T) {
 	t.Parallel()
 
 	r := &LocalRuntime{}
-	r.TogglePause() // pause
+	_, _ = r.TogglePause(t.Context()) // pause
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -103,7 +110,7 @@ func TestWaitIfPaused_BroadcastsToAllWaiters(t *testing.T) {
 	t.Parallel()
 
 	r := &LocalRuntime{}
-	r.TogglePause()
+	_, _ = r.TogglePause(t.Context())
 
 	const n = 8
 	var wg sync.WaitGroup
@@ -115,7 +122,7 @@ func TestWaitIfPaused_BroadcastsToAllWaiters(t *testing.T) {
 
 	// Give them a moment to all enter waitIfPaused.
 	time.Sleep(50 * time.Millisecond)
-	r.TogglePause() // single resume should wake all waiters
+	_, _ = r.TogglePause(t.Context()) // single resume should wake all waiters
 
 	doneAll := make(chan struct{})
 	go func() {
@@ -146,7 +153,7 @@ func TestTogglePause_RaceFreeUnderConcurrentCallers(t *testing.T) {
 	for range togglers {
 		wg.Go(func() {
 			for range 200 {
-				r.TogglePause()
+				_, _ = r.TogglePause(ctx)
 			}
 		})
 	}
