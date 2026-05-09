@@ -33,7 +33,7 @@ require (
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-git/go-git/v5 v5.18.0
+	github.com/go-git/go-git/v5 v5.19.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-containerregistry v0.21.5
@@ -49,7 +49,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 	github.com/natefinch/atomic v1.0.1
-	github.com/openai/openai-go/v3 v3.34.0
+	github.com/openai/openai-go/v3 v3.35.0
 	github.com/pb33f/libopenapi v0.36.3
 	github.com/rivo/uniseg v0.4.7
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
@@ -89,6 +89,7 @@ require (
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/mtibben/percent v0.2.1 // indirect
 	github.com/pb33f/jsonpath v0.8.2 // indirect
@@ -152,7 +153,7 @@ require (
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
-	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
+	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgageot/rubocop-go v0.0.0-20260507084512-2695e6771458
 	github.com/distribution/reference v0.6.0 // indirect
@@ -166,7 +167,7 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fvbommel/sortorder v1.1.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
-	github.com/go-git/go-billy/v5 v5.8.0 // indirect
+	github.com/go-git/go-billy/v5 v5.9.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
@@ -206,7 +207,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible
-	github.com/pjbgf/sha1cd v0.3.2 // indirect
+	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
@@ -258,3 +259,5 @@ require (
 )
 
 replace github.com/charmbracelet/ultraviolet => github.com/dgageot/ultraviolet v0.0.0-20260313154905-9451997d56b6
+
+replace github.com/cyphar/filepath-securejoin => github.com/cyphar/filepath-securejoin v0.4.1
