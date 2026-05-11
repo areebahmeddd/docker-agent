@@ -175,7 +175,7 @@ func TestAttachedServer_StatusEndpointReturnsCurrentState(t *testing.T) {
 	fake := &fakeRuntime{}
 	sm.AttachRuntime(sess.ID, fake, sess)
 
-	srv := NewWithManager(sm)
+	srv := NewWithManager(sm, "")
 
 	ln, err := Listen(ctx, "127.0.0.1:0")
 	require.NoError(t, err)
@@ -207,7 +207,7 @@ func TestAttachedServer_FollowUpWhileIdleReturnsQueuedIdle(t *testing.T) {
 	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
 	sm.AttachRuntime(sess.ID, &fakeRuntime{}, sess)
 
-	srv := NewWithManager(sm)
+	srv := NewWithManager(sm, "")
 
 	ln, err := Listen(ctx, "127.0.0.1:0")
 	require.NoError(t, err)
@@ -234,7 +234,7 @@ func TestAttachedServer_ReadyEndpointReturnsImmediately(t *testing.T) {
 	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
 	sm.AttachRuntime(sess.ID, &fakeRuntime{}, sess)
 
-	srv := NewWithManager(sm)
+	srv := NewWithManager(sm, "")
 
 	ln, err := Listen(ctx, "127.0.0.1:0")
 	require.NoError(t, err)
@@ -254,7 +254,7 @@ func TestAttachedServer_ReadyEndpointTimesOut(t *testing.T) {
 	store := session.NewInMemorySessionStore()
 
 	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
-	srv := NewWithManager(sm)
+	srv := NewWithManager(sm, "")
 
 	ln, err := Listen(ctx, "127.0.0.1:0")
 	require.NoError(t, err)
@@ -285,7 +285,7 @@ func TestAttachedServer_DeleteWithWaitBlocksUntilStreamStops(t *testing.T) {
 	fake := &fakeRuntime{streamDelay: 200 * time.Millisecond}
 	sm.AttachRuntime(sess.ID, fake, sess)
 
-	srv := NewWithManager(sm)
+	srv := NewWithManager(sm, "")
 
 	ln, err := Listen(ctx, "127.0.0.1:0")
 	require.NoError(t, err)
