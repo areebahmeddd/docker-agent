@@ -83,22 +83,19 @@ func (mc ModelCapabilities) Supports(mimeType string) bool {
 const loadTimeout = 10 * time.Second
 
 // Load fetches (or returns from cache) the capability record for the given
-// model ID.  The model ID should be in "provider/model" format as used by
-// models.dev (e.g. "anthropic/claude-3-5-sonnet-20241022").
+// model ID using the provided store. The model ID should be in
+// "provider/model" format as used by models.dev
+// (e.g. "anthropic/claude-3-5-sonnet-20241022").
 //
-// When the model is not found in the models.dev database, Load returns a
-// conservative capability set that only allows text MIME types.  The returned
-// error is always nil; capability detection failures are silent and safe.
-func Load(modelID string) (ModelCapabilities, error) {
+// When the store is nil or the model is not found, Load returns a
+// conservative capability set that only allows text MIME types.
+func Load(store *modelsdev.Store, modelID string) ModelCapabilities {
+	if store == nil {
+		return ModelCapabilities{modelFound: false}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	defer cancel()
-
-	store, err := modelsdev.NewStore()
-	if err != nil {
-		slog.WarnContext(ctx, "modelcaps: failed to load models.dev store, using conservative caps",
-			"error", err, "model", modelID)
-		return ModelCapabilities{modelFound: false}, nil
-	}
 
 	model, err := store.GetModel(ctx, modelID)
 	if err != nil {
@@ -106,41 +103,6 @@ func Load(modelID string) (ModelCapabilities, error) {
 			slog.WarnContext(ctx, "modelcaps: models.dev lookup timed out, using conservative caps",
 				"model", modelID, "timeout", loadTimeout)
 		}
-		// Model not found or context cancelled — conservative: text-only.
-		return ModelCapabilities{modelFound: false}, nil
-	}
-
-	mc := ModelCapabilities{modelFound: true}
-	for _, input := range model.Modalities.Input {
-		switch strings.ToLower(input) {
-		case "image":
-			mc.supportsImage = true
-		case "pdf":
-			mc.supportsPDF = true
-		}
-	}
-	return mc, nil
-}
-
-// CapsWith constructs a ModelCapabilities value directly from booleans. This is
-// intended for use in tests and provider implementations that need to create a
-// capabilities value without hitting the network.
-func CapsWith(supportsImage, supportsPDF bool) ModelCapabilities {
-	return ModelCapabilities{
-		supportsImage: supportsImage,
-		supportsPDF:   supportsPDF,
-		modelFound:    true,
-	}
-}
-
-// LoadFromStore is like Load but accepts an explicit *modelsdev.Store, making
-// it convenient for tests that inject a pre-populated in-memory store.
-func LoadFromStore(store *modelsdev.Store, modelID string) ModelCapabilities {
-	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
-	defer cancel()
-
-	model, err := store.GetModel(ctx, modelID)
-	if err != nil {
 		return ModelCapabilities{modelFound: false}
 	}
 
@@ -154,4 +116,15 @@ func LoadFromStore(store *modelsdev.Store, modelID string) ModelCapabilities {
 		}
 	}
 	return mc
+}
+
+// CapsWith constructs a ModelCapabilities value directly from booleans. This is
+// intended for use in tests and provider implementations that need to create a
+// capabilities value without hitting the network.
+func CapsWith(supportsImage, supportsPDF bool) ModelCapabilities {
+	return ModelCapabilities{
+		supportsImage: supportsImage,
+		supportsPDF:   supportsPDF,
+		modelFound:    true,
+	}
 }

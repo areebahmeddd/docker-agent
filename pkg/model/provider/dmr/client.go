@@ -21,7 +21,6 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/oaistream"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
-	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -53,10 +52,9 @@ const (
 type Client struct {
 	base.Config
 
-	client      openai.Client
-	httpClient  *http.Client
-	engine      string
-	modelsStore *modelsdev.Store // initialised in NewClient
+	client     openai.Client
+	httpClient *http.Client
+	engine     string
 }
 
 // NewClient creates a new DMR client from the provided configuration
@@ -134,29 +132,22 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, opts ...options.Opt
 
 	slog.DebugContext(ctx, "DMR client created successfully", "model", cfg.Model, "base_url", baseURL)
 
-	store, err := modelsdev.NewStore()
-	if err != nil {
-		slog.WarnContext(ctx, "dmr: failed to load models.dev store, attachments will use conservative caps", "error", err)
-		store = modelsdev.NewDatabaseStore(&modelsdev.Database{})
-	}
-
 	return &Client{
 		Config: base.Config{
 			ModelConfig:  *cfg,
 			ModelOptions: globalOptions,
 			BaseURL:      baseURL,
 		},
-		client:      openai.NewClient(clientOptions...),
-		httpClient:  httpClient,
-		engine:      engine,
-		modelsStore: store,
+		client:     openai.NewClient(clientOptions...),
+		httpClient: httpClient,
+		engine:     engine,
 	}, nil
 }
 
 // convertMessages converts chat messages to OpenAI format and merges consecutive
 // system/user messages, which is needed by some local models run by DMR.
 func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) []openai.ChatCompletionMessageParamUnion {
-	openaiMessages := oaistream.ConvertMessagesFromStore(ctx, messages, c.ID(), c.modelsStore)
+	openaiMessages := oaistream.ConvertMessages(ctx, messages, c.ID(), c.ModelOptions.ModelsDevStore())
 	return oaistream.MergeConsecutiveMessages(openaiMessages)
 }
 

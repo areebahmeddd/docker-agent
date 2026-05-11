@@ -20,7 +20,6 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/dmr"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
-	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/permissions"
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/team"
@@ -107,7 +106,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	// Resolve model aliases (e.g., "claude-sonnet-4-5" -> "claude-sonnet-4-5-20250929")
 	// This ensures the API uses the pinned model version. The original name is preserved
 	// in DisplayModel so the sidebar and other UI elements show the user-configured name.
-	modelsStore, err := modelsdev.NewStore()
+	modelsStore, err := runConfig.ModelsDevStore()
 	if err != nil {
 		slog.DebugContext(ctx, "Failed to create modelsdev store for alias resolution", "error", err)
 	} else {
@@ -287,7 +286,7 @@ func getModelsForAgent(ctx context.Context, cfg *latest.Config, a *latest.AgentC
 	var models []provider.Provider
 
 	// Obtain the singleton store once, outside the loop.
-	modelsStore, modelsStoreErr := modelsdev.NewStore()
+	modelsStore, modelsStoreErr := runConfig.ModelsDevStore()
 
 	for name := range strings.SplitSeq(a.Model, ",") {
 		modelCfg, exists := cfg.Models[name]
@@ -321,6 +320,9 @@ func getModelsForAgent(ctx context.Context, cfg *latest.Config, a *latest.AgentC
 		if maxTokens != nil {
 			opts = append(opts, options.WithMaxTokens(*maxTokens))
 		}
+		if modelsStoreErr == nil {
+			opts = append(opts, options.WithModelsDevStore(modelsStore))
+		}
 
 		// Pass the full models map for routing rules to resolve model references
 		model, err := provider.NewWithModels(ctx,
@@ -348,7 +350,7 @@ func getFallbackModelsForAgent(ctx context.Context, cfg *latest.Config, a *lates
 	var fallbackModels []provider.Provider
 
 	// Obtain the singleton store once, outside the loop.
-	modelsStore, modelsStoreErr := modelsdev.NewStore()
+	modelsStore, modelsStoreErr := runConfig.ModelsDevStore()
 
 	for _, name := range a.GetFallbackModels() {
 		modelCfg, exists := cfg.Models[name]
@@ -380,6 +382,9 @@ func getFallbackModelsForAgent(ctx context.Context, cfg *latest.Config, a *lates
 		}
 		if maxTokens != nil {
 			opts = append(opts, options.WithMaxTokens(*maxTokens))
+		}
+		if modelsStoreErr == nil {
+			opts = append(opts, options.WithModelsDevStore(modelsStore))
 		}
 
 		// Pass the full models map for routing rules to resolve model references

@@ -30,8 +30,7 @@ type Client struct {
 	base.Config
 
 	bedrockClient    *bedrockruntime.Client
-	cachingSupported bool             // Cached at init time for efficiency
-	modelsStore      *modelsdev.Store // initialised in NewClient
+	cachingSupported bool // Cached at init time for efficiency
 }
 
 // bearerTokenTransport adds Authorization header with bearer token to requests
@@ -115,13 +114,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 	// Detect prompt caching capability at init time for efficiency.
 	// Uses models.dev cache pricing as proxy for capability detection.
-	cachingSupported := detectCachingSupport(ctx, cfg.Model)
-
-	attachStore, err := modelsdev.NewStore()
-	if err != nil {
-		slog.WarnContext(ctx, "bedrock: failed to load models.dev store, attachments will use conservative caps", "error", err)
-		attachStore = modelsdev.NewDatabaseStore(&modelsdev.Database{})
-	}
+	cachingSupported := detectCachingSupport(ctx, cfg.Model, globalOptions.ModelsDevStore())
 
 	slog.DebugContext(ctx, "Bedrock client created successfully",
 		"model", cfg.Model,
@@ -136,17 +129,14 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		},
 		bedrockClient:    bedrockClient,
 		cachingSupported: cachingSupported,
-		modelsStore:      attachStore,
 	}, nil
 }
 
 // detectCachingSupport checks if a model supports prompt caching using models.dev data.
 // Models with non-zero CacheRead/CacheWrite costs support prompt caching.
 // Returns false on lookup failure (safe default for unsupported models).
-func detectCachingSupport(ctx context.Context, model string) bool {
-	store, err := modelsdev.NewStore()
-	if err != nil {
-		slog.DebugContext(ctx, "Bedrock models store unavailable, prompt caching disabled", "error", err)
+func detectCachingSupport(ctx context.Context, model string, store *modelsdev.Store) bool {
+	if store == nil {
 		return false
 	}
 
@@ -244,7 +234,7 @@ func (c *Client) buildConverseStreamInput(ctx context.Context, messages []chat.M
 	enableCaching := c.promptCachingEnabled()
 
 	// Convert and set messages (excluding system)
-	input.Messages, input.System = convertMessages(ctx, messages, c.ID(), c.modelsStore, enableCaching)
+	input.Messages, input.System = convertMessages(ctx, messages, c.ID(), c.ModelOptions.ModelsDevStore(), enableCaching)
 
 	// Compute thinking fields first — its presence drives the inference config.
 	additionalFields := c.buildAdditionalModelRequestFields()

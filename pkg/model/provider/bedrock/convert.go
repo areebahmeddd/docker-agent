@@ -140,7 +140,7 @@ func convertUserContent(ctx context.Context, msg *chat.Message, modelID string, 
 				}
 			case chat.MessagePartTypeDocument:
 				if part.Document != nil {
-					docBlocks, err := convertDocumentFromStore(ctx, *part.Document, modelID, store)
+					docBlocks, err := convertDocument(ctx, *part.Document, modelID, store)
 					if err != nil {
 						slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 						continue

@@ -26,21 +26,19 @@ const (
 // Store manages access to the models.dev data.
 // All methods are safe for concurrent use.
 //
-// Use NewStore to obtain the process-wide singleton instance.
 // The database is loaded on first access via GetDatabase and
-// shared across all callers, avoiding redundant disk/network I/O.
+// then cached in memory for the lifetime of the Store.
 type Store struct {
 	cacheFile string
 	mu        sync.Mutex
 	db        *Database
 }
 
-// NewStore returns the process-wide singleton Store.
-//
-// The database is loaded lazily on the first call to GetDatabase and
-// then cached in memory so that every caller shares one copy.
-// The first call creates the cache directory if it does not exist.
-var NewStore = sync.OnceValues(func() (*Store, error) {
+// NewStore creates a new Store backed by the on-disk cache under ~/.cagent.
+// Callers should create one Store and share it rather than calling NewStore
+// repeatedly. RuntimeConfig.ModelsDevStore() is the standard way to obtain
+// a shared instance.
+func NewStore() (*Store, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user home directory: %w", err)
@@ -54,7 +52,7 @@ var NewStore = sync.OnceValues(func() (*Store, error) {
 	return &Store{
 		cacheFile: filepath.Join(cacheDir, CacheFileName),
 	}, nil
-})
+}
 
 // NewDatabaseStore creates a Store pre-populated with the given database.
 // The returned store serves data entirely from memory and never fetches

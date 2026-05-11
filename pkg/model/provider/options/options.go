@@ -2,6 +2,7 @@ package options
 
 import (
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 type ModelOptions struct {
@@ -11,6 +12,7 @@ type ModelOptions struct {
 	noThinking       bool
 	maxTokens        int64
 	providers        map[string]latest.ProviderConfig
+	modelsDevStore   *modelsdev.Store
 }
 
 func (c *ModelOptions) Gateway() string {
@@ -35,6 +37,10 @@ func (c *ModelOptions) NoThinking() bool {
 
 func (c *ModelOptions) Providers() map[string]latest.ProviderConfig {
 	return c.providers
+}
+
+func (c *ModelOptions) ModelsDevStore() *modelsdev.Store {
+	return c.modelsDevStore
 }
 
 type Opt func(*ModelOptions)
@@ -75,6 +81,12 @@ func WithProviders(providers map[string]latest.ProviderConfig) Opt {
 	}
 }
 
+func WithModelsDevStore(store *modelsdev.Store) Opt {
+	return func(cfg *ModelOptions) {
+		cfg.modelsDevStore = store
+	}
+}
+
 // FromModelOptions converts a concrete ModelOptions value into a slice of
 // Opt configuration functions. Later Opts override earlier ones when applied.
 func FromModelOptions(m ModelOptions) []Opt {
@@ -96,6 +108,9 @@ func FromModelOptions(m ModelOptions) []Opt {
 	}
 	if len(m.providers) > 0 {
 		out = append(out, WithProviders(m.providers))
+	}
+	if m.modelsDevStore != nil {
+		out = append(out, WithModelsDevStore(m.modelsDevStore))
 	}
 	return out
 }

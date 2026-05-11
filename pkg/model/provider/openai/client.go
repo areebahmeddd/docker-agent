@@ -26,7 +26,6 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/oaistream"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelinfo"
-	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/rag/prompts"
 	"github.com/docker/docker-agent/pkg/rag/types"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -42,8 +41,6 @@ type Client struct {
 	// wsPool is initialized in NewClient when transport=websocket is configured.
 	// It maintains a persistent WebSocket connection across requests.
 	wsPool *wsPool
-
-	modelsStore *modelsdev.Store // initialised in NewClient
 }
 
 // NewClient creates a new OpenAI client from the provided configuration
@@ -153,20 +150,13 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 	slog.DebugContext(ctx, "OpenAI client created successfully", "model", cfg.Model)
 
-	store, err := modelsdev.NewStore()
-	if err != nil {
-		slog.WarnContext(ctx, "openai: failed to load models.dev store, attachments will use conservative caps", "error", err)
-		store = modelsdev.NewDatabaseStore(&modelsdev.Database{})
-	}
-
 	client := &Client{
 		Config: base.Config{
 			ModelConfig:  *cfg,
 			ModelOptions: globalOptions,
 			Env:          env,
 		},
-		clientFn:    clientFn,
-		modelsStore: store,
+		clientFn: clientFn,
 	}
 
 	// Pre-create the WebSocket pool when the transport is configured.
@@ -191,7 +181,7 @@ func (c *Client) Close() {
 // convertMessages converts chat.Message to openai.ChatCompletionMessageParamUnion
 // using the shared oaistream implementation.
 func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) []openai.ChatCompletionMessageParamUnion {
-	return oaistream.ConvertMessagesFromStore(ctx, messages, c.ID(), c.modelsStore)
+	return oaistream.ConvertMessages(ctx, messages, c.ID(), c.ModelOptions.ModelsDevStore())
 }
 
 // CreateChatCompletionStream creates a streaming chat completion request
@@ -623,7 +613,7 @@ func (c *Client) convertMessagesToResponseInput(ctx context.Context, messages []
 						}
 					case chat.MessagePartTypeDocument:
 						if part.Document != nil {
-							docParts, err := convertDocumentToResponseInputFromStore(ctx, *part.Document, c.ID(), c.modelsStore)
+							docParts, err := convertDocumentToResponseInput(ctx, *part.Document, c.ID(), c.ModelOptions.ModelsDevStore())
 							if err != nil {
 								slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 								continue

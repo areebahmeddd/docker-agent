@@ -23,7 +23,6 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
-	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -34,7 +33,6 @@ type Client struct {
 
 	clientFn    func(context.Context) (anthropic.Client, error)
 	fileManager *FileManager
-	modelsStore *modelsdev.Store // initialised in NewClient; overrideable in tests
 }
 
 // NewClient creates a new Anthropic client from the provided configuration
@@ -68,13 +66,6 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			Env:          env,
 		},
 	}
-
-	store, err := modelsdev.NewStore()
-	if err != nil {
-		slog.WarnContext(ctx, "anthropic: failed to load models.dev store, attachments will use conservative caps", "error", err)
-		store = modelsdev.NewDatabaseStore(&modelsdev.Database{}) // empty: conservative text-only
-	}
-	anthropicClient.modelsStore = store
 
 	if gateway := globalOptions.Gateway(); gateway == "" {
 		authOpts, err := buildDirectAuthOptions(ctx, cfg, env)
@@ -325,7 +316,7 @@ func (c *Client) CreateChatCompletionStream(
 // convertDoc converts a document attachment using the client's model ID
 // and the store initialized at construction time.
 func (c *Client) convertDoc(ctx context.Context, doc chat.Document) ([]anthropic.ContentBlockParamUnion, error) {
-	return convertDocumentFromStore(ctx, doc, c.ID(), c.modelsStore)
+	return convertDocument(ctx, doc, c.ID(), c.ModelOptions.ModelsDevStore())
 }
 
 func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) ([]anthropic.MessageParam, error) {

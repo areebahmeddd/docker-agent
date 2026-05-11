@@ -13,16 +13,16 @@ func buildStore(providers map[string]modelsdev.Provider) *modelsdev.Store {
 	return modelsdev.NewDatabaseStore(db)
 }
 
-// TestLoadFromStore_QualifiedIDRequired is the regression test for the bug
+// TestLoad_QualifiedIDRequired is the regression test for the bug
 // fixed by pass-fully-qualified-provider-model-ID: modelcaps.Load (and
-// LoadFromStore) requires a "provider/model" key to find a model in the
+// Load) requires a "provider/model" key to find a model in the
 // models.dev database.  A bare model name without the provider prefix must
 // NOT resolve to vision capabilities — it falls back to text-only.
 //
 // Before the fix, callers passed c.ModelConfig.Model (e.g. "claude-sonnet-4-6")
 // instead of c.ModelConfig.Provider+"/"+c.ModelConfig.Model; the lookup always
 // missed and all image / PDF attachments were silently dropped.
-func TestLoadFromStore_QualifiedIDRequired(t *testing.T) {
+func TestLoad_QualifiedIDRequired(t *testing.T) {
 	store := buildStore(map[string]modelsdev.Provider{
 		"anthropic": {
 			Models: map[string]modelsdev.Model{
@@ -39,7 +39,7 @@ func TestLoadFromStore_QualifiedIDRequired(t *testing.T) {
 
 	// Bare model name (the original bug): must fall back to conservative text-only caps.
 	bareID := "claude-sonnet-4-6"
-	mcBare := modelcaps.LoadFromStore(store, bareID)
+	mcBare := modelcaps.Load(store, bareID)
 	if mcBare.Supports("image/jpeg") {
 		t.Errorf("bare model name %q must NOT resolve to vision caps: image/jpeg should be dropped", bareID)
 	}
@@ -49,7 +49,7 @@ func TestLoadFromStore_QualifiedIDRequired(t *testing.T) {
 
 	// Fully-qualified ID (the fix): must resolve to vision+pdf caps.
 	qualifiedID := "anthropic/claude-sonnet-4-6"
-	mcQualified := modelcaps.LoadFromStore(store, qualifiedID)
+	mcQualified := modelcaps.Load(store, qualifiedID)
 	if !mcQualified.Supports("image/jpeg") {
 		t.Errorf("qualified ID %q must resolve to vision caps: image/jpeg should be passed through", qualifiedID)
 	}
@@ -58,7 +58,7 @@ func TestLoadFromStore_QualifiedIDRequired(t *testing.T) {
 	}
 }
 
-func TestLoadFromStore_VisionModel(t *testing.T) {
+func TestLoad_VisionModel(t *testing.T) {
 	store := buildStore(map[string]modelsdev.Provider{
 		"anthropic": {
 			Models: map[string]modelsdev.Model{
@@ -73,7 +73,7 @@ func TestLoadFromStore_VisionModel(t *testing.T) {
 		},
 	})
 
-	mc := modelcaps.LoadFromStore(store, "anthropic/claude-3-5-sonnet")
+	mc := modelcaps.Load(store, "anthropic/claude-3-5-sonnet")
 
 	if !mc.Supports("image/jpeg") {
 		t.Error("expected image/jpeg to be supported for vision model")
@@ -89,7 +89,7 @@ func TestLoadFromStore_VisionModel(t *testing.T) {
 	}
 }
 
-func TestLoadFromStore_TextOnlyModel(t *testing.T) {
+func TestLoad_TextOnlyModel(t *testing.T) {
 	store := buildStore(map[string]modelsdev.Provider{
 		"openai": {
 			Models: map[string]modelsdev.Model{
@@ -104,7 +104,7 @@ func TestLoadFromStore_TextOnlyModel(t *testing.T) {
 		},
 	})
 
-	mc := modelcaps.LoadFromStore(store, "openai/gpt-3.5-turbo")
+	mc := modelcaps.Load(store, "openai/gpt-3.5-turbo")
 
 	if mc.Supports("image/jpeg") {
 		t.Error("expected image/jpeg NOT to be supported for text-only model")
@@ -121,10 +121,10 @@ func TestLoadFromStore_TextOnlyModel(t *testing.T) {
 	}
 }
 
-func TestLoadFromStore_ModelNotFound(t *testing.T) {
+func TestLoad_ModelNotFound(t *testing.T) {
 	store := buildStore(map[string]modelsdev.Provider{})
 
-	mc := modelcaps.LoadFromStore(store, "unknown/nonexistent-model")
+	mc := modelcaps.Load(store, "unknown/nonexistent-model")
 
 	// Conservative fallback: only text is allowed
 	if mc.Supports("image/jpeg") {
@@ -138,7 +138,7 @@ func TestLoadFromStore_ModelNotFound(t *testing.T) {
 	}
 }
 
-func TestLoadFromStore_OfficeDocsNotAllowed(t *testing.T) {
+func TestLoad_OfficeDocsNotAllowed(t *testing.T) {
 	// Office document MIMEs (DOCX, XLSX, etc.) are ZIP-based binaries and
 	// cannot be naively TXT-enveloped. models.dev has no "office" or
 	// "document" modality, so they must return false for all models.
@@ -156,7 +156,7 @@ func TestLoadFromStore_OfficeDocsNotAllowed(t *testing.T) {
 		},
 	})
 
-	mc := modelcaps.LoadFromStore(store, "openai/gpt-4o")
+	mc := modelcaps.Load(store, "openai/gpt-4o")
 
 	for _, officeMIME := range []string{
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
