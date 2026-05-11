@@ -704,6 +704,7 @@ func (c *Client) StreamSessionEventsWithRetry(ctx context.Context, sessionID str
 
 				// Calculate backoff
 				backoff := initialBackoff * time.Duration(1<<uint(attempt-2))
+				//nolint:modernize // keep if statement for readability
 				if backoff > maxBackoff {
 					backoff = maxBackoff
 				}
