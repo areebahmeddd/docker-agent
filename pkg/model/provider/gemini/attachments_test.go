@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 )
 
 // minJPEG is a minimal JPEG magic-byte header for use in tests.
@@ -23,7 +23,7 @@ func TestConvertDocumentGemini_StrategyB64_Image(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	visionCaps := modelcaps.CapsWith(true, true)
+	visionCaps := modelinfo.CapsWith(true, true)
 	part, err := convertDocumentWithCaps(t.Context(), doc, visionCaps)
 	require.NoError(t, err)
 	require.NotNil(t, part, "expected a non-nil part for B64 image")
@@ -42,7 +42,7 @@ func TestConvertDocumentGemini_StrategyB64_ImageDropped(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	textOnlyCaps := modelcaps.CapsWith(false, false)
+	textOnlyCaps := modelinfo.CapsWith(false, false)
 	part, err := convertDocumentWithCaps(t.Context(), doc, textOnlyCaps)
 	require.NoError(t, err)
 	assert.Nil(t, part, "image should be dropped for text-only model")
@@ -55,7 +55,7 @@ func TestConvertDocumentGemini_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "# Read Me"},
 	}
 
-	part, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	part, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.NotNil(t, part)
 	assert.Contains(t, part.Text, "readme-md")
@@ -70,7 +70,7 @@ func TestConvertDocumentGemini_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "col1,col2"},
 	}
 
-	part, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	part, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.NotNil(t, part)
 	assert.True(t, strings.HasPrefix(part.Text, "<document"), "should be wrapped in envelope")
@@ -83,7 +83,7 @@ func TestConvertDocumentGemini_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	part, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	part, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, part, "should be nil when no inline content")
 }

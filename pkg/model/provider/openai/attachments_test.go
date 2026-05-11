@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 )
 
 // minJPEG is a minimal JPEG magic-byte header for use in tests.
@@ -25,7 +25,7 @@ func TestConvertDocumentResponseInput_StrategyB64_Image(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	visionCaps := modelcaps.CapsWith(true, true)
+	visionCaps := modelinfo.CapsWith(true, true)
 	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, visionCaps)
 	require.NoError(t, err)
 	require.Len(t, parts, 1, "expected exactly one image part")
@@ -47,7 +47,7 @@ func TestConvertDocumentResponseInput_StrategyB64_ImageDropped(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	textOnlyCaps := modelcaps.CapsWith(false, false)
+	textOnlyCaps := modelinfo.CapsWith(false, false)
 	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, textOnlyCaps)
 	require.NoError(t, err)
 	assert.Nil(t, parts, "image should be dropped for text-only model")
@@ -60,7 +60,7 @@ func TestConvertDocumentResponseInput_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "## API Spec"},
 	}
 
-	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfInputText)
@@ -77,7 +77,7 @@ func TestConvertDocumentResponseInput_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "x,y"},
 	}
 
-	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfInputText)
@@ -92,7 +92,7 @@ func TestConvertDocumentResponseInput_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, parts, "should be nil when no inline content")
 }

@@ -10,8 +10,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 
 	"github.com/docker/docker-agent/pkg/attachment"
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
@@ -24,12 +24,12 @@ import (
 //   - text with InlineText → TextBlockParam with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
 func convertDocument(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]anthropic.ContentBlockParamUnion, error) {
-	mc := modelcaps.Load(store, modelID)
+	mc := modelinfo.LoadCaps(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 
 // convertDocumentWithCaps is the caps-injectable variant used by tests.
-func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcaps.ModelCapabilities) ([]anthropic.ContentBlockParamUnion, error) {
+func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelinfo.ModelCapabilities) ([]anthropic.ContentBlockParamUnion, error) {
 	strategy, reason := attachment.Decide(doc, mc)
 
 	switch strategy {

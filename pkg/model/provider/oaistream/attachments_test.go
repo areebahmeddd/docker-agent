@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
@@ -26,7 +26,7 @@ func TestConvertDocument_StrategyB64_Image(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	visionCaps := modelcaps.CapsWith(true, true)
+	visionCaps := modelinfo.CapsWith(true, true)
 	parts, err := convertDocumentWithCaps(t.Context(), doc, visionCaps)
 	require.NoError(t, err)
 	require.Len(t, parts, 1, "expected exactly one image part")
@@ -48,7 +48,7 @@ func TestConvertDocument_StrategyB64_ImageDropped(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	textOnlyCaps := modelcaps.CapsWith(false, false)
+	textOnlyCaps := modelinfo.CapsWith(false, false)
 	parts, err := convertDocumentWithCaps(t.Context(), doc, textOnlyCaps)
 	require.NoError(t, err)
 	assert.Nil(t, parts, "image should be dropped for text-only model")
@@ -56,7 +56,7 @@ func TestConvertDocument_StrategyB64_ImageDropped(t *testing.T) {
 
 // TestConvertDocument_QualifiedIDRequired is the regression test for the bug
 // where callers passed a bare model name instead of a "provider/model" ID,
-// causing modelcaps to miss the model and silently drop image/PDF attachments.
+// causing modelinfo to miss the model and silently drop image/PDF attachments.
 //
 // It calls ConvertMultiContent with an injected fake store, exercising
 // the same path as the production client (which calls ConvertMessages with c.ID()).
@@ -101,7 +101,7 @@ func TestConvertDocument_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "# Hello World"},
 	}
 
-	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
@@ -117,7 +117,7 @@ func TestConvertDocument_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "a,b,c\n1,2,3"},
 	}
 
-	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
@@ -132,7 +132,7 @@ func TestConvertDocument_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, parts, "should be dropped when no inline content")
 }

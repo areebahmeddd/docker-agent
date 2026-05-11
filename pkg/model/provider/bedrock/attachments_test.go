@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 )
 
 // minJPEG is a minimal JPEG magic-byte header for use in tests.
@@ -27,7 +27,7 @@ func TestConvertDocumentBedrock_StrategyB64_Image(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	visionCaps := modelcaps.CapsWith(true, true)
+	visionCaps := modelinfo.CapsWith(true, true)
 	blocks, err := convertDocumentWithCaps(t.Context(), doc, visionCaps)
 	require.NoError(t, err)
 	require.Len(t, blocks, 1, "expected exactly one block")
@@ -48,7 +48,7 @@ func TestConvertDocumentBedrock_StrategyB64_PDF(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minPDF},
 	}
 
-	pdfCaps := modelcaps.CapsWith(true, true)
+	pdfCaps := modelinfo.CapsWith(true, true)
 	blocks, err := convertDocumentWithCaps(t.Context(), doc, pdfCaps)
 	require.NoError(t, err)
 	require.Len(t, blocks, 1, "expected exactly one block")
@@ -66,7 +66,7 @@ func TestConvertDocumentBedrock_StrategyB64_ImageDropped(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	textOnlyCaps := modelcaps.CapsWith(false, false)
+	textOnlyCaps := modelinfo.CapsWith(false, false)
 	blocks, err := convertDocumentWithCaps(t.Context(), doc, textOnlyCaps)
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "image should be dropped for text-only model")
@@ -79,7 +79,7 @@ func TestConvertDocumentBedrock_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "## Notes"},
 	}
 
-	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	textBlock, ok := blocks[0].(*types.ContentBlockMemberText)
@@ -96,7 +96,7 @@ func TestConvertDocumentBedrock_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "a,b"},
 	}
 
-	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	textBlock, ok := blocks[0].(*types.ContentBlockMemberText)
@@ -111,7 +111,7 @@ func TestConvertDocumentBedrock_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "should be nil when no inline content")
 }

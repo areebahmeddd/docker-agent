@@ -1,17 +1,18 @@
-// Package modelinfo centralizes every model-specific behavior decision used
-// by docker-agent's provider clients.
+// Package modelinfo centralizes every model-specific behavior decision and
+// capability query used by docker-agent's provider clients.
 //
 // Some providers must specialize their behavior depending on the underlying
 // model: pick OpenAI's Responses API for o-series and gpt-5, switch Claude
 // Opus 4.6+ to adaptive thinking, use level-based thinking for Gemini 3+,
 // auto-enable interleaved thinking for any Claude model regardless of host
-// (Anthropic, Bedrock, Vertex AI Model Garden), and so on.
+// (Anthropic, Bedrock, Vertex AI Model Garden), decide which attachment MIME
+// types can be forwarded natively, and so on.
 //
 // Rather than scattering name-pattern checks across the codebase, every such
 // predicate lives here, with a name that describes the *capability* (not the
 // version) and a doc comment that explains *why* the behavior is needed.
 //
-// # Two layers
+// # Three layers
 //
 //   - "Is*" predicates take a bare model identifier and use stable name
 //     patterns. They are zero-allocation and safe to call on the request hot
@@ -20,6 +21,9 @@
 //     the models.dev database via a [modelsdev.Store] when richer information
 //     is needed (e.g. detecting Claude across providers). They are intended
 //     for config-resolution paths, not per-request paths.
+//   - Attachment capability queries ([LoadCaps], [ModelCapabilities.Supports])
+//     translate models.dev modality information into MIME-type support
+//     decisions used by the attachment routing logic.
 //
 // # Adding a new model
 //
@@ -32,7 +36,9 @@ package modelinfo
 
 import (
 	"context"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
@@ -200,4 +206,113 @@ func isOSeries(m string) bool {
 	return strings.HasPrefix(m, "o1") ||
 		strings.HasPrefix(m, "o3") ||
 		strings.HasPrefix(m, "o4")
+}
+
+// ---------------------------------------------------------------------------
+// Attachment MIME-type capabilities
+// ---------------------------------------------------------------------------
+
+// ModelCapabilities describes what MIME types a given model can accept as
+// document attachments.
+type ModelCapabilities struct {
+	supportsImage bool
+	supportsPDF   bool
+	modelFound    bool
+}
+
+// isOfficeMIME returns true for Office document binary formats
+// (OOXML, legacy Office, RTF). These are ZIP-based or binary formats
+// that cannot be naively TXT-enveloped and require explicit model support.
+func isOfficeMIME(mt string) bool {
+	switch mt {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"application/vnd.ms-excel",
+		"application/vnd.ms-powerpoint",
+		"application/msword",
+		"application/rtf",
+		"text/rtf":
+		return true
+	}
+	return false
+}
+
+// Supports returns true when the model can accept an attachment with the given
+// MIME type.
+//
+// Resolution rules (in order):
+//  1. image/* → requires supportsImage (models.dev "image" modality)
+//  2. application/pdf → requires supportsPDF (models.dev "pdf" modality)
+//  3. text/* → always supported (plain text; TXT envelope is universally safe)
+//  4. Office/binary document MIMEs (DOCX, XLSX, PPTX, etc.) → not supported unless
+//     models.dev explicitly declares a document modality. models.dev currently has
+//     no "document" or "office" modality field, so these return false for all
+//     models until the schema is extended.
+//  5. Everything else (audio/*, video/*, unknown binary) → false
+func (mc ModelCapabilities) Supports(mimeType string) bool {
+	mt := strings.ToLower(mimeType)
+	if strings.HasPrefix(mt, "image/") {
+		return mc.supportsImage
+	}
+	if mt == "application/pdf" {
+		return mc.supportsPDF
+	}
+	if strings.HasPrefix(mt, "text/") {
+		return true
+	}
+	if isOfficeMIME(mt) {
+		return false
+	}
+	return false
+}
+
+// loadCapsTimeout is the maximum time allowed for a models.dev capability lookup.
+const loadCapsTimeout = 10 * time.Second
+
+// LoadCaps fetches (or returns from cache) the capability record for the given
+// model ID using the provided store. The model ID should be in
+// "provider/model" format as used by models.dev
+// (e.g. "anthropic/claude-3-5-sonnet-20241022").
+//
+// When the store is nil or the model is not found, LoadCaps returns a
+// conservative capability set that only allows text MIME types.
+func LoadCaps(store *modelsdev.Store, modelID string) ModelCapabilities {
+	if store == nil {
+		return ModelCapabilities{modelFound: false}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), loadCapsTimeout)
+	defer cancel()
+
+	model, err := store.GetModel(ctx, modelID)
+	if err != nil {
+		if ctx.Err() != nil {
+			slog.WarnContext(ctx, "modelinfo: models.dev lookup timed out, using conservative caps",
+				"model", modelID, "timeout", loadCapsTimeout)
+		}
+		return ModelCapabilities{modelFound: false}
+	}
+
+	mc := ModelCapabilities{modelFound: true}
+	for _, input := range model.Modalities.Input {
+		switch strings.ToLower(input) {
+		case "image":
+			mc.supportsImage = true
+		case "pdf":
+			mc.supportsPDF = true
+		}
+	}
+	return mc
+}
+
+// CapsWith constructs a ModelCapabilities value directly from booleans. This is
+// intended for use in tests and provider implementations that need to create a
+// capabilities value without hitting the network.
+func CapsWith(supportsImage, supportsPDF bool) ModelCapabilities {
+	return ModelCapabilities{
+		supportsImage: supportsImage,
+		supportsPDF:   supportsPDF,
+		modelFound:    true,
+	}
 }
