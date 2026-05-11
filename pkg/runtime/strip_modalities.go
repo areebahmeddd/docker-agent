@@ -99,6 +99,11 @@ func stripImageContent(messages []chat.Message) []chat.Message {
 				if part.File != nil && chat.IsImageMimeType(part.File.MimeType) {
 					continue
 				}
+			case chat.MessagePartTypeDocument:
+				// Drop Document parts that carry image InlineData.
+				if part.Document != nil && chat.IsImageMimeType(part.Document.MimeType) {
+					continue
+				}
 			}
 			filtered = append(filtered, part)
 		}

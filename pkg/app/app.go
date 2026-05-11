@@ -3,7 +3,6 @@ package app
 import (
 	"cmp"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -437,43 +436,27 @@ func (a *App) processFileAttachment(ctx context.Context, att messages.Attachment
 		textBuilder.WriteString(content)
 
 	case chat.IsSupportedMimeType(mimeType):
-		if chat.IsImageMimeType(mimeType) {
-			// Read, resize if needed, and inline as base64 data URL.
-			// This works across all providers (not just Anthropic's File API).
-			imgData, readErr := os.ReadFile(absPath)
-			if readErr != nil {
-				slog.WarnContext(ctx, "skipping attachment: failed to read image", "path", absPath, "error", readErr)
-				a.sendEvent(ctx, runtime.Warning(fmt.Sprintf("Skipped attachment %s: failed to read image", att.Name), ""))
-				return true
-			}
-			resized, resizeErr := chat.ResizeImage(imgData, mimeType)
-			if resizeErr != nil {
-				// Don't bypass security checks - reject the file if resize failed
-				slog.WarnContext(ctx, "skipping attachment: image resize failed", "path", absPath, "error", resizeErr)
-				a.sendEvent(ctx, runtime.Warning(fmt.Sprintf("Skipped attachment %s: %s", att.Name, resizeErr), ""))
-				return true
-			}
-			dataURL := fmt.Sprintf("data:%s;base64,%s", resized.MimeType, base64.StdEncoding.EncodeToString(resized.Data))
-			*binaryParts = append(*binaryParts, chat.MessagePart{
-				Type: chat.MessagePartTypeImageURL,
-				ImageURL: &chat.MessageImageURL{
-					URL:    dataURL,
-					Detail: chat.ImageURLDetailAuto,
-				},
-			})
-			if note := chat.FormatDimensionNote(resized); note != "" {
+		// Route through ProcessAttachmentWithMetadata for normalised Document output.
+		// For images this also returns resize metadata used to emit a dimension note.
+		doc, resizeMeta, procErr := chat.ProcessAttachmentWithMetadata(chat.MessagePart{
+			Type: chat.MessagePartTypeFile,
+			File: &chat.MessageFile{Path: absPath, MimeType: mimeType},
+		})
+		if procErr != nil {
+			slog.WarnContext(ctx, "skipping attachment: processing failed", "path", absPath, "error", procErr)
+			a.sendEvent(ctx, runtime.Warning(fmt.Sprintf("Skipped attachment %s: %s", att.Name, procErr), ""))
+			return true
+		}
+		// For images, emit a dimension note so the model can map coordinates back to the original.
+		if resizeMeta != nil {
+			if note := chat.FormatDimensionNote(resizeMeta); note != "" {
 				textBuilder.WriteString("\n" + note)
 			}
-		} else {
-			// Non-image supported types (e.g. PDF) use the file upload path.
-			*binaryParts = append(*binaryParts, chat.MessagePart{
-				Type: chat.MessagePartTypeFile,
-				File: &chat.MessageFile{
-					Path:     absPath,
-					MimeType: mimeType,
-				},
-			})
 		}
+		*binaryParts = append(*binaryParts, chat.MessagePart{
+			Type:     chat.MessagePartTypeDocument,
+			Document: &doc,
+		})
 
 	default:
 		slog.WarnContext(ctx, "skipping attachment: unsupported file type", "path", absPath, "mime_type", mimeType)
