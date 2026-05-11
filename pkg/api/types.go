@@ -246,3 +246,15 @@ type ReadyResponse struct {
 	ToolsetHealth  string `json:"toolset_health,omitempty"`
 	LatestError    string `json:"latest_error,omitempty"`
 }
+
+// QueueDepthResponse represents the queue depth information for a session
+type QueueDepthResponse struct {
+	Steer struct {
+		Depth    int `json:"depth"`
+		Capacity int `json:"capacity"`
+	} `json:"steer"`
+	Followup struct {
+		Depth    int `json:"depth"`
+		Capacity int `json:"capacity"`
+	} `json:"followup"`
+}

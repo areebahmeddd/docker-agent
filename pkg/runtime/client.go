@@ -810,3 +810,11 @@ func (c *Client) BatchExportSessions(ctx context.Context, sessionIDs []string, f
 	err := c.doRequest(ctx, http.MethodPost, "/api/sessions/batch/export", req, &resp)
 	return resp, err
 }
+
+// GetSessionQueueStatus retrieves the queue depth and capacity for a session
+func (c *Client) GetSessionQueueStatus(ctx context.Context, sessionID string) (*api.QueueDepthResponse, error) {
+	var resp api.QueueDepthResponse
+	endpoint := fmt.Sprintf("/api/sessions/%s/queue", sessionID)
+	err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &resp)
+	return &resp, err
+}

@@ -302,6 +302,10 @@ func (r *RemoteRuntime) FollowUp(msg QueuedMessage) error {
 	})
 }
 
+func (r *RemoteRuntime) QueueStatus() QueueStatus {
+	return QueueStatus{}
+}
+
 // Resume allows resuming execution after user confirmation
 func (r *RemoteRuntime) Resume(ctx context.Context, req ResumeRequest) {
 	slog.DebugContext(ctx, "Resuming remote runtime", "agent", r.currentAgent, "type", req.Type, "reason", req.Reason, "tool_name", req.ToolName, "session_id", r.sessionID)

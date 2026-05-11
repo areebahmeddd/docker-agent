@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -78,6 +79,7 @@ func (s *Server) registerRoutes() {
 	group.POST("/sessions/:id/messages", s.addMessage)
 	group.PATCH("/sessions/:id/messages/:msg_id", s.updateMessage)
 	group.POST("/sessions/:id/summaries", s.addSummary)
+	group.GET("/sessions/:id/queue", s.getSessionQueueStatus)
 	group.GET("/sessions/:id/recovery", s.getSessionRecoveryData)
 	group.POST("/sessions/batch/delete", s.batchDeleteSessions)
 	group.POST("/sessions/batch/export", s.batchExportSessions)
@@ -360,6 +362,10 @@ func (s *Server) steerSession(c echo.Context) error {
 	}
 
 	if err := s.sm.SteerSession(c.Request().Context(), sessionID, req.Messages); err != nil {
+		if strings.Contains(err.Error(), "queue full") {
+			c.Response().Header().Set("Retry-After", "1")
+			return echo.NewHTTPError(http.StatusTooManyRequests, "steer queue full")
+		}
 		return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf("failed to steer session: %v", err))
 	}
 
@@ -402,6 +408,10 @@ func (s *Server) followUpSession(c echo.Context) error {
 	}
 
 	if err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages); err != nil {
+		if strings.Contains(err.Error(), "queue full") {
+			c.Response().Header().Set("Retry-After", "1")
+			return echo.NewHTTPError(http.StatusTooManyRequests, "follow-up queue full")
+		}
 		return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf("failed to enqueue follow-up: %v", err))
 	}
 
@@ -589,6 +599,26 @@ func (s *Server) getSessionRecoveryData(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, data)
+}
+
+func (s *Server) getSessionQueueStatus(c echo.Context) error {
+	sessionID := c.Param("id")
+
+	// Get the session runtime to check queue status
+	sessionRuntime, ok := s.sm.runtimeSessions.Load(sessionID)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found or not running")
+	}
+
+	queueStatus := sessionRuntime.runtime.QueueStatus()
+
+	resp := api.QueueDepthResponse{}
+	resp.Steer.Depth = queueStatus.SteerDepth
+	resp.Steer.Capacity = queueStatus.SteerCapacity
+	resp.Followup.Depth = queueStatus.FollowupDepth
+	resp.Followup.Capacity = queueStatus.FollowupCapacity
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 // BearerTokenMiddleware validates bearer token authentication
