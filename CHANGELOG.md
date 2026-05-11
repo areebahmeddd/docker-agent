@@ -3,6 +3,78 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.58.0] - 2026-05-11
+
+This release adds external TUI control capabilities, HTTP POST hooks, and several security hardening improvements.
+
+## What's New
+- Adds `http_post` builtin hook for making HTTP POST requests from agent workflows
+- Adds `--listen` flag to `run` command to expose the running TUI for external control
+- Adds `send` subcommand to drive a live TUI session from external processes
+- Adds `watch` subcommand to stream events from a running TUI
+- Adds `--on-event` hooks to observe arbitrary events during runs
+- Adds `--attach` flag to `serve mcp` command to expose running TUI via MCP
+- Adds newline-delimited JSON protocol over stdio for external communication
+- Adds discovery files for live runs in run registry
+- Adds `bump-config-version` skill for configuration management
+
+## Bug Fixes
+- Fixes filesystem tool path expansion for `~` (home directory) in file paths
+- Fixes model ID handling to use fully-qualified provider/model identifiers for capability lookups
+- Fixes Nebius example to use available Kimi-K2.5 model instead of deprecated Kimi-K2-Instruct
+- Fixes dry-run mode to work properly before contacting remote servers
+- Fixes request context propagation in echo logging
+- Fixes run registry permissions and session lifecycle cleanup
+
+## Improvements
+- Makes `max_iterations` builtin stateless by using runtime's existing iteration counter
+- Hardens `http_post` hook with SSRF-safe client, scheme validation, and request logging
+- Consolidates home directory path expansion across the codebase
+- Shows current git branch when working in a repository
+- Unifies local and remote run dispatch through shared backend interface
+
+## Technical Changes
+- Refactors snapshot handling into dedicated `SnapshotController` separate from runtime
+- Refactors unload builtin to be pure and runtime-agnostic
+- Promotes model switching and tools change subscription onto Runtime interface
+- Adds security hardening for secrets provider, archive extraction, OAuth HTTP client, and shell tool
+- Enables gosec linter for file permission validation
+- Updates Go to version 1.26.3
+- Adds migration content pinning to enforce append-only database schema changes
+
+### Pull Requests
+
+- [#2698](https://github.com/docker/docker-agent/pull/2698) - Merge pull request #2708 from dgageot/fix/2698-max-iterations-stateless
+- [#2703](https://github.com/docker/docker-agent/pull/2703) - docs: update CHANGELOG.md for v1.57.0
+- [#2704](https://github.com/docker/docker-agent/pull/2704) - fix: expand ~ in filesystem tool paths
+- [#2705](https://github.com/docker/docker-agent/pull/2705) - feat(hooks): add http_post builtin
+- [#2706](https://github.com/docker/docker-agent/pull/2706) - refactor(hooks): make the unload on_agent_switch builtin pure
+- [#2707](https://github.com/docker/docker-agent/pull/2707) - refactor: extract SnapshotController so the runtime no longer brokers /undo
+- [#2708](https://github.com/docker/docker-agent/pull/2708) - fix: make max_iterations builtin stateless (#2698)
+- [#2709](https://github.com/docker/docker-agent/pull/2709) - bump direct go dependencies
+- [#2711](https://github.com/docker/docker-agent/pull/2711) - fix: use available Kimi-K2.5 model in nebius example
+- [#2712](https://github.com/docker/docker-agent/pull/2712) - bump go to 1.26.3
+- [#2713](https://github.com/docker/docker-agent/pull/2713) - security: five defense-in-depth fixes (secrets, archives, oauth, shell tool, request logs)
+- [#2714](https://github.com/docker/docker-agent/pull/2714) - feat: let external processes drive a running TUI
+- [#2715](https://github.com/docker/docker-agent/pull/2715) - refactor(run): unify local/remote dispatch via Backend (10 baby steps)
+- [#2717](https://github.com/docker/docker-agent/pull/2717) - update PR reviewer to 1.5.1
+- [#2718](https://github.com/docker/docker-agent/pull/2718) - Change the default models for the golang dev
+- [#2719](https://github.com/docker/docker-agent/pull/2719) - Change the app name in otel to docker-agent
+- [#2720](https://github.com/docker/docker-agent/pull/2720) - Consolidate home directory path expansion
+- [#2721](https://github.com/docker/docker-agent/pull/2721) - Show the current git branch when in a repo
+- [#2723](https://github.com/docker/docker-agent/pull/2723) - remote-runtime: close silent gaps, consolidate Runtime, scaffold wire (10 baby steps)
+- [#2725](https://github.com/docker/docker-agent/pull/2725) - ci: lint workflow invariants actionlint misses (concurrency, SHA pinning, payload deny-list)
+- [#2726](https://github.com/docker/docker-agent/pull/2726) - fix(toolinstall): route the registry client through httpclient.NewSafeClient
+- [#2727](https://github.com/docker/docker-agent/pull/2727) - test(session): pin migration catalogue content (append-only enforcement)
+- [#2729](https://github.com/docker/docker-agent/pull/2729) - add bump-config-version skill
+- [#2730](https://github.com/docker/docker-agent/pull/2730) - ci: enable gosec linter
+- [#2731](https://github.com/docker/docker-agent/pull/2731) - refactor(run-control): unify target resolution and SSE handling
+- [#2735](https://github.com/docker/docker-agent/pull/2735) - Fix broken test on main
+- [#2736](https://github.com/docker/docker-agent/pull/2736) - Add alias
+- [#2738](https://github.com/docker/docker-agent/pull/2738) - fix: pass fully-qualified provider/model ID to modelcaps.Load
+- [#2742](https://github.com/docker/docker-agent/pull/2742) - chore: bump direct Go dependencies
+
+
 ## [v1.57.0] - 2026-05-07
 
 This release improves markdown rendering performance, adds agent switching capabilities, and enhances secret redaction with better error handling.
@@ -2601,3 +2673,5 @@ This release improves the terminal user interface with better error handling and
 [v1.56.0]: https://github.com/docker/docker-agent/releases/tag/v1.56.0
 
 [v1.57.0]: https://github.com/docker/docker-agent/releases/tag/v1.57.0
+
+[v1.58.0]: https://github.com/docker/docker-agent/releases/tag/v1.58.0
