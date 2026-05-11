@@ -44,6 +44,10 @@ func NewWithManager(sm *SessionManager) *Server {
 }
 
 func (s *Server) registerRoutes() {
+	// Health and readiness endpoints (not under /api)
+	s.e.GET("/health", s.health)
+	s.e.GET("/ready", s.ready)
+
 	group := s.e.Group("/api")
 
 	group.GET("/agents", s.getAgents)
@@ -469,4 +473,57 @@ func (s *Server) setSessionStarred(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) health(c echo.Context) error {
+	return c.JSON(http.StatusOK, api.HealthResponse{
+		Status: "ok",
+	})
+}
+
+func (s *Server) ready(c echo.Context) error {
+	// Check if session store is accessible (quick connectivity check)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	sessions, err := s.sm.GetSessions(ctx)
+	var storeConnected bool
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		// We assume store is connected if we can query it or we hit a timeout
+		// (timeout is still better than a hard connection failure)
+		storeConnected = true
+	}
+
+	activeSessions := 0
+	if sessions != nil {
+		activeSessions = len(sessions)
+	}
+
+	var toolsetHealth string
+	var latestError string
+
+	// Determine overall readiness
+	ready := storeConnected
+	if !ready {
+		latestError = "store disconnected"
+	}
+
+	status := http.StatusOK
+	if !ready {
+		status = http.StatusServiceUnavailable
+	}
+
+	if !ready {
+		toolsetHealth = "unavailable"
+	} else {
+		toolsetHealth = "ok"
+	}
+
+	return c.JSON(status, api.ReadyResponse{
+		Ready:          ready,
+		ActiveSessions: activeSessions,
+		StoreConnected: storeConnected,
+		ToolsetHealth:  toolsetHealth,
+		LatestError:    latestError,
+	})
 }

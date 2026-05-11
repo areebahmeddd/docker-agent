@@ -651,3 +651,18 @@ func (c *Client) SetSessionStarred(ctx context.Context, sessionID string, starre
 	req := api.SetSessionStarredRequest{Starred: starred}
 	return c.doRequest(ctx, http.MethodPatch, endpoint, req, nil)
 }
+
+// Health checks the health of the remote server.
+func (c *Client) Health(ctx context.Context) error {
+	var resp api.HealthResponse
+	return c.doRequest(ctx, http.MethodGet, "/health", nil, &resp)
+}
+
+// Ready checks if the remote server is ready to handle requests.
+func (c *Client) Ready(ctx context.Context) (*api.ReadyResponse, error) {
+	var resp api.ReadyResponse
+	if err := c.doRequest(ctx, http.MethodGet, "/ready", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

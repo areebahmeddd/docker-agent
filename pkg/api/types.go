@@ -205,3 +205,18 @@ type UpdateSessionTokensRequest struct {
 type SetSessionStarredRequest struct {
 	Starred bool `json:"starred"`
 }
+
+// HealthResponse represents the response from the health check endpoint
+type HealthResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+}
+
+// ReadyResponse represents the response from the readiness check endpoint
+type ReadyResponse struct {
+	Ready          bool   `json:"ready"`
+	ActiveSessions int    `json:"active_sessions"`
+	StoreConnected bool   `json:"store_connected"`
+	ToolsetHealth  string `json:"toolset_health,omitempty"`
+	LatestError    string `json:"latest_error,omitempty"`
+}
