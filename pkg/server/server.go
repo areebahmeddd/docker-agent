@@ -63,6 +63,9 @@ func (s *Server) registerRoutes() {
 	group.POST("/sessions/:id/steer", s.steerSession)
 	group.POST("/sessions/:id/followup", s.followUpSession)
 	group.GET("/sessions/:id/events", s.sessionEvents)
+	group.POST("/sessions/:id/messages", s.addMessage)
+	group.PATCH("/sessions/:id/messages/:msg_id", s.updateMessage)
+	group.POST("/sessions/:id/summaries", s.addSummary)
 
 	group.GET("/agents/:id/:agent_name/tools/count", s.getAgentToolCount)
 
@@ -381,4 +384,59 @@ func (s *Server) followUpSession(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued"})
+}
+
+func (s *Server) addMessage(c echo.Context) error {
+	sessionID := c.Param("id")
+	var req api.AddMessageRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if req.Message == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "message is required")
+	}
+
+	if err := s.sm.AddMessage(c.Request().Context(), sessionID, req.Message); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to add message: %v", err))
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{"status": "added"})
+}
+
+func (s *Server) updateMessage(c echo.Context) error {
+	sessionID := c.Param("id")
+	msgID := c.Param("msg_id")
+	var req api.UpdateMessageRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if req.Message == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "message is required")
+	}
+
+	if err := s.sm.UpdateMessage(c.Request().Context(), sessionID, msgID, req.Message); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to update message: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) addSummary(c echo.Context) error {
+	sessionID := c.Param("id")
+	var req api.AddSummaryRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if req.Summary == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "summary is required")
+	}
+
+	if err := s.sm.AddSummary(c.Request().Context(), sessionID, req.Summary, req.Tokens); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to add summary: %v", err))
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{"status": "added"})
 }

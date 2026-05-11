@@ -90,6 +90,15 @@ type RemoteClient interface {
 
 	// ResetSession resets a session to initial state
 	ResetSession(ctx context.Context, sessionID string) error
+
+	// AddMessage adds a message to a session
+	AddMessage(ctx context.Context, sessionID string, msg *session.Message) error
+
+	// UpdateMessage updates a message in a session
+	UpdateMessage(ctx context.Context, sessionID, msgID string, msg *session.Message) error
+
+	// AddSummary adds a summary to a session
+	AddSummary(ctx context.Context, sessionID, summary string, tokens int) error
 }
 
 var _ RemoteClient = (*Client)(nil)

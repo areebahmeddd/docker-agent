@@ -542,3 +542,58 @@ func (sm *SessionManager) GetAgentToolCount(ctx context.Context, agentFilename, 
 
 	return len(agentTools), nil
 }
+
+// AddMessage adds a message to a session.
+func (sm *SessionManager) AddMessage(ctx context.Context, sessionID string, msg *session.Message) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	_, err = sm.sessionStore.AddMessage(ctx, sessionID, msg)
+	if err != nil {
+		return err
+	}
+
+	// If the session is actively running, update the in-memory session
+	if rt, ok := sm.runtimeSessions.Load(sessionID); ok && rt.session != nil {
+		rt.session.AddMessage(msg)
+	}
+
+	return sm.sessionStore.UpdateSession(ctx, sess)
+}
+
+// UpdateMessage updates a message in a session.
+func (sm *SessionManager) UpdateMessage(ctx context.Context, sessionID, msgID string, msg *session.Message) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	// Parse msgID as int64
+	var msgPos int64
+	_, err = fmt.Sscanf(msgID, "%d", &msgPos)
+	if err != nil {
+		return fmt.Errorf("invalid message ID: %w", err)
+	}
+
+	if err := sm.sessionStore.UpdateMessage(ctx, msgPos, msg); err != nil {
+		return err
+	}
+
+	return sm.sessionStore.UpdateSession(ctx, sess)
+}
+
+// AddSummary adds a summary to a session.
+func (sm *SessionManager) AddSummary(ctx context.Context, sessionID, summary string, tokens int) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	return sm.sessionStore.AddSummary(ctx, sessionID, summary, tokens)
+}

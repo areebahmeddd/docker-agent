@@ -177,3 +177,19 @@ type UpdateSessionTitleResponse struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 }
+
+// AddMessageRequest represents a request to add a message to a session
+type AddMessageRequest struct {
+	Message *session.Message `json:"message"`
+}
+
+// UpdateMessageRequest represents a request to update a message in a session
+type UpdateMessageRequest struct {
+	Message *session.Message `json:"message"`
+}
+
+// AddSummaryRequest represents a request to add a summary to a session
+type AddSummaryRequest struct {
+	Summary string `json:"summary"`
+	Tokens  int    `json:"tokens,omitempty"`
+}

@@ -664,6 +664,30 @@ func (r *RemoteRuntime) Reset(ctx context.Context) error {
 	return r.client.ResetSession(ctx, r.sessionID)
 }
 
+// AddMessageToSession adds a message to the current session on the remote server.
+func (r *RemoteRuntime) AddMessageToSession(ctx context.Context, msg *session.Message) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.AddMessage(ctx, r.sessionID, msg)
+}
+
+// UpdateSessionMessage updates a message in the current session on the remote server.
+func (r *RemoteRuntime) UpdateSessionMessage(ctx context.Context, msgID string, msg *session.Message) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.UpdateMessage(ctx, r.sessionID, msgID, msg)
+}
+
+// AddSessionSummary adds a summary to the current session on the remote server.
+func (r *RemoteRuntime) AddSessionSummary(ctx context.Context, summary string, tokens int) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.AddSummary(ctx, r.sessionID, summary, tokens)
+}
+
 var _ Runtime = (*RemoteRuntime)(nil)
 
 // RemoteSessionStore wraps a RemoteClient to implement the session.Store interface.

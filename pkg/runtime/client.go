@@ -616,3 +616,24 @@ func (c *Client) ResetSession(ctx context.Context, sessionID string) error {
 	endpoint := fmt.Sprintf("/api/sessions/%s/reset", sessionID)
 	return c.doRequest(ctx, http.MethodPost, endpoint, nil, nil)
 }
+
+// AddMessage adds a message to a session.
+func (c *Client) AddMessage(ctx context.Context, sessionID string, msg *session.Message) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/messages", sessionID)
+	req := api.AddMessageRequest{Message: msg}
+	return c.doRequest(ctx, http.MethodPost, endpoint, req, nil)
+}
+
+// UpdateMessage updates a message in a session.
+func (c *Client) UpdateMessage(ctx context.Context, sessionID, msgID string, msg *session.Message) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/messages/%s", sessionID, msgID)
+	req := api.UpdateMessageRequest{Message: msg}
+	return c.doRequest(ctx, http.MethodPatch, endpoint, req, nil)
+}
+
+// AddSummary adds a summary to a session.
+func (c *Client) AddSummary(ctx context.Context, sessionID, summary string, tokens int) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/summaries", sessionID)
+	req := api.AddSummaryRequest{Summary: summary, Tokens: tokens}
+	return c.doRequest(ctx, http.MethodPost, endpoint, req, nil)
+}
