@@ -35,6 +35,7 @@ func TestRegisterInstallsAllBuiltins(t *testing.T) {
 		builtins.MaxIterations,
 		builtins.RedactSecrets,
 		builtins.HTTPPost,
+		builtins.Unload,
 	} {
 		fn, ok := r.LookupBuiltin(name)
 		assert.True(t, ok, "builtin %q must be registered", name)

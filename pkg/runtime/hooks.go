@@ -279,13 +279,56 @@ const (
 // changes the active agent. Observational; failures are logged. The
 // hook runs alongside the existing [AgentSwitching] event, so users
 // who already consume that event see no behaviour change.
+//
+// The previous agent's model-endpoint snapshot is built only when at
+// least one hook is configured for this event so audit-free
+// deployments don't pay the team-lookup + per-model allocation on
+// every agent switch (matches the cheap-when-unused property of the
+// other hook callsites).
 func (r *LocalRuntime) executeOnAgentSwitchHooks(ctx context.Context, a *agent.Agent, sessionID, fromAgent, toAgent, kind string) {
+	exec := r.hooksExec(a)
+	if exec == nil || !exec.Has(hooks.EventOnAgentSwitch) {
+		return
+	}
 	r.dispatchHook(ctx, a, hooks.EventOnAgentSwitch, &hooks.Input{
 		SessionID:       sessionID,
 		FromAgent:       fromAgent,
 		ToAgent:         toAgent,
 		AgentSwitchKind: kind,
+		FromAgentModels: r.fromAgentModels(fromAgent),
 	}, nil)
+}
+
+// fromAgentModels snapshots the previous agent's configured model
+// endpoints into the wire-friendly [hooks.ModelEndpoint] form. Hooks
+// that act on the previous agent's models (e.g. the stock `unload`
+// builtin) read this slice instead of poking at the runtime, so the
+// hook payload stays self-contained.
+//
+// Returns nil when there is no previous agent or the lookup fails so
+// the JSON wire payload omits the field via `omitempty`.
+func (r *LocalRuntime) fromAgentModels(fromAgent string) []hooks.ModelEndpoint {
+	if fromAgent == "" {
+		return nil
+	}
+	from, err := r.team.Agent(fromAgent)
+	if err != nil {
+		slog.Debug("on_agent_switch: from-agent lookup failed",
+			"agent", fromAgent, "error", err)
+		return nil
+	}
+	configured := from.ConfiguredModels()
+	out := make([]hooks.ModelEndpoint, 0, len(configured))
+	for _, p := range configured {
+		cfg := p.BaseConfig()
+		out = append(out, hooks.ModelEndpoint{
+			Provider:  cfg.ModelConfig.Provider,
+			Model:     cfg.ModelConfig.Model,
+			BaseURL:   cfg.BaseURL,
+			UnloadAPI: cfg.ModelConfig.UnloadAPI(),
+		})
+	}
+	return out
 }
 
 // executeOnSessionResumeHooks fires on_session_resume when the user
