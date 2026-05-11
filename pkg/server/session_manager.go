@@ -548,12 +548,7 @@ func (sm *SessionManager) AddMessage(ctx context.Context, sessionID string, msg 
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
 
-	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-
-	_, err = sm.sessionStore.AddMessage(ctx, sessionID, msg)
+	_, err := sm.sessionStore.AddMessage(ctx, sessionID, msg)
 	if err != nil {
 		return err
 	}
@@ -563,7 +558,7 @@ func (sm *SessionManager) AddMessage(ctx context.Context, sessionID string, msg 
 		rt.session.AddMessage(msg)
 	}
 
-	return sm.sessionStore.UpdateSession(ctx, sess)
+	return nil
 }
 
 // UpdateMessage updates a message in a session.
@@ -571,23 +566,14 @@ func (sm *SessionManager) UpdateMessage(ctx context.Context, sessionID, msgID st
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
 
-	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-
 	// Parse msgID as int64
 	var msgPos int64
-	_, err = fmt.Sscanf(msgID, "%d", &msgPos)
+	_, err := fmt.Sscanf(msgID, "%d", &msgPos)
 	if err != nil {
 		return fmt.Errorf("invalid message ID: %w", err)
 	}
 
-	if err := sm.sessionStore.UpdateMessage(ctx, msgPos, msg); err != nil {
-		return err
-	}
-
-	return sm.sessionStore.UpdateSession(ctx, sess)
+	return sm.sessionStore.UpdateMessage(ctx, msgPos, msg)
 }
 
 // AddSummary adds a summary to a session.
