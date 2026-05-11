@@ -7,11 +7,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
@@ -30,7 +30,7 @@ func TestConvertDocumentAnthropic_StrategyB64_Image(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	visionCaps := modelcaps.CapsWith(true, true)
+	visionCaps := modelinfo.CapsWith(true, true)
 	blocks, err := convertDocumentWithCaps(t.Context(), doc, visionCaps)
 	require.NoError(t, err)
 	require.Len(t, blocks, 1, "expected exactly one block")
@@ -47,7 +47,7 @@ func TestConvertDocumentAnthropic_StrategyB64_PDF(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minPDF},
 	}
 
-	pdfCaps := modelcaps.CapsWith(true, true)
+	pdfCaps := modelinfo.CapsWith(true, true)
 	blocks, err := convertDocumentWithCaps(t.Context(), doc, pdfCaps)
 	require.NoError(t, err)
 	require.Len(t, blocks, 1, "expected exactly one block")
@@ -58,7 +58,7 @@ func TestConvertDocumentAnthropic_StrategyB64_PDF(t *testing.T) {
 // TestConvertDocumentAnthropic_QualifiedIDRequired is the regression test for
 // the bug where convertUserMultiContent passed only c.ModelConfig.Model (bare
 // model name) to convertDocument instead of c.ModelConfig.Provider+"/"+c.ModelConfig.Model.
-// When the bare name was used, modelcaps.Load always missed the model and all
+// When the bare name was used, modelinfo.LoadCaps always missed the model and all
 // image/PDF attachments were silently dropped.
 //
 // The test constructs a Client with Provider="anthropic" and Model="claude-sonnet-4-6",
@@ -117,7 +117,7 @@ func TestConvertDocumentAnthropic_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "## Specification"},
 	}
 
-	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	require.NotNil(t, blocks[0].OfText)
@@ -133,7 +133,7 @@ func TestConvertDocumentAnthropic_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "some notes"},
 	}
 
-	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	require.NotNil(t, blocks[0].OfText)
@@ -148,7 +148,7 @@ func TestConvertDocumentAnthropic_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelinfo.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "should be dropped when no inline content")
 }
@@ -160,7 +160,7 @@ func TestConvertDocumentAnthropic_Drop_UnsupportedMIME(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	textOnlyCaps := modelcaps.CapsWith(false, false)
+	textOnlyCaps := modelinfo.CapsWith(false, false)
 	blocks, err := convertDocumentWithCaps(t.Context(), doc, textOnlyCaps)
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "image should be dropped for text-only model")

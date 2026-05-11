@@ -139,7 +139,7 @@ func processFilePart(part MessagePart) (Document, *ImageResizeResult, error) {
 		}, nil, nil
 
 	default:
-		// Unknown binary — read verbatim and let modelcaps gate it at inference time.
+		// Unknown binary — read verbatim and let modelinfo gate it at inference time.
 		if fi.Size() > MaxInlineBinarySize {
 			return Document{}, nil, fmt.Errorf("ProcessAttachment: file %q too large to inline (%d bytes, max %d)", absPath, fi.Size(), MaxInlineBinarySize)
 		}

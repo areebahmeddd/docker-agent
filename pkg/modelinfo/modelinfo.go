@@ -1,11 +1,12 @@
-// Package modelinfo centralizes every model-specific behavior decision used
-// by docker-agent's provider clients.
+// Package modelinfo centralizes every model-specific behavior decision and
+// capability query used by docker-agent's provider clients.
 //
 // Some providers must specialize their behavior depending on the underlying
 // model: pick OpenAI's Responses API for o-series and gpt-5, switch Claude
 // Opus 4.6+ to adaptive thinking, use level-based thinking for Gemini 3+,
 // auto-enable interleaved thinking for any Claude model regardless of host
-// (Anthropic, Bedrock, Vertex AI Model Garden), and so on.
+// (Anthropic, Bedrock, Vertex AI Model Garden), decide which attachment MIME
+// types can be forwarded natively, and so on.
 //
 // Rather than scattering name-pattern checks across the codebase, every such
 // predicate lives here, with a name that describes the *capability* (not the
@@ -16,10 +17,11 @@
 //   - "Is*" predicates take a bare model identifier and use stable name
 //     patterns. They are zero-allocation and safe to call on the request hot
 //     path.
-//   - The Capability lookup helpers (LookupFamily, IsClaudeFamily, ...) use
+//   - Lookup helpers (LookupFamily, IsClaudeFamily, [LoadCaps], ...) use
 //     the models.dev database via a [modelsdev.Store] when richer information
-//     is needed (e.g. detecting Claude across providers). They are intended
-//     for config-resolution paths, not per-request paths.
+//     is needed (e.g. detecting Claude across providers, determining
+//     attachment MIME-type support). They are intended for config-resolution
+//     paths, not per-request paths.
 //
 // # Adding a new model
 //
@@ -32,7 +34,9 @@ package modelinfo
 
 import (
 	"context"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
@@ -200,4 +204,87 @@ func isOSeries(m string) bool {
 	return strings.HasPrefix(m, "o1") ||
 		strings.HasPrefix(m, "o3") ||
 		strings.HasPrefix(m, "o4")
+}
+
+// ---------------------------------------------------------------------------
+// Attachment MIME-type capabilities
+// ---------------------------------------------------------------------------
+
+// ModelCapabilities describes what MIME types a given model can accept as
+// document attachments.
+type ModelCapabilities struct {
+	supportsImage bool
+	supportsPDF   bool
+}
+
+// Supports reports whether the model can accept an attachment with the given
+// MIME type.
+//
+// Only three content families are recognised:
+//   - image/* → requires the models.dev "image" input modality
+//   - application/pdf → requires the models.dev "pdf" input modality
+//   - text/* → always accepted (TXT envelope is universally safe)
+//
+// Everything else (audio, video, Office binaries, …) returns false.
+func (mc ModelCapabilities) Supports(mimeType string) bool {
+	mt := strings.ToLower(mimeType)
+	switch {
+	case strings.HasPrefix(mt, "image/"):
+		return mc.supportsImage
+	case mt == "application/pdf":
+		return mc.supportsPDF
+	case strings.HasPrefix(mt, "text/"):
+		return true
+	default:
+		return false
+	}
+}
+
+// loadCapsTimeout is the maximum time allowed for a models.dev capability lookup.
+const loadCapsTimeout = 10 * time.Second
+
+// LoadCaps fetches (or returns from cache) the capability record for the given
+// model ID using the provided store. The model ID should be in
+// "provider/model" format as used by models.dev
+// (e.g. "anthropic/claude-3-5-sonnet-20241022").
+//
+// When the store is nil or the model is not found, LoadCaps returns a
+// conservative capability set that only allows text MIME types.
+func LoadCaps(store *modelsdev.Store, modelID string) ModelCapabilities {
+	if store == nil {
+		return ModelCapabilities{}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), loadCapsTimeout)
+	defer cancel()
+
+	model, err := store.GetModel(ctx, modelID)
+	if err != nil {
+		if ctx.Err() != nil {
+			slog.WarnContext(ctx, "modelinfo: models.dev lookup timed out, using conservative caps",
+				"model", modelID, "timeout", loadCapsTimeout)
+		}
+		return ModelCapabilities{}
+	}
+
+	var mc ModelCapabilities
+	for _, input := range model.Modalities.Input {
+		switch strings.ToLower(input) {
+		case "image":
+			mc.supportsImage = true
+		case "pdf":
+			mc.supportsPDF = true
+		}
+	}
+	return mc
+}
+
+// CapsWith constructs a ModelCapabilities value directly from booleans. This is
+// intended for use in tests and provider implementations that need to create a
+// capabilities value without hitting the network.
+func CapsWith(supportsImage, supportsPDF bool) ModelCapabilities {
+	return ModelCapabilities{
+		supportsImage: supportsImage,
+		supportsPDF:   supportsPDF,
+	}
 }

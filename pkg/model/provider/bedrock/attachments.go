@@ -11,8 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
 	"github.com/docker/docker-agent/pkg/attachment"
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
@@ -42,12 +42,12 @@ func imageFormatFromMIME(mimeType string) (types.ImageFormat, bool) {
 //   - text/* with InlineText → ContentBlockMemberText with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
 func convertDocument(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]types.ContentBlock, error) {
-	mc := modelcaps.Load(store, modelID)
+	mc := modelinfo.LoadCaps(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 
 // convertDocumentWithCaps is the caps-injectable variant used by tests.
-func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcaps.ModelCapabilities) ([]types.ContentBlock, error) {
+func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelinfo.ModelCapabilities) ([]types.ContentBlock, error) {
 	strategy, reason := attachment.Decide(doc, mc)
 
 	switch strategy {
@@ -87,7 +87,7 @@ func convertDocumentWithCaps(ctx context.Context, doc chat.Document, mc modelcap
 			}, nil
 		}
 
-		// Unexpected binary MIME — modelcaps should have filtered this out via
+		// Unexpected binary MIME — modelinfo should have filtered this out via
 		// StrategyDrop, but guard defensively.
 		slog.WarnContext(ctx, "bedrock: unexpected binary MIME in StrategyB64, dropping",
 			"mime", doc.MimeType, "doc", doc.Name)

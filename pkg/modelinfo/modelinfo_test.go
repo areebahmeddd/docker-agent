@@ -328,3 +328,153 @@ func TestIsClaude_StoreErrorFallsBackToPattern(t *testing.T) {
 	require.True(t, IsClaude(t.Context(), store, "anthropic", "claude-sonnet-4-5"))
 	require.False(t, IsClaude(t.Context(), store, "openai", "gpt-4o"))
 }
+
+// ---------------------------------------------------------------------------
+// Attachment MIME-type capabilities (formerly modelcaps)
+// ---------------------------------------------------------------------------
+
+func TestLoadCaps_QualifiedIDRequired(t *testing.T) {
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{
+		"anthropic": {
+			Models: map[string]modelsdev.Model{
+				"claude-sonnet-4-6": {
+					Name: "Claude Sonnet 4.6",
+					Modalities: modelsdev.Modalities{
+						Input:  []string{"text", "image", "pdf"},
+						Output: []string{"text"},
+					},
+				},
+			},
+		},
+	}})
+
+	// Bare model name: must fall back to conservative text-only caps.
+	bareID := "claude-sonnet-4-6"
+	mcBare := LoadCaps(store, bareID)
+	assert.False(t, mcBare.Supports("image/jpeg"),
+		"bare model name %q must NOT resolve to vision caps", bareID)
+	assert.False(t, mcBare.Supports("application/pdf"),
+		"bare model name %q must NOT resolve to PDF caps", bareID)
+
+	// Fully-qualified ID: must resolve to vision+pdf caps.
+	qualifiedID := "anthropic/claude-sonnet-4-6"
+	mcQualified := LoadCaps(store, qualifiedID)
+	assert.True(t, mcQualified.Supports("image/jpeg"),
+		"qualified ID %q must resolve to vision caps", qualifiedID)
+	assert.True(t, mcQualified.Supports("application/pdf"),
+		"qualified ID %q must resolve to PDF caps", qualifiedID)
+}
+
+func TestLoadCaps_VisionModel(t *testing.T) {
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{
+		"anthropic": {
+			Models: map[string]modelsdev.Model{
+				"claude-3-5-sonnet": {
+					Name: "Claude 3.5 Sonnet",
+					Modalities: modelsdev.Modalities{
+						Input:  []string{"text", "image", "pdf"},
+						Output: []string{"text"},
+					},
+				},
+			},
+		},
+	}})
+
+	mc := LoadCaps(store, "anthropic/claude-3-5-sonnet")
+
+	assert.True(t, mc.Supports("image/jpeg"))
+	assert.True(t, mc.Supports("image/png"))
+	assert.True(t, mc.Supports("application/pdf"))
+	assert.True(t, mc.Supports("text/plain"))
+}
+
+func TestLoadCaps_TextOnlyModel(t *testing.T) {
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{
+		"openai": {
+			Models: map[string]modelsdev.Model{
+				"gpt-3.5-turbo": {
+					Name: "GPT-3.5 Turbo",
+					Modalities: modelsdev.Modalities{
+						Input:  []string{"text"},
+						Output: []string{"text"},
+					},
+				},
+			},
+		},
+	}})
+
+	mc := LoadCaps(store, "openai/gpt-3.5-turbo")
+
+	assert.False(t, mc.Supports("image/jpeg"))
+	assert.False(t, mc.Supports("application/pdf"))
+	assert.True(t, mc.Supports("text/plain"))
+	assert.True(t, mc.Supports("text/markdown"))
+}
+
+func TestLoadCaps_ModelNotFound(t *testing.T) {
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{}})
+
+	mc := LoadCaps(store, "unknown/nonexistent-model")
+
+	assert.False(t, mc.Supports("image/jpeg"))
+	assert.False(t, mc.Supports("application/pdf"))
+	assert.True(t, mc.Supports("text/plain"))
+}
+
+func TestLoadCaps_OfficeDocsNotAllowed(t *testing.T) {
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{
+		"openai": {
+			Models: map[string]modelsdev.Model{
+				"gpt-4o": {
+					Name: "GPT-4o",
+					Modalities: modelsdev.Modalities{
+						Input:  []string{"text", "image", "pdf"},
+						Output: []string{"text"},
+					},
+				},
+			},
+		},
+	}})
+
+	mc := LoadCaps(store, "openai/gpt-4o")
+
+	for _, officeMIME := range []string{
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"application/msword",
+		"application/vnd.ms-excel",
+		"application/rtf",
+	} {
+		assert.False(t, mc.Supports(officeMIME),
+			"Office MIME %q must not be supported", officeMIME)
+	}
+}
+
+func TestCapsWith(t *testing.T) {
+	mc := CapsWith(true, false)
+	assert.True(t, mc.Supports("image/jpeg"))
+	assert.False(t, mc.Supports("application/pdf"))
+
+	mc2 := CapsWith(false, false)
+	assert.False(t, mc2.Supports("image/png"))
+}
+
+func TestSupports_AudioVideoRejected(t *testing.T) {
+	mc := CapsWith(true, true)
+
+	for _, mime := range []string{
+		"audio/mp3",
+		"audio/wav",
+		"audio/ogg",
+		"video/mp4",
+		"video/webm",
+		"application/octet-stream",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/msword",
+	} {
+		assert.False(t, mc.Supports(mime),
+			"%q must not be supported", mime)
+	}
+}

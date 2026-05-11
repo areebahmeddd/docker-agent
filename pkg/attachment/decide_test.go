@@ -5,28 +5,28 @@ import (
 	"testing"
 
 	"github.com/docker/docker-agent/pkg/attachment"
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 )
 
 // testCaps is a small helper that builds a ModelCapabilities directly.
-func visionCaps() modelcaps.ModelCapabilities {
-	return modelcaps.CapsWith(true, true)
+func visionCaps() modelinfo.ModelCapabilities {
+	return modelinfo.CapsWith(true, true)
 }
 
-func textOnlyCaps() modelcaps.ModelCapabilities {
-	return modelcaps.CapsWith(false, false)
+func textOnlyCaps() modelinfo.ModelCapabilities {
+	return modelinfo.CapsWith(false, false)
 }
 
-func imageNoPDFCaps() modelcaps.ModelCapabilities {
-	return modelcaps.CapsWith(true, false)
+func imageNoPDFCaps() modelinfo.ModelCapabilities {
+	return modelinfo.CapsWith(true, false)
 }
 
 func TestDecide(t *testing.T) {
 	tests := []struct {
 		name          string
 		doc           chat.Document
-		caps          modelcaps.ModelCapabilities
+		caps          modelinfo.ModelCapabilities
 		wantStrategy  attachment.Strategy
 		wantReasonHas string // non-empty: reason must contain this substring
 	}{

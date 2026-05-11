@@ -10,8 +10,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelinfo"
 )
 
 // Strategy describes how an attachment should be handled before sending to the
@@ -41,7 +41,7 @@ const (
 //  2. If Source.InlineData is non-empty → (B64, "").
 //  3. If Source.InlineText is non-empty → (TXT, "").
 //  4. Otherwise → (Drop, "no inline content").
-func Decide(doc chat.Document, mc modelcaps.ModelCapabilities) (Strategy, string) {
+func Decide(doc chat.Document, mc modelinfo.ModelCapabilities) (Strategy, string) {
 	if !mc.Supports(doc.MimeType) {
 		return StrategyDrop, fmt.Sprintf("model does not support MIME type %q", doc.MimeType)
 	}
