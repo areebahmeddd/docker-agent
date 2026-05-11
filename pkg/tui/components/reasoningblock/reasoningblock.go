@@ -2,10 +2,10 @@ package reasoningblock
 
 import (
 	"fmt"
-	"image/color"
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -30,19 +30,35 @@ const (
 	completedToolVisibleDuration = 1500 * time.Millisecond
 	// completedToolFadeDuration is how long the fade-out effect lasts before hiding.
 	completedToolFadeDuration = 1000 * time.Millisecond
+	// fadeSteps is the number of discrete quantized fade levels.
+	fadeSteps = 20
 )
 
-// fadeColor returns an interpolated color for the given fade progress (0.0 to 1.0).
-// Progress 0.0 is normal color, 1.0 is very faded (close to background).
-func fadeColor(progress float64) color.Color {
-	// Interpolate from #808080 (normal muted) to #303038 (very faded)
-	// RGB: (128,128,128) -> (48,48,56)
-	startR, startG, startB := 128, 128, 128
-	endR, endG, endB := 48, 48, 56
-	r := int(float64(startR) + progress*float64(endR-startR))
-	g := int(float64(startG) + progress*float64(endG-startG))
-	b := int(float64(startB) + progress*float64(endB-startB))
-	return lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", r, g, b))
+// fadeStyles is a pre-computed table of lipgloss styles for discrete fade levels.
+// Index 0 = no fade (normal), index fadeSteps = fully faded.
+var (
+	fadeStyles     [fadeSteps + 1]lipgloss.Style
+	fadeStylesOnce sync.Once
+)
+
+func initFadeStyles() {
+	for i := range fadeSteps + 1 {
+		progress := float64(i) / float64(fadeSteps)
+		startR, startG, startB := 128, 128, 128
+		endR, endG, endB := 48, 48, 56
+		r := int(float64(startR) + progress*float64(endR-startR))
+		g := int(float64(startG) + progress*float64(endG-startG))
+		b := int(float64(startB) + progress*float64(endB-startB))
+		c := lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", r, g, b))
+		fadeStyles[i] = lipgloss.NewStyle().Foreground(c)
+	}
+}
+
+// fadeStyleForProgress returns the pre-computed style for the given fade progress.
+func fadeStyleForProgress(progress float64) lipgloss.Style {
+	fadeStylesOnce.Do(initFadeStyles)
+	idx := min(max(int(progress*fadeSteps), 0), fadeSteps)
+	return fadeStyles[idx]
 }
 
 // nowFunc is the time function used to get the current time.
@@ -55,6 +71,7 @@ type toolEntry struct {
 	view                  layout.Model
 	collapsedVisibleUntil time.Time // Zero means no grace period (hide immediately when completed)
 	fadeProgress          float64   // 0.0 = not fading, 0.0-1.0 = fading (higher = more faded)
+	strippedCollapsed     string    // Cached ANSI-stripped collapsed view (set once on completion)
 }
 
 // contentItemKind identifies the type of content item.
@@ -241,6 +258,15 @@ func (m *Model) UpdateToolResult(toolCallID, content string, status types.ToolSt
 		view.SetSize(m.contentWidth(), 0)
 		m.toolEntries[i] = entry
 		m.toolEntries[i].view = view
+
+		// Pre-cache the ANSI-stripped collapsed view for fade rendering
+		if wasInProgress && isCompleted {
+			if cv, ok := view.(layout.CollapsedViewer); ok {
+				m.toolEntries[i].strippedCollapsed = ansi.Strip(cv.CollapsedView())
+			} else {
+				m.toolEntries[i].strippedCollapsed = ansi.Strip(view.View())
+			}
+		}
 
 		initCmd := view.Init()
 		if animCmd != nil {
@@ -530,7 +556,7 @@ func (m *Model) renderCollapsed() string {
 	visibleTools := m.getVisibleToolsCollapsed()
 	if len(visibleTools) > 0 {
 		parts = append(parts, "") // blank line before tools
-		for _, entry := range visibleTools {
+		for i, entry := range visibleTools {
 			// Prefer CollapsedView() for simplified rendering in collapsed state
 			var toolView string
 			if cv, ok := entry.view.(layout.CollapsedViewer); ok {
@@ -539,11 +565,12 @@ func (m *Model) renderCollapsed() string {
 				toolView = entry.view.View()
 			}
 			if entry.fadeProgress > 0 {
-				// Strip existing ANSI codes and apply faded color based on progress
-				// (wrapping styled content doesn't override inner colors)
-				stripped := ansi.Strip(toolView)
-				fadeStyle := lipgloss.NewStyle().Foreground(fadeColor(entry.fadeProgress))
-				toolView = fadeStyle.Render(stripped)
+				// Use cached stripped text (populated once on tool completion)
+				stripped := visibleTools[i].strippedCollapsed
+				if stripped == "" {
+					stripped = ansi.Strip(toolView)
+				}
+				toolView = fadeStyleForProgress(entry.fadeProgress).Render(stripped)
 			}
 			parts = append(parts, toolView)
 		}
