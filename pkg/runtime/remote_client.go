@@ -54,6 +54,42 @@ type RemoteClient interface {
 
 	// GetSessionTools retrieves tools available in a session
 	GetSessionTools(ctx context.Context, sessionID string) ([]tools.Tool, error)
+
+	// GetAvailableModels returns available models for the agent
+	GetAvailableModels(ctx context.Context) ([]string, error)
+
+	// SetAgentModel sets the model for the agent in a session
+	SetAgentModel(ctx context.Context, sessionID, model string) error
+
+	// GetSessionMCPPrompts returns available MCP prompts for a session
+	GetSessionMCPPrompts(ctx context.Context, sessionID string) (map[string]any, error)
+
+	// ExecuteSessionMCPPrompt executes an MCP prompt in a session
+	ExecuteSessionMCPPrompt(ctx context.Context, sessionID, promptName string, args map[string]string) (string, error)
+
+	// GetSessionSkills returns available skills for a session
+	GetSessionSkills(ctx context.Context, sessionID string) (map[string]any, error)
+
+	// CompactSession triggers session compaction on the server
+	CompactSession(ctx context.Context, sessionID string) error
+
+	// GetSessionToolsets returns toolset statuses for a session
+	GetSessionToolsets(ctx context.Context, sessionID string) ([]map[string]any, error)
+
+	// RestartSessionToolset restarts a toolset in a session
+	RestartSessionToolset(ctx context.Context, sessionID, toolsetName string) error
+
+	// PauseSession pauses a session
+	PauseSession(ctx context.Context, sessionID string) error
+
+	// GetSessionSnapshots retrieves snapshots for a session
+	GetSessionSnapshots(ctx context.Context, sessionID string) ([]map[string]any, error)
+
+	// UndoSession reverts a session to the previous snapshot
+	UndoSession(ctx context.Context, sessionID string) error
+
+	// ResetSession resets a session to initial state
+	ResetSession(ctx context.Context, sessionID string) error
 }
 
 var _ RemoteClient = (*Client)(nil)

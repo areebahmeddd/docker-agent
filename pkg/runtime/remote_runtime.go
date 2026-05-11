@@ -152,10 +152,12 @@ func (r *RemoteRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
 	return nil
 }
 
-// RestartToolset is not implemented for remote runtimes; toolset
-// restart is a server-side concern.
-func (r *RemoteRuntime) RestartToolset(context.Context, string) error {
-	return fmt.Errorf("restart-toolset: %w", ErrUnsupported)
+// RestartToolset restarts a toolset on the remote server.
+func (r *RemoteRuntime) RestartToolset(ctx context.Context, toolsetName string) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.RestartSessionToolset(ctx, r.sessionID, toolsetName)
 }
 
 // EmitStartupInfo emits initial agent, team, and toolset information
@@ -314,13 +316,18 @@ func (r *RemoteRuntime) Resume(ctx context.Context, req ResumeRequest) {
 	}
 }
 
-// Summarize is not yet supported on remote runtimes. Emit an Error
-// event so the TUI surfaces a clear failure instead of persisting a
-// bogus "not yet implemented" SessionSummary into the session store
-// (the persistence observer writes every SessionSummaryEvent unchanged).
-func (r *RemoteRuntime) Summarize(_ context.Context, _ *session.Session, _ string, events chan Event) {
-	slog.Debug("Summarize not yet implemented for remote runtime", "session_id", r.sessionID)
-	events <- Error(fmt.Sprintf("summarize: %s", ErrUnsupported))
+// Summarize generates a summary for the session by compacting it server-side.
+func (r *RemoteRuntime) Summarize(ctx context.Context, sess *session.Session, _ string, events chan Event) {
+	if r.sessionID == "" {
+		events <- SessionSummary(sess.ID, "No active session to summarize", r.currentAgent, 0)
+		return
+	}
+	if err := r.client.CompactSession(ctx, r.sessionID); err != nil {
+		slog.WarnContext(ctx, "Failed to compact session", "error", err)
+		events <- SessionSummary(sess.ID, fmt.Sprintf("Compaction failed: %v", err), r.currentAgent, 0)
+		return
+	}
+	events <- SessionSummary(sess.ID, "Session compacted successfully", r.currentAgent, 0)
 }
 
 func (r *RemoteRuntime) convertSessionMessages(sess *session.Session) []api.Message {
@@ -519,6 +526,29 @@ func (r *RemoteRuntime) SessionStore() session.Store {
 	return NewRemoteSessionStore(r.client)
 }
 
+// AvailableModels returns available models for the agent.
+func (r *RemoteRuntime) AvailableModels(ctx context.Context) []string {
+	models, err := r.client.GetAvailableModels(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to get available models", "error", err)
+		return nil
+	}
+	return models
+}
+
+// SetAgentModel sets the model for the agent.
+func (r *RemoteRuntime) SetAgentModel(ctx context.Context, model string) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.SetAgentModel(ctx, r.sessionID, model)
+}
+
+// SupportsModelSwitching returns true for remote runtimes (model switching is handled server-side).
+func (r *RemoteRuntime) SupportsModelSwitching() bool {
+	return true
+}
+
 // PermissionsInfo returns nil for remote runtime since permissions are handled server-side.
 func (r *RemoteRuntime) PermissionsInfo() *PermissionsInfo {
 	return nil
@@ -542,14 +572,32 @@ func (r *RemoteRuntime) UpdateSessionTitle(ctx context.Context, sess *session.Se
 	return r.client.UpdateSessionTitle(ctx, r.sessionID, title)
 }
 
-// CurrentMCPPrompts is not supported on remote runtimes.
-func (r *RemoteRuntime) CurrentMCPPrompts(context.Context) map[string]mcp.PromptInfo {
-	return make(map[string]mcp.PromptInfo)
+// CurrentMCPPrompts returns available MCP prompts from the server.
+func (r *RemoteRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcp.PromptInfo {
+	if r.sessionID == "" {
+		return make(map[string]mcp.PromptInfo)
+	}
+	prompts, err := r.client.GetSessionMCPPrompts(ctx, r.sessionID)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to get MCP prompts", "error", err)
+		return make(map[string]mcp.PromptInfo)
+	}
+	// Convert map[string]any to map[string]mcp.PromptInfo
+	result := make(map[string]mcp.PromptInfo)
+	for k, v := range prompts {
+		if info, ok := v.(mcp.PromptInfo); ok {
+			result[k] = info
+		}
+	}
+	return result
 }
 
-// ExecuteMCPPrompt is not supported on remote runtimes.
-func (r *RemoteRuntime) ExecuteMCPPrompt(context.Context, string, map[string]string) (string, error) {
-	return "", fmt.Errorf("MCP prompts: %w", ErrUnsupported)
+// ExecuteMCPPrompt executes an MCP prompt on the server.
+func (r *RemoteRuntime) ExecuteMCPPrompt(ctx context.Context, promptName string, args map[string]string) (string, error) {
+	if r.sessionID == "" {
+		return "", errors.New("no active session")
+	}
+	return r.client.ExecuteSessionMCPPrompt(ctx, r.sessionID, promptName, args)
 }
 
 // TitleGenerator is not supported on remote runtimes (titles are generated server-side).
@@ -557,9 +605,12 @@ func (r *RemoteRuntime) TitleGenerator() *sessiontitle.Generator {
 	return nil
 }
 
-// TogglePause is not yet supported on remote runtimes.
-func (r *RemoteRuntime) TogglePause(context.Context) (bool, error) {
-	return false, fmt.Errorf("pause: %w", ErrUnsupported)
+// TogglePause pauses/resumes a session on the server.
+func (r *RemoteRuntime) TogglePause(ctx context.Context) (bool, error) {
+	if r.sessionID == "" {
+		return false, errors.New("no active session")
+	}
+	return false, r.client.PauseSession(ctx, r.sessionID)
 }
 
 // SetAgentModel is not yet supported on remote runtimes; the server owns

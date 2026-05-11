@@ -531,3 +531,88 @@ func (c *Client) GetSessionTools(ctx context.Context, sessionID string) ([]tools
 	err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &toolList)
 	return toolList, err
 }
+
+// GetAvailableModels returns available models for the agent.
+func (c *Client) GetAvailableModels(ctx context.Context) ([]string, error) {
+	var models []string
+	err := c.doRequest(ctx, http.MethodGet, "/api/models", nil, &models)
+	return models, err
+}
+
+// SetAgentModel sets the model for the agent in a session.
+func (c *Client) SetAgentModel(ctx context.Context, sessionID, model string) error {
+	req := map[string]string{"model": model}
+	return c.doRequest(ctx, http.MethodPost, "/api/sessions/"+sessionID+"/model", req, nil)
+}
+
+// GetSessionMCPPrompts returns available MCP prompts for a session.
+func (c *Client) GetSessionMCPPrompts(ctx context.Context, sessionID string) (map[string]any, error) {
+	var prompts map[string]any
+	endpoint := fmt.Sprintf("/api/sessions/%s/mcp/prompts", sessionID)
+	err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &prompts)
+	return prompts, err
+}
+
+// ExecuteSessionMCPPrompt executes an MCP prompt in a session.
+func (c *Client) ExecuteSessionMCPPrompt(ctx context.Context, sessionID, promptName string, args map[string]string) (string, error) {
+	endpoint := fmt.Sprintf("/api/sessions/%s/mcp/prompts/%s/execute", sessionID, promptName)
+	var result struct {
+		Result string `json:"result"`
+	}
+	err := c.doRequest(ctx, http.MethodPost, endpoint, args, &result)
+	return result.Result, err
+}
+
+// GetSessionSkills returns available skills for a session.
+func (c *Client) GetSessionSkills(ctx context.Context, sessionID string) (map[string]any, error) {
+	var skills map[string]any
+	endpoint := fmt.Sprintf("/api/sessions/%s/skills", sessionID)
+	err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &skills)
+	return skills, err
+}
+
+// CompactSession triggers session compaction on the server.
+func (c *Client) CompactSession(ctx context.Context, sessionID string) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/compact", sessionID)
+	return c.doRequest(ctx, http.MethodPost, endpoint, nil, nil)
+}
+
+// GetSessionToolsets returns toolset statuses for a session.
+func (c *Client) GetSessionToolsets(ctx context.Context, sessionID string) ([]map[string]any, error) {
+	var toolsets []map[string]any
+	endpoint := fmt.Sprintf("/api/sessions/%s/toolsets", sessionID)
+	err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &toolsets)
+	return toolsets, err
+}
+
+// RestartSessionToolset restarts a toolset in a session.
+func (c *Client) RestartSessionToolset(ctx context.Context, sessionID, toolsetName string) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/toolsets/%s/restart", sessionID, toolsetName)
+	return c.doRequest(ctx, http.MethodPost, endpoint, nil, nil)
+}
+
+// PauseSession pauses a session.
+func (c *Client) PauseSession(ctx context.Context, sessionID string) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/pause", sessionID)
+	return c.doRequest(ctx, http.MethodPost, endpoint, nil, nil)
+}
+
+// GetSessionSnapshots retrieves snapshots for a session.
+func (c *Client) GetSessionSnapshots(ctx context.Context, sessionID string) ([]map[string]any, error) {
+	var snapshots []map[string]any
+	endpoint := fmt.Sprintf("/api/sessions/%s/snapshots", sessionID)
+	err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &snapshots)
+	return snapshots, err
+}
+
+// UndoSession reverts a session to the previous snapshot.
+func (c *Client) UndoSession(ctx context.Context, sessionID string) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/undo", sessionID)
+	return c.doRequest(ctx, http.MethodPost, endpoint, nil, nil)
+}
+
+// ResetSession resets a session to initial state.
+func (c *Client) ResetSession(ctx context.Context, sessionID string) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/reset", sessionID)
+	return c.doRequest(ctx, http.MethodPost, endpoint, nil, nil)
+}
