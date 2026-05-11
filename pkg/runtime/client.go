@@ -36,7 +36,7 @@ func WithHTTPClient(client *http.Client) ClientOption {
 	}
 }
 
-// WithTimeout sets the HTTP client timeout
+// WithTimeout sets the HTTP client timeout (deprecated: prefer per-request timeouts)
 func WithTimeout(timeout time.Duration) ClientOption {
 	return func(c *Client) {
 		if c.httpClient == nil {
@@ -44,6 +44,16 @@ func WithTimeout(timeout time.Duration) ClientOption {
 		}
 		c.httpClient.Timeout = timeout
 	}
+}
+
+// timeoutFor returns the appropriate timeout for a request category
+func (c *Client) timeoutFor(category string) time.Duration {
+	// Short timeout for metadata/CRUD operations
+	if category == "metadata" || category == "crud" {
+		return 30 * time.Second
+	}
+	// Long timeout for streaming/SSE operations
+	return 5 * time.Minute
 }
 
 // NewClient creates a new HTTP client for the docker agent server
@@ -112,6 +122,11 @@ type ErrorResponse struct {
 
 // doRequest performs an HTTP request and handles common response patterns
 func (c *Client) doRequest(ctx context.Context, method, endpoint string, body, result any) error {
+	return c.doRequestWithTimeout(ctx, method, endpoint, body, result, "crud")
+}
+
+// doRequestWithTimeout performs an HTTP request with explicit timeout category
+func (c *Client) doRequestWithTimeout(ctx context.Context, method, endpoint string, body, result any, timeoutCategory string) error {
 	var reqBody io.Reader
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
@@ -123,6 +138,11 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body, r
 
 	u := *c.baseURL
 	u.Path = path.Join(u.Path, endpoint)
+
+	// Apply per-request timeout based on category
+	timeout := c.timeoutFor(timeoutCategory)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), reqBody)
 	if err != nil {
@@ -445,6 +465,11 @@ func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-c
 
 	u := *c.baseURL
 	u.Path = path.Join(u.Path, endpoint)
+
+	// Use long timeout for streaming
+	timeout := c.timeoutFor("streaming")
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {

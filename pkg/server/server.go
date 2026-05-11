@@ -306,16 +306,23 @@ func (s *Server) runAgent(c echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("Connection", "keep-alive")
 	c.Response().WriteHeader(http.StatusOK)
-	for event := range streamChan {
-		data, err := json.Marshal(event)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to marshal event: %v", err))
+	for {
+		select {
+		case event, ok := <-streamChan:
+			if !ok {
+				return nil
+			}
+			data, err := json.Marshal(event)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to marshal event: %v", err))
+			}
+			fmt.Fprintf(c.Response(), "data: %s\n\n", string(data))
+			c.Response().Flush()
+		case <-c.Request().Context().Done():
+			slog.DebugContext(c.Request().Context(), "Client disconnected from stream", "session_id", sessionID)
+			return nil
 		}
-		fmt.Fprintf(c.Response(), "data: %s\n\n", string(data))
-		c.Response().Flush()
 	}
-
-	return nil
 }
 
 func (s *Server) elicitation(c echo.Context) error {
