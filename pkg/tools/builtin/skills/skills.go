@@ -181,9 +181,9 @@ func (s *Toolset) Instructions() string {
 
 	hasFork := s.hasForkSkills()
 	if hasFork {
-		sb.WriteString("Some skills are configured to run as isolated sub-agents (context: fork). ")
-		sb.WriteString("For those skills use run_skill instead of read_skill so they execute in a dedicated context ")
-		sb.WriteString("with their own conversation history.\n\n")
+		sb.WriteString("Some skills are configured to run in a forked context with their own conversation history. ")
+		sb.WriteString("For those skills, you MUST use the run_skill tool (not transfer_task or read_skill). ")
+		sb.WriteString("The run_skill tool handles the isolated execution automatically.\n\n")
 	}
 
 	if s.hasFiles() {
@@ -201,7 +201,7 @@ func (s *Toolset) Instructions() string {
 		sb.WriteString(skill.Description)
 		sb.WriteString("</description>\n")
 		if skill.IsFork() {
-			sb.WriteString("    <mode>sub-agent</mode>\n")
+			sb.WriteString("    <mode>forked</mode>\n")
 		}
 		if len(skill.Files) > 1 {
 			sb.WriteString("    <files>")
@@ -228,8 +228,8 @@ func (s *Toolset) Instructions() string {
 
 // RunSkillArgs specifies the parameters for the run_skill tool.
 type RunSkillArgs struct {
-	Name string `json:"name" jsonschema:"The name of the skill to run as a sub-agent"`
-	Task string `json:"task" jsonschema:"A clear description of the task the skill sub-agent should achieve"`
+	Name string `json:"name" jsonschema:"The name of the skill to run in a forked context"`
+	Task string `json:"task" jsonschema:"A clear description of the task the skill should achieve"`
 }
 
 // PreparedSkillFork carries the validated and expanded data needed to launch a
@@ -266,7 +266,7 @@ func (s *Toolset) PrepareForkSubSession(ctx context.Context, args RunSkillArgs) 
 
 	if !skill.IsFork() {
 		return nil, tools.ResultError(fmt.Sprintf(
-			"skill %q is not configured for sub-agent execution (missing context: fork in SKILL.md frontmatter); use read_skill instead",
+			"skill %q is not configured for forked execution (missing context: fork in SKILL.md frontmatter); use read_skill instead",
 			args.Name,
 		))
 	}
@@ -325,7 +325,7 @@ func (s *Toolset) Tools(context.Context) ([]tools.Tool, error) {
 		result = append(result, tools.Tool{
 			Name:         ToolNameRunSkill,
 			Category:     "skills",
-			Description:  "Run a skill as an isolated sub-agent with its own conversation context. Use this for skills marked with sub-agent mode.",
+			Description:  "Run a skill in a forked context with its own conversation history. Use this for skills marked with forked mode — never use transfer_task for skills.",
 			Parameters:   tools.MustSchemaFor[RunSkillArgs](),
 			OutputSchema: tools.MustSchemaFor[string](),
 			Annotations: tools.ToolAnnotations{
