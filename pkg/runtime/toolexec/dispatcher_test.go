@@ -367,7 +367,7 @@ func TestDispatcher_DenyByPermissionsEmitsErrorResponse(t *testing.T) {
 // the post_tool_use hook input. This is the third leg of the
 // redact_secrets feature — unit-tested here at the contract level
 // with a stub HookDispatcher so the test doesn't depend on the
-// secretsscan ruleset shipping a particular set of patterns.
+// portcullis ruleset shipping a particular set of patterns.
 func TestDispatcher_ToolResponseTransformRewritesOutput(t *testing.T) {
 	a := newAgent()
 	sess := session.New()

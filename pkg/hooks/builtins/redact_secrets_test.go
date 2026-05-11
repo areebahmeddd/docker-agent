@@ -3,12 +3,12 @@ package builtins
 import (
 	"testing"
 
+	"github.com/docker/portcullis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
-	"github.com/docker/docker-agent/pkg/secretsscan"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -41,7 +41,7 @@ func TestRedactSecretsScrubsTopLevelStringValue(t *testing.T) {
 	cmd, ok := updated["command"].(string)
 	require.True(t, ok, "changed key must appear in UpdatedInput")
 	assert.NotContains(t, cmd, secret, "raw secret must be gone")
-	assert.Contains(t, cmd, secretsscan.RedactionMarker)
+	assert.Contains(t, cmd, portcullis.Marker)
 	assert.NotContains(t, updated, "timeout",
 		"unchanged keys must NOT appear in UpdatedInput (would clobber concurrent hooks)")
 	assert.Equal(t, hooks.EventPreToolUse, out.HookSpecificOutput.HookEventName)
@@ -109,7 +109,7 @@ func TestRedactSecretsWalksNestedStructures(t *testing.T) {
 	headers := updated["headers"].(map[string]any)
 	auth, _ := headers["Authorization"].(string)
 	assert.NotContains(t, auth, secret)
-	assert.Contains(t, auth, secretsscan.RedactionMarker)
+	assert.Contains(t, auth, portcullis.Marker)
 	assert.Equal(t, "application/json", headers["Accept"], "non-secret header preserved")
 
 	tags := updated["tags"].([]any)
@@ -117,7 +117,7 @@ func TestRedactSecretsWalksNestedStructures(t *testing.T) {
 	assert.Equal(t, "prod", tags[0])
 	tag1, _ := tags[1].(string)
 	assert.NotContains(t, tag1, secret)
-	assert.Contains(t, tag1, secretsscan.RedactionMarker)
+	assert.Contains(t, tag1, portcullis.Marker)
 	assert.Equal(t, 42, tags[2])
 }
 
@@ -205,7 +205,7 @@ func TestRedactSecretsScrubsOutgoingMessages(t *testing.T) {
 	rewritten := out.HookSpecificOutput.UpdatedMessages
 	require.Len(t, rewritten, 2, "rewrite must cover the full slice, not just the dirty entries")
 	assert.NotContains(t, rewritten[0].Content, secret)
-	assert.Contains(t, rewritten[0].Content, secretsscan.RedactionMarker)
+	assert.Contains(t, rewritten[0].Content, portcullis.Marker)
 	assert.Equal(t, "never mention secrets", rewritten[1].Content,
 		"clean messages must pass through verbatim")
 }
@@ -263,7 +263,7 @@ func TestRedactSecretsBeforeLLMCallScrubsToolCallArguments(t *testing.T) {
 	require.Len(t, rewritten[0].ToolCalls, 1)
 	args := rewritten[0].ToolCalls[0].Function.Arguments
 	assert.NotContains(t, args, secret)
-	assert.Contains(t, args, secretsscan.RedactionMarker)
+	assert.Contains(t, args, portcullis.Marker)
 }
 
 // TestRedactSecretsScrubsToolOutput exercises the
@@ -290,7 +290,7 @@ func TestRedactSecretsScrubsToolOutput(t *testing.T) {
 	require.NotNil(t, out.HookSpecificOutput.UpdatedToolResponse,
 		"a hit must yield a non-nil pointer (nil signals 'no rewrite')")
 	assert.NotContains(t, *out.HookSpecificOutput.UpdatedToolResponse, secret)
-	assert.Contains(t, *out.HookSpecificOutput.UpdatedToolResponse, secretsscan.RedactionMarker)
+	assert.Contains(t, *out.HookSpecificOutput.UpdatedToolResponse, portcullis.Marker)
 }
 
 // TestRedactSecretsToolOutputNoOpOnCleanResponse: clean output ⇒ nil

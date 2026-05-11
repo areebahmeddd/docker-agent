@@ -135,7 +135,7 @@ linters:
         # gosec's pattern matches many legitimate Close-on-error-path callsites.
         - G104
         # Hardcoded-credentials matches constant names like ToolNameLSPWorkspace*
-        # and intentionally-public client telemetry keys; secretsscan covers real cases.
+        # and intentionally-public client telemetry keys; portcullis covers real cases.
         - G101
         # Subprocess-with-variable: docker-agent intentionally launches user-configured
         # commands (LSP servers, hooks, agents, editors).

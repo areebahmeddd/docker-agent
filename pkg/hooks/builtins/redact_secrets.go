@@ -6,9 +6,10 @@ import (
 	"log/slog"
 	"slices"
 
+	"github.com/docker/portcullis"
+
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
-	"github.com/docker/docker-agent/pkg/secretsscan"
 )
 
 // RedactSecrets is the registered name of the builtin that scrubs
@@ -65,7 +66,7 @@ func redactSecrets(_ context.Context, in *hooks.Input, _ []string) (*hooks.Outpu
 
 // redactToolArgs walks every value in [hooks.Input.ToolInput]
 // (recursively into nested maps and slices) and replaces secret spans
-// with [secretsscan.RedactionMarker]. When nothing matched it returns
+// with [portcullis.Marker]. When nothing matched it returns
 // a nil [hooks.Output] so unaffected tool calls take the cheap path
 // through the executor.
 //
@@ -138,7 +139,7 @@ func redactToolOutput(in *hooks.Input) *hooks.Output {
 	if !ok {
 		return nil
 	}
-	scrubbed := secretsscan.Redact(original)
+	scrubbed := portcullis.Redact(original)
 	if scrubbed == original {
 		return nil
 	}
@@ -170,13 +171,13 @@ func redactToolInput(m map[string]any) map[string]any {
 
 // redactAny recursively scrubs secrets out of v, returning the new
 // value and a "did anything change" flag. Strings go through
-// [secretsscan.Redact]; map[string]any / []any are walked to catch
+// [portcullis.Redact]; map[string]any / []any are walked to catch
 // secrets nested inside JSON-style payloads. Every other Go type
 // passes through unchanged because the scanner only operates on text.
 func redactAny(v any) (any, bool) {
 	switch val := v.(type) {
 	case string:
-		redacted := secretsscan.Redact(val)
+		redacted := portcullis.Redact(val)
 		return redacted, redacted != val
 	case map[string]any:
 		out := make(map[string]any, len(val))
@@ -216,38 +217,38 @@ func redactAny(v any) (any, bool) {
 //
 // Other fields (image URLs, file references, ThinkingSignature,
 // ThoughtSignature) are not scanned: they're either opaque provider
-// tokens or non-text payloads outside the secretsscan ruleset's reach.
+// tokens or non-text payloads outside the portcullis ruleset's reach.
 //
 // MultiContent and ToolCalls slices are cloned (and FunctionCall
 // pointers are deep-copied) before being mutated so the caller's
 // message history is left untouched. We don't bother with
-// copy-on-write: secretsscan.Redact is essentially free on inputs
+// copy-on-write: portcullis.Redact is essentially free on inputs
 // that don't match a rule (it returns the same string), so the only
 // cost on a clean conversation is the per-message slice/struct clone
 // — negligible compared to the LLM call this rewrite is gating.
 func redactMessage(m chat.Message) chat.Message {
-	m.Content = secretsscan.Redact(m.Content)
-	m.ReasoningContent = secretsscan.Redact(m.ReasoningContent)
+	m.Content = portcullis.Redact(m.Content)
+	m.ReasoningContent = portcullis.Redact(m.ReasoningContent)
 
 	if len(m.MultiContent) > 0 {
 		m.MultiContent = slices.Clone(m.MultiContent)
 		for i := range m.MultiContent {
 			if m.MultiContent[i].Type == chat.MessagePartTypeText {
-				m.MultiContent[i].Text = secretsscan.Redact(m.MultiContent[i].Text)
+				m.MultiContent[i].Text = portcullis.Redact(m.MultiContent[i].Text)
 			}
 		}
 	}
 
 	if m.FunctionCall != nil {
 		fc := *m.FunctionCall
-		fc.Arguments = secretsscan.Redact(fc.Arguments)
+		fc.Arguments = portcullis.Redact(fc.Arguments)
 		m.FunctionCall = &fc
 	}
 
 	if len(m.ToolCalls) > 0 {
 		m.ToolCalls = slices.Clone(m.ToolCalls)
 		for i := range m.ToolCalls {
-			m.ToolCalls[i].Function.Arguments = secretsscan.Redact(m.ToolCalls[i].Function.Arguments)
+			m.ToolCalls[i].Function.Arguments = portcullis.Redact(m.ToolCalls[i].Function.Arguments)
 		}
 	}
 

@@ -432,7 +432,7 @@
         },
         "redact_secrets": {
           "type": "boolean",
-          "description": "When true, the runtime auto-installs the redact_secrets builtin on all three of pre_tool_use (scrubs detected secrets from tool arguments), before_llm_call (scrubs the messages sent to the LLM), and tool_response_transform (scrubs tool output before it reaches event consumers, the persisted session, the post_tool_use hook input, or the next LLM call). The same hook entries can be authored directly in YAML for finer-grained control — see the hooks.tool_response_transform / hooks.before_llm_call / hooks.pre_tool_use sections. Detection uses the docker-agent secretsscan ruleset (GitHub PATs, AWS keys, Stripe / Slack / GitLab tokens, JWTs, private keys, etc.). Each detected span is replaced with the literal '[REDACTED]'."
+          "description": "When true, the runtime auto-installs the redact_secrets builtin on all three of pre_tool_use (scrubs detected secrets from tool arguments), before_llm_call (scrubs the messages sent to the LLM), and tool_response_transform (scrubs tool output before it reaches event consumers, the persisted session, the post_tool_use hook input, or the next LLM call). The same hook entries can be authored directly in YAML for finer-grained control — see the hooks.tool_response_transform / hooks.before_llm_call / hooks.pre_tool_use sections. Detection uses the portcullis ruleset (GitHub PATs, AWS keys, Stripe / Slack / GitLab tokens, JWTs, private keys, etc.). Each detected span is replaced with the literal '[REDACTED]'."
         },
         "max_iterations": {
           "type": "integer",
