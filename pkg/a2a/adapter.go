@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"os"
 	"strings"
 
 	"go.opentelemetry.io/otel"
@@ -22,7 +23,7 @@ import (
 // newDockerAgentAdapter creates a new ADK agent adapter from a docker agent team and agent name.
 // When agentName is empty, the team's default agent (one explicitly named "root" if it
 // exists, otherwise the first agent declared) is used.
-func newDockerAgentAdapter(t *team.Team, agentName string) (agent.Agent, error) {
+func newDockerAgentAdapter(t *team.Team, agentName string, sessStore session.Store) (agent.Agent, error) {
 	a, err := t.AgentOrDefault(agentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get agent %s: %w", agentName, err)
@@ -35,31 +36,48 @@ func newDockerAgentAdapter(t *team.Team, agentName string) (agent.Agent, error) 
 		Name:        agentName,
 		Description: desc,
 		Run: func(ctx agent.InvocationContext) iter.Seq2[*adksession.Event, error] {
-			return runDockerAgent(ctx, t, agentName, a)
+			return runDockerAgent(ctx, t, agentName, a, sessStore)
 		},
 	})
 }
 
 // runDockerAgent executes a docker agent and returns ADK session events
-func runDockerAgent(ctx agent.InvocationContext, t *team.Team, agentName string, a *dagent.Agent) iter.Seq2[*adksession.Event, error] {
+func runDockerAgent(ctx agent.InvocationContext, t *team.Team, agentName string, a *dagent.Agent, sessStore session.Store) iter.Seq2[*adksession.Event, error] {
 	return func(yield func(*adksession.Event, error) bool) {
 		// Extract user message from the ADK context
 		userContent := ctx.UserContent()
 		message := contentToMessage(userContent)
 
-		// Create a session
-		sess := session.New(
-			session.WithUserMessage(message),
-			session.WithMaxIterations(a.MaxIterations()),
-			session.WithMaxConsecutiveToolCalls(a.MaxConsecutiveToolCalls()),
-			session.WithMaxOldToolCallTokens(a.MaxOldToolCallTokens()),
-			session.WithToolsApproved(true),
-			session.WithNonInteractive(true),
-		)
+		// Use the A2A contextID (exposed as the ADK session ID) as the
+		// docker-agent session ID so subsequent `run --session <id>`
+		// invocations can resume the same conversation.
+		sessionID := ctx.Session().ID()
+
+		var sess *session.Session
+		if existing, err := sessStore.GetSession(ctx, sessionID); err == nil && existing != nil {
+			sess = existing
+			sess.AddMessage(session.UserMessage(message))
+			sess.ToolsApproved = true
+			sess.NonInteractive = true
+		} else {
+			workingDir, _ := os.Getwd()
+			sess = session.New(
+				session.WithID(sessionID),
+				session.WithUserMessage(message),
+				session.WithMaxIterations(a.MaxIterations()),
+				session.WithMaxConsecutiveToolCalls(a.MaxConsecutiveToolCalls()),
+				session.WithMaxOldToolCallTokens(a.MaxOldToolCallTokens()),
+				session.WithToolsApproved(true),
+				session.WithNonInteractive(true),
+				session.WithWorkingDir(workingDir),
+			)
+			sess.Title = "A2A Session " + sessionID
+		}
 
 		// Create runtime
 		rt, err := runtime.New(t,
 			runtime.WithCurrentAgent(agentName),
+			runtime.WithSessionStore(sessStore),
 			runtime.WithTracer(otel.Tracer("cagent")),
 		)
 		if err != nil {

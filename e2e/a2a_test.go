@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/a2a"
@@ -173,7 +174,7 @@ func startA2AServer(t *testing.T, agentFile string, runConfig *config.RuntimeCon
 	require.NoError(t, err)
 
 	go func() {
-		_ = a2aserver.Run(t.Context(), agentFile, "root", runConfig, ln)
+		_ = a2aserver.Run(t.Context(), agentFile, "root", filepath.Join(t.TempDir(), "session.db"), runConfig, ln)
 	}()
 
 	port := ln.Addr().(*net.TCPAddr).Port
