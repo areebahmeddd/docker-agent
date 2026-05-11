@@ -13,16 +13,19 @@ import (
 	"github.com/docker/docker-agent/pkg/runregistry"
 )
 
-func TestResolveTarget_NoLiveRun(t *testing.T) {
+// These smoke tests exercise the send command's reliance on
+// runregistry.Find. The richer behaviour of Find itself (pid, addr, session
+// id, ambiguity) lives in the runregistry package tests.
+
+func TestSendUsesRunregistryFind_NoLiveRun(t *testing.T) {
 	paths.SetDataDir(t.TempDir())
 	t.Cleanup(func() { paths.SetDataDir("") })
 
-	_, err := resolveTarget("")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no live docker-agent run")
+	_, err := runregistry.Find("")
+	require.ErrorIs(t, err, runregistry.ErrNoRun)
 }
 
-func TestResolveTarget_LatestWhenEmpty(t *testing.T) {
+func TestSendUsesRunregistryFind_LatestWhenEmpty(t *testing.T) {
 	paths.SetDataDir(t.TempDir())
 	t.Cleanup(func() { paths.SetDataDir("") })
 
@@ -32,12 +35,12 @@ func TestResolveTarget_LatestWhenEmpty(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	rec, err := resolveTarget("")
+	rec, err := runregistry.Find("")
 	require.NoError(t, err)
 	assert.Equal(t, "s1", rec.SessionID)
 }
 
-func TestResolveTarget_ByPID(t *testing.T) {
+func TestSendUsesRunregistryFind_ByPID(t *testing.T) {
 	paths.SetDataDir(t.TempDir())
 	t.Cleanup(func() { paths.SetDataDir("") })
 
@@ -47,13 +50,7 @@ func TestResolveTarget_ByPID(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	rec, err := resolveTarget(strconv.Itoa(os.Getpid()))
+	rec, err := runregistry.Find(strconv.Itoa(os.Getpid()))
 	require.NoError(t, err)
 	assert.Equal(t, "matched", rec.SessionID)
-}
-
-func TestResolveTarget_NonNumericTo(t *testing.T) {
-	_, err := resolveTarget("not-a-pid")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must be a pid")
 }

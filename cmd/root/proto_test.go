@@ -51,17 +51,20 @@ func TestProtoDispatch_RoutesRequestsToHTTPClient(t *testing.T) {
 	ctx := t.Context()
 
 	cases := []struct {
-		req  protoRequest
-		want string
+		req         protoRequest
+		want        string
+		wantHandled bool
 	}{
-		{protoRequest{Type: "send", Message: "hi"}, "POST /api/sessions/s1/steer"},
-		{protoRequest{Type: "followup", Message: "later"}, "POST /api/sessions/s1/followup"},
-		{protoRequest{Type: "resume", Decision: "approve"}, "POST /api/sessions/s1/resume"},
-		{protoRequest{Type: "interrupt"}, "POST /api/sessions/s1/resume"},
-		{protoRequest{Type: "transcript"}, "GET /api/sessions/s1"},
+		{protoRequest{Type: "send", Message: "hi"}, "POST /api/sessions/s1/steer", false},
+		{protoRequest{Type: "followup", Message: "later"}, "POST /api/sessions/s1/followup", false},
+		{protoRequest{Type: "resume", Decision: "approve"}, "POST /api/sessions/s1/resume", false},
+		{protoRequest{Type: "interrupt"}, "POST /api/sessions/s1/resume", false},
+		{protoRequest{Type: "transcript"}, "GET /api/sessions/s1", true},
 	}
 	for _, c := range cases {
-		require.NoError(t, dispatchProto(ctx, client, "s1", c.req, w))
+		handled, err := dispatchProto(ctx, client, "s1", c.req, w)
+		require.NoError(t, err)
+		assert.Equal(t, c.wantHandled, handled, "handled flag for %s", c.req.Type)
 	}
 
 	rec.mu.Lock()
@@ -81,7 +84,8 @@ func TestProtoDispatch_UnknownType(t *testing.T) {
 	out := &bytes.Buffer{}
 	w := newProtoWriter(out)
 
-	err := dispatchProto(t.Context(), nil, "s1", protoRequest{Type: "nope"}, w)
+	handled, err := dispatchProto(t.Context(), nil, "s1", protoRequest{Type: "nope"}, w)
 	require.Error(t, err)
+	assert.False(t, handled)
 	assert.Contains(t, err.Error(), "unknown request type")
 }

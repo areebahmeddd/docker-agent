@@ -1,10 +1,8 @@
 package root
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -30,20 +28,25 @@ func newSendCmd() *cobra.Command {
 		Long: `Send a message to the most recent docker-agent run that exposes a control
 plane (started with run --listen). Use - to read the message from stdin.
 
-The target can be selected explicitly with --to <addr|pid>; otherwise the
-most recent live run is used.`,
+The target can be selected explicitly with --to, accepting a pid, an address
+(http://host:port), or a session id. Without --to, the most recent live run
+is used.`,
 		Example: `  docker-agent send "summarize the diff"
   echo "and now write tests" | docker-agent send -
-  docker-agent send --to 12345 "hello"`,
+  docker-agent send --to 12345 "hello"
+  docker-agent send --to http://127.0.0.1:8765 "hi"`,
 		GroupID: "advanced",
 		Args:    cobra.ExactArgs(1),
 		RunE:    flags.run,
 	}
 
-	cmd.Flags().StringVar(&flags.target, "to", "", "Target run pid (defaults to the most recent live run)")
+	cmd.Flags().StringVar(&flags.target, "to", "", targetFlagUsage)
 	cmd.Flags().BoolVar(&flags.followUp, "followup", false, "Queue as an end-of-turn follow-up instead of mid-turn steering")
 	return cmd
 }
+
+// targetFlagUsage is the canonical help text for --to across send/watch/proto.
+const targetFlagUsage = "Target run pid, address (http://host:port), or session id (defaults to the most recent live run)"
 
 func (f *sendFlags) run(cmd *cobra.Command, args []string) (commandErr error) {
 	ctx := cmd.Context()
@@ -55,7 +58,7 @@ func (f *sendFlags) run(cmd *cobra.Command, args []string) (commandErr error) {
 		return err
 	}
 
-	rec, err := resolveTarget(f.target)
+	rec, err := runregistry.Find(f.target)
 	if err != nil {
 		return err
 	}
@@ -89,35 +92,4 @@ func readMessage(stdin io.Reader, arg string) (string, error) {
 		return "", fmt.Errorf("reading stdin: %w", err)
 	}
 	return strings.TrimRight(string(buf), "\n"), nil
-}
-
-// resolveTarget returns the registry record matching --to. An empty target
-// resolves to the most recent live run; a numeric target is matched by pid.
-func resolveTarget(target string) (runregistry.Record, error) {
-	if target == "" {
-		rec, ok, err := runregistry.Latest()
-		if err != nil {
-			return runregistry.Record{}, err
-		}
-		if !ok {
-			return runregistry.Record{}, errors.New("no live docker-agent run found; start one with: docker-agent run --listen 127.0.0.1:0")
-		}
-		return rec, nil
-	}
-
-	pid, err := strconv.Atoi(target)
-	if err != nil {
-		return runregistry.Record{}, fmt.Errorf("--to must be a pid, got %q", target)
-	}
-
-	records, err := runregistry.List()
-	if err != nil {
-		return runregistry.Record{}, err
-	}
-	for _, r := range records {
-		if r.PID == pid {
-			return r, nil
-		}
-	}
-	return runregistry.Record{}, fmt.Errorf("no live run with pid %d", pid)
 }
