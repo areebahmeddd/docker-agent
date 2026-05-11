@@ -34,23 +34,48 @@ type Store struct {
 	db        *Database
 }
 
-// NewStore creates a new Store backed by the on-disk cache under ~/.cagent.
+// Opt configures a Store created with NewStore.
+type Opt func(*storeOptions)
+
+type storeOptions struct {
+	cacheFile string
+}
+
+// WithCache overrides the path of the on-disk cache file used by the Store.
+// The parent directory will be created if it does not already exist.
+func WithCache(path string) Opt {
+	return func(o *storeOptions) {
+		o.cacheFile = path
+	}
+}
+
+// NewStore creates a new Store backed by an on-disk cache. By default the
+// cache lives at ~/.cagent/models_dev.json; use WithCache to override the
+// location.
 // Callers should create one Store and share it rather than calling NewStore
 // repeatedly. RuntimeConfig.ModelsDevStore() is the standard way to obtain
 // a shared instance.
-func NewStore() (*Store, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user home directory: %w", err)
+func NewStore(opts ...Opt) (*Store, error) {
+	var options storeOptions
+	for _, opt := range opts {
+		opt(&options)
 	}
 
-	cacheDir := filepath.Join(homeDir, ".cagent")
-	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+	cacheFile := options.cacheFile
+	if cacheFile == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user home directory: %w", err)
+		}
+		cacheFile = filepath.Join(homeDir, ".cagent", CacheFileName)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cacheFile), 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
 	return &Store{
-		cacheFile: filepath.Join(cacheDir, CacheFileName),
+		cacheFile: cacheFile,
 	}, nil
 }
 
