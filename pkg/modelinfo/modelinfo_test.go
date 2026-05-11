@@ -333,13 +333,8 @@ func TestIsClaude_StoreErrorFallsBackToPattern(t *testing.T) {
 // Attachment MIME-type capabilities (formerly modelcaps)
 // ---------------------------------------------------------------------------
 
-func buildCapsStore(providers map[string]modelsdev.Provider) *modelsdev.Store {
-	db := &modelsdev.Database{Providers: providers}
-	return modelsdev.NewDatabaseStore(db)
-}
-
 func TestLoadCaps_QualifiedIDRequired(t *testing.T) {
-	store := buildCapsStore(map[string]modelsdev.Provider{
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{
 		"anthropic": {
 			Models: map[string]modelsdev.Model{
 				"claude-sonnet-4-6": {
@@ -351,7 +346,7 @@ func TestLoadCaps_QualifiedIDRequired(t *testing.T) {
 				},
 			},
 		},
-	})
+	}})
 
 	// Bare model name: must fall back to conservative text-only caps.
 	bareID := "claude-sonnet-4-6"
@@ -371,7 +366,7 @@ func TestLoadCaps_QualifiedIDRequired(t *testing.T) {
 }
 
 func TestLoadCaps_VisionModel(t *testing.T) {
-	store := buildCapsStore(map[string]modelsdev.Provider{
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{
 		"anthropic": {
 			Models: map[string]modelsdev.Model{
 				"claude-3-5-sonnet": {
@@ -383,7 +378,7 @@ func TestLoadCaps_VisionModel(t *testing.T) {
 				},
 			},
 		},
-	})
+	}})
 
 	mc := LoadCaps(store, "anthropic/claude-3-5-sonnet")
 
@@ -394,7 +389,7 @@ func TestLoadCaps_VisionModel(t *testing.T) {
 }
 
 func TestLoadCaps_TextOnlyModel(t *testing.T) {
-	store := buildCapsStore(map[string]modelsdev.Provider{
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{
 		"openai": {
 			Models: map[string]modelsdev.Model{
 				"gpt-3.5-turbo": {
@@ -406,7 +401,7 @@ func TestLoadCaps_TextOnlyModel(t *testing.T) {
 				},
 			},
 		},
-	})
+	}})
 
 	mc := LoadCaps(store, "openai/gpt-3.5-turbo")
 
@@ -417,7 +412,7 @@ func TestLoadCaps_TextOnlyModel(t *testing.T) {
 }
 
 func TestLoadCaps_ModelNotFound(t *testing.T) {
-	store := buildCapsStore(map[string]modelsdev.Provider{})
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{}})
 
 	mc := LoadCaps(store, "unknown/nonexistent-model")
 
@@ -427,7 +422,7 @@ func TestLoadCaps_ModelNotFound(t *testing.T) {
 }
 
 func TestLoadCaps_OfficeDocsNotAllowed(t *testing.T) {
-	store := buildCapsStore(map[string]modelsdev.Provider{
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{
 		"openai": {
 			Models: map[string]modelsdev.Model{
 				"gpt-4o": {
@@ -439,7 +434,7 @@ func TestLoadCaps_OfficeDocsNotAllowed(t *testing.T) {
 				},
 			},
 		},
-	})
+	}})
 
 	mc := LoadCaps(store, "openai/gpt-4o")
 
