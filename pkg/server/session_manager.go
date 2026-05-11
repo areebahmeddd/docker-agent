@@ -357,8 +357,11 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 
 	streamChan := make(chan runtime.Event)
 
-	// Check if we need to generate a title
-	needsTitle := sess.Title == "" && len(userMessages) > 0 && titleGen != nil
+	// Snapshot the title under sm.mux before launching the goroutine to
+	// avoid a data race with UpdateSessionTitle, which takes sm.mux and
+	// writes to sess.Title concurrently with the goroutine's read.
+	titleToEmit := sess.Title
+	needsTitle := titleToEmit == "" && len(userMessages) > 0 && titleGen != nil
 
 	go func() {
 		// Defers run LIFO: close(streamChan) last, so by the time the
@@ -373,6 +376,10 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 		// Start title generation in parallel if needed
 		if needsTitle {
 			go sm.generateTitle(ctx, sess, titleGen, userMessages, streamChan)
+		} else if titleToEmit != "" {
+			// Re-emit the existing title so late-joining SSE consumers
+			// and boards can pick it up without an extra API call.
+			streamChan <- runtime.SessionTitle(sess.ID, titleToEmit)
 		}
 
 		stream := runtimeSession.runtime.RunStream(streamCtx, sess)
