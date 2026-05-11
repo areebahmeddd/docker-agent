@@ -70,6 +70,7 @@ func newTestSessionManager(t *testing.T, sess *session.Session, fake *fakeRuntim
 		sessionStore:    store,
 		Sources:         config.Sources{},
 		runConfig:       &config.RuntimeConfig{},
+		sessionReady:    make(chan struct{}),
 	}
 
 	// Pre-register a runtime for this session so RunSession skips agent loading.
@@ -213,6 +214,7 @@ func TestRunSession_DifferentSessionsConcurrently(t *testing.T) {
 		sessionStore:    store,
 		Sources:         config.Sources{},
 		runConfig:       &config.RuntimeConfig{},
+		sessionReady:    make(chan struct{}),
 	}
 
 	sm.runtimeSessions.Store(sess1.ID, &activeRuntimes{

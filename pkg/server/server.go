@@ -91,6 +91,7 @@ func (s *Server) registerRoutes() {
 	group.GET("/ping", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
+	group.GET("/ready", s.ready)
 }
 
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
@@ -105,6 +106,27 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	}
 
 	return nil
+}
+
+// ready blocks until at least one session is registered. The caller
+// may supply a ?timeout=<duration> query parameter (default 30s).
+func (s *Server) ready(c echo.Context) error {
+	timeout := 30 * time.Second
+	if v := c.QueryParam("timeout"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid timeout: %v", err))
+		}
+		timeout = d
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), timeout)
+	defer cancel()
+
+	if err := s.sm.WaitReady(ctx); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "no sessions registered within timeout")
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (s *Server) getAgents(c echo.Context) error {

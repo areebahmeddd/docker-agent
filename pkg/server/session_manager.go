@@ -48,6 +48,11 @@ type SessionManager struct {
 	refreshInterval time.Duration
 
 	mux sync.Mutex
+
+	// sessionReady is closed once the first session is attached or created,
+	// signalling that the server is ready to accept session-scoped requests.
+	sessionReady     chan struct{}
+	sessionReadyOnce sync.Once
 }
 
 // EventSource pushes session events to send for the lifetime of ctx. The
@@ -69,9 +74,25 @@ func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore
 		Sources:         loaders,
 		refreshInterval: refreshInterval,
 		runConfig:       runConfig,
+		sessionReady:    make(chan struct{}),
 	}
 
 	return sm
+}
+
+func (sm *SessionManager) markReady() {
+	sm.sessionReadyOnce.Do(func() { close(sm.sessionReady) })
+}
+
+// WaitReady blocks until at least one session has been attached or created,
+// or ctx is cancelled. Returns nil when ready, ctx.Err() on timeout.
+func (sm *SessionManager) WaitReady(ctx context.Context) error {
+	select {
+	case <-sm.sessionReady:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // RegisterEventSource attaches an event source for sessionID. It is used by
@@ -129,6 +150,7 @@ func (sm *SessionManager) AttachRuntime(sessionID string, rt runtime.Runtime, se
 		cancel:  cancel,
 		session: sess,
 	})
+	sm.markReady()
 }
 
 // GetSession retrieves a session by ID.
@@ -266,6 +288,7 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 			titleGen: titleGen,
 		}
 		sm.runtimeSessions.Store(sessionID, runtimeSession)
+		sm.markReady()
 	} else {
 		titleGen = runtimeSession.titleGen
 	}

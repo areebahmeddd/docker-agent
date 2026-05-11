@@ -219,3 +219,52 @@ func TestAttachedServer_FollowUpWhileIdleReturnsQueuedIdle(t *testing.T) {
 
 	assert.Contains(t, string(resp), "queued_idle")
 }
+
+// TestAttachedServer_ReadyEndpointReturnsImmediatelyWithSession verifies
+// that GET /api/ready returns immediately when a session is already attached.
+func TestAttachedServer_ReadyEndpointReturnsImmediately(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	store := session.NewInMemorySessionStore()
+	sess := session.New()
+	require.NoError(t, store.AddSession(ctx, sess))
+
+	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
+	sm.AttachRuntime(sess.ID, &fakeRuntime{}, sess)
+
+	srv := NewWithManager(sm)
+
+	ln, err := Listen(ctx, "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = srv.Serve(ctx, ln) }()
+
+	addr := "http://" + ln.Addr().String()
+	resp := httpDoTCP(t, ctx, http.MethodGet, addr+"/api/ready", nil)
+	assert.Contains(t, string(resp), "ready")
+}
+
+// TestAttachedServer_ReadyEndpointTimesOutWithoutSession verifies
+// that GET /api/ready returns 503 when no session is registered within the timeout.
+func TestAttachedServer_ReadyEndpointTimesOut(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	store := session.NewInMemorySessionStore()
+
+	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
+	srv := NewWithManager(sm)
+
+	ln, err := Listen(ctx, "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = srv.Serve(ctx, ln) }()
+
+	addr := "http://" + ln.Addr().String()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/api/ready?timeout=100ms", http.NoBody)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+}
