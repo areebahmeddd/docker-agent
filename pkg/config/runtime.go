@@ -16,8 +16,8 @@ type RuntimeConfig struct {
 	Config
 
 	EnvProviderForTests environment.Provider
-	envProvider         environment.Provider
-	envProviderLock     sync.Mutex
+	envProviderCached   environment.Provider
+	envProviderOnce     sync.Once
 
 	ModelsDevStoreOverride *modelsdev.Store
 	modelsDevStore         *modelsdev.Store
@@ -48,12 +48,16 @@ type Config struct {
 
 func (runConfig *RuntimeConfig) Clone() *RuntimeConfig {
 	store, storeErr := runConfig.ModelsDevStore()
+	env := runConfig.EnvProvider()
 	clone := &RuntimeConfig{
 		Config:                 runConfig.Config,
+		EnvProviderForTests:    runConfig.EnvProviderForTests,
+		envProviderCached:      env,
 		ModelsDevStoreOverride: runConfig.ModelsDevStoreOverride,
 		modelsDevStore:         store,
 		modelsDevStoreErr:      storeErr,
 	}
+	clone.envProviderOnce.Do(func() {})    // mark as resolved
 	clone.modelsDevStoreOnce.Do(func() {}) // mark as resolved
 	clone.EnvFiles = slices.Clone(runConfig.EnvFiles)
 	clone.Models = maps.Clone(runConfig.Models)
@@ -86,12 +90,10 @@ func (runConfig *RuntimeConfig) EnvProvider() environment.Provider {
 		return runConfig.EnvProviderForTests
 	}
 
-	runConfig.envProviderLock.Lock()
-	defer runConfig.envProviderLock.Unlock()
-
-	env := runConfig.computedEnvProvider()
-	runConfig.envProvider = env
-	return env
+	runConfig.envProviderOnce.Do(func() {
+		runConfig.envProviderCached = runConfig.computedEnvProvider()
+	})
+	return runConfig.envProviderCached
 }
 
 func (runConfig *RuntimeConfig) computedEnvProvider() environment.Provider {
