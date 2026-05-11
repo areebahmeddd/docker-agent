@@ -597,3 +597,19 @@ func (sm *SessionManager) AddSummary(ctx context.Context, sessionID, summary str
 
 	return sm.sessionStore.AddSummary(ctx, sessionID, summary, tokens)
 }
+
+// UpdateSessionTokens updates the token counts for a session.
+func (sm *SessionManager) UpdateSessionTokens(ctx context.Context, sessionID string, inputTokens, outputTokens int64, cost float64) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	return sm.sessionStore.UpdateSessionTokens(ctx, sessionID, inputTokens, outputTokens, cost)
+}
+
+// SetSessionStarred sets the starred status for a session.
+func (sm *SessionManager) SetSessionStarred(ctx context.Context, sessionID string, starred bool) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	return sm.sessionStore.SetSessionStarred(ctx, sessionID, starred)
+}

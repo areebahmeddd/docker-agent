@@ -688,6 +688,22 @@ func (r *RemoteRuntime) AddSessionSummary(ctx context.Context, summary string, t
 	return r.client.AddSummary(ctx, r.sessionID, summary, tokens)
 }
 
+// UpdateSessionTokens updates token counts for the current session on the remote server.
+func (r *RemoteRuntime) UpdateSessionTokens(ctx context.Context, inputTokens, outputTokens int64, cost float64) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.UpdateSessionTokens(ctx, r.sessionID, inputTokens, outputTokens, cost)
+}
+
+// SetSessionStarred sets the starred status for the current session on the remote server.
+func (r *RemoteRuntime) SetSessionStarred(ctx context.Context, starred bool) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.SetSessionStarred(ctx, r.sessionID, starred)
+}
+
 var _ Runtime = (*RemoteRuntime)(nil)
 
 // RemoteSessionStore wraps a RemoteClient to implement the session.Store interface.

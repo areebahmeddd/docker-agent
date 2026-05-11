@@ -193,3 +193,15 @@ type AddSummaryRequest struct {
 	Summary string `json:"summary"`
 	Tokens  int    `json:"tokens,omitempty"`
 }
+
+// UpdateSessionTokensRequest represents a request to update session token counts
+type UpdateSessionTokensRequest struct {
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	Cost         float64 `json:"cost,omitempty"`
+}
+
+// SetSessionStarredRequest represents a request to star or unstar a session
+type SetSessionStarredRequest struct {
+	Starred bool `json:"starred"`
+}

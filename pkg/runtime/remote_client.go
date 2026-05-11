@@ -99,6 +99,12 @@ type RemoteClient interface {
 
 	// AddSummary adds a summary to a session
 	AddSummary(ctx context.Context, sessionID, summary string, tokens int) error
+
+	// UpdateSessionTokens updates token counts for a session
+	UpdateSessionTokens(ctx context.Context, sessionID string, inputTokens, outputTokens int64, cost float64) error
+
+	// SetSessionStarred sets the starred status for a session
+	SetSessionStarred(ctx context.Context, sessionID string, starred bool) error
 }
 
 var _ RemoteClient = (*Client)(nil)

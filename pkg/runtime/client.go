@@ -637,3 +637,17 @@ func (c *Client) AddSummary(ctx context.Context, sessionID, summary string, toke
 	req := api.AddSummaryRequest{Summary: summary, Tokens: tokens}
 	return c.doRequest(ctx, http.MethodPost, endpoint, req, nil)
 }
+
+// UpdateSessionTokens updates token counts for a session.
+func (c *Client) UpdateSessionTokens(ctx context.Context, sessionID string, inputTokens, outputTokens int64, cost float64) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/tokens", sessionID)
+	req := api.UpdateSessionTokensRequest{InputTokens: inputTokens, OutputTokens: outputTokens, Cost: cost}
+	return c.doRequest(ctx, http.MethodPatch, endpoint, req, nil)
+}
+
+// SetSessionStarred sets the starred status for a session.
+func (c *Client) SetSessionStarred(ctx context.Context, sessionID string, starred bool) error {
+	endpoint := fmt.Sprintf("/api/sessions/%s/starred", sessionID)
+	req := api.SetSessionStarredRequest{Starred: starred}
+	return c.doRequest(ctx, http.MethodPatch, endpoint, req, nil)
+}

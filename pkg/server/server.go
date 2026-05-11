@@ -55,6 +55,8 @@ func (s *Server) registerRoutes() {
 	group.POST("/sessions/:id/tools/toggle", s.toggleSessionYolo)
 	group.PATCH("/sessions/:id/permissions", s.updateSessionPermissions)
 	group.PATCH("/sessions/:id/title", s.updateSessionTitle)
+	group.PATCH("/sessions/:id/tokens", s.updateSessionTokens)
+	group.PATCH("/sessions/:id/starred", s.setSessionStarred)
 	group.POST("/sessions", s.createSession)
 	group.DELETE("/sessions/:id", s.deleteSession)
 	group.POST("/sessions/:id/agent/:agent", s.runAgent)
@@ -439,4 +441,32 @@ func (s *Server) addSummary(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, map[string]string{"status": "added"})
+}
+
+func (s *Server) updateSessionTokens(c echo.Context) error {
+	sessionID := c.Param("id")
+	var req api.UpdateSessionTokensRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if err := s.sm.UpdateSessionTokens(c.Request().Context(), sessionID, req.InputTokens, req.OutputTokens, req.Cost); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to update tokens: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) setSessionStarred(c echo.Context) error {
+	sessionID := c.Param("id")
+	var req api.SetSessionStarredRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if err := s.sm.SetSessionStarred(c.Request().Context(), sessionID, req.Starred); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to set starred: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
 }
