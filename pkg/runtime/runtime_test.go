@@ -2078,7 +2078,89 @@ func TestStripImageContent(t *testing.T) {
 			},
 		},
 		{
-			name: "mixed messages only strips images",
+			name: "strips document parts with image MIME type",
+			messages: []chat.Message{
+				{
+					Role: chat.MessageRoleUser,
+					MultiContent: []chat.MessagePart{
+						{Type: chat.MessagePartTypeText, Text: "look at this"},
+						{
+							Type: chat.MessagePartTypeDocument,
+							Document: &chat.Document{
+								Name:     "photo.png",
+								MimeType: "image/png",
+								Source:   chat.DocumentSource{InlineData: []byte{0x89, 0x50}},
+							},
+						},
+					},
+				},
+			},
+			want: []chat.Message{
+				{
+					Role: chat.MessageRoleUser,
+					MultiContent: []chat.MessagePart{
+						{Type: chat.MessagePartTypeText, Text: "look at this"},
+					},
+				},
+			},
+		},
+		{
+			name: "preserves document parts with non-image MIME type",
+			messages: []chat.Message{
+				{
+					Role: chat.MessageRoleUser,
+					MultiContent: []chat.MessagePart{
+						{Type: chat.MessagePartTypeText, Text: "here is the doc"},
+						{
+							Type: chat.MessagePartTypeDocument,
+							Document: &chat.Document{
+								Name:     "report.pdf",
+								MimeType: "application/pdf",
+								Source:   chat.DocumentSource{InlineData: []byte{0x25, 0x50}},
+							},
+						},
+					},
+				},
+			},
+			want: []chat.Message{
+				{
+					Role: chat.MessageRoleUser,
+					MultiContent: []chat.MessagePart{
+						{Type: chat.MessagePartTypeText, Text: "here is the doc"},
+						{
+							Type: chat.MessagePartTypeDocument,
+							Document: &chat.Document{
+								Name:     "report.pdf",
+								MimeType: "application/pdf",
+								Source:   chat.DocumentSource{InlineData: []byte{0x25, 0x50}},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "preserves document part with nil Document pointer (defensive)",
+			messages: []chat.Message{
+				{
+					Role: chat.MessageRoleUser,
+					MultiContent: []chat.MessagePart{
+						{Type: chat.MessagePartTypeText, Text: "text"},
+						{Type: chat.MessagePartTypeDocument, Document: nil},
+					},
+				},
+			},
+			want: []chat.Message{
+				{
+					Role: chat.MessageRoleUser,
+					MultiContent: []chat.MessagePart{
+						{Type: chat.MessagePartTypeText, Text: "text"},
+						{Type: chat.MessagePartTypeDocument, Document: nil},
+					},
+				},
+			},
+		},
+		{
 			messages: []chat.Message{
 				{Role: chat.MessageRoleUser, Content: "plain text"},
 				{

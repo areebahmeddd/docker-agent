@@ -37,6 +37,12 @@ func writeUserMessage(builder *strings.Builder, msg session.Message) {
 	builder.WriteString("\n## User\n")
 
 	// When MultiContent is present, render text and attachment chips.
+	// The text part reflects what was actually sent to the model (the user's
+	// original typed text, plus any dimension notes from image resizing and
+	// inlined file headers from ReadFileForInline). This is intentional: a
+	// transcript should show what the model received, not just what the user
+	// typed into the prompt box. Callers wanting just the raw typed text
+	// should read msg.Message.Content directly.
 	if len(msg.Message.MultiContent) > 0 {
 		for _, part := range msg.Message.MultiContent {
 			switch part.Type {
