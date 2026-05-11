@@ -308,11 +308,10 @@ func TestSkillsToolset_Instructions_ForkSkills(t *testing.T) {
 
 	// Should mention run_skill for fork skills
 	assert.Contains(t, instructions, "run_skill")
-	assert.Contains(t, instructions, "context: fork")
-	assert.Contains(t, instructions, "isolated sub-agents")
+	assert.Contains(t, instructions, "forked context")
 
-	// Fork skill should have sub-agent mode tag
-	assert.Contains(t, instructions, "<mode>sub-agent</mode>")
+	// Fork skill should have forked mode tag
+	assert.Contains(t, instructions, "<mode>forked</mode>")
 
 	// Inline skill should NOT have the mode tag
 	// We check that inline-skill's entry does not contain <mode>
@@ -327,10 +326,10 @@ func TestSkillsToolset_Instructions_NoForkSkills(t *testing.T) {
 
 	instructions := st.Instructions()
 
-	// Should NOT mention run_skill or sub-agent
+	// Should NOT mention run_skill or forked mode
 	assert.NotContains(t, instructions, "run_skill")
-	assert.NotContains(t, instructions, "<mode>sub-agent</mode>")
-	assert.NotContains(t, instructions, "context: fork")
+	assert.NotContains(t, instructions, "<mode>forked</mode>")
+	assert.NotContains(t, instructions, "forked context")
 }
 
 func TestSkillsToolset_Tools_WithForkSkills(t *testing.T) {
@@ -421,7 +420,7 @@ func TestSkillsToolset_PrepareForkSubSession_NotFork(t *testing.T) {
 	assert.Nil(t, prepared)
 	require.NotNil(t, errResult)
 	assert.True(t, errResult.IsError)
-	assert.Contains(t, errResult.Output, "not configured for sub-agent execution")
+	assert.Contains(t, errResult.Output, "not configured for forked execution")
 	assert.Contains(t, errResult.Output, "use read_skill instead")
 }
 
