@@ -35,6 +35,7 @@ tasks:
 
   deploy-local:
     desc: Deploy the cli-plugin
+    aliases: [install]
     deps: [build]
     cmds:
       - mkdir -p "${HOME}/.docker/cli-plugins"
