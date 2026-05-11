@@ -10,7 +10,8 @@ import (
 )
 
 // RemoteClient is the interface that both HTTP and Connect-RPC clients implement
-// for communicating with a remote docker agent server.
+// for communicating with a remote docker agent server. It provides methods for
+// creating sessions, running agents, and streaming events.
 type RemoteClient interface {
 	// GetAgent retrieves an agent configuration by ID
 	GetAgent(ctx context.Context, id string) (*latest.Config, error)
@@ -41,6 +42,9 @@ type RemoteClient interface {
 
 	// GetAgentToolCount returns the number of tools available for an agent
 	GetAgentToolCount(ctx context.Context, agentFilename, agentName string) (int, error)
+
+	// StreamSessionEvents streams runtime events for a session as they occur
+	StreamSessionEvents(ctx context.Context, sessionID string) (<-chan Event, error)
 }
 
 var _ RemoteClient = (*Client)(nil)

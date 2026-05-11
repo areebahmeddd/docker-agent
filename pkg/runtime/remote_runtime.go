@@ -254,6 +254,7 @@ func (r *RemoteRuntime) RunStream(ctx context.Context, sess *session.Session) <-
 			return
 		}
 
+		// Consume events from the agent stream
 		for streamEvent := range streamChan {
 			if elicitationRequest, ok := streamEvent.(*ElicitationRequestEvent); ok {
 				r.pendingOAuthElicitation = elicitationRequest

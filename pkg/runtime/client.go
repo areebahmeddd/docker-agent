@@ -424,3 +424,90 @@ func (c *Client) GetAgentToolCount(ctx context.Context, agentFilename, agentName
 
 	return resp.AvailableTools, nil
 }
+
+// StreamSessionEvents streams events for a session as they occur via Server-Sent Events.
+func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-chan Event, error) {
+	endpoint := fmt.Sprintf("/api/sessions/%s/events", sessionID)
+
+	u := *c.baseURL
+	u.Path = path.Join(u.Path, endpoint)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	resp, err := c.httpClient.Do(req) //nolint:bodyclose // body is closed in the goroutine below
+	if err != nil {
+		return nil, fmt.Errorf("performing request: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("reading error response body: %w", err)
+		}
+
+		var errResp ErrorResponse
+		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error != "" {
+			return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error)
+		}
+		return nil, fmt.Errorf("HTTP error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	eventChan := make(chan Event, defaultEventChannelCapacity)
+
+	go func() {
+		defer close(eventChan)
+		defer resp.Body.Close()
+
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(line) == 0 || line[0] == ':' {
+				continue
+			}
+
+			after, ok := bytes.CutPrefix(line, []byte("data: "))
+			if !ok {
+				continue
+			}
+
+			slog.DebugContext(ctx, "received event", "data", string(after))
+
+			// First unmarshal to get the type
+			var baseEvent struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(after, &baseEvent); err != nil {
+				slog.DebugContext(ctx, "failed to unmarshal event type", "error", err)
+				continue
+			}
+
+			// Then unmarshal the full event
+			createEvent, found := c.registry[baseEvent.Type]
+			if !found {
+				slog.DebugContext(ctx, "unknown event type", "type", baseEvent.Type)
+				continue
+			}
+
+			e := createEvent()
+			if err := json.Unmarshal(after, &e); err != nil {
+				slog.DebugContext(ctx, "failed to unmarshal event", "error", err)
+				continue
+			}
+
+			eventChan <- e
+		}
+
+		if err := scanner.Err(); err != nil {
+			slog.DebugContext(ctx, "scanner error", "error", err)
+		}
+	}()
+
+	return eventChan, nil
+}
