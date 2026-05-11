@@ -387,13 +387,15 @@ type StreamStoppedEvent struct {
 
 	Type      string `json:"type"`
 	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
-func StreamStopped(sessionID, agentName string) Event {
+func StreamStopped(sessionID, agentName, reason string) Event {
 	return &StreamStoppedEvent{
 		Type:         "stream_stopped",
 		SessionID:    sessionID,
 		AgentContext: newAgentContext(agentName),
+		Reason:       reason,
 	}
 }
 
