@@ -68,7 +68,7 @@ require (
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.44.0
-	golang.org/x/term v0.42.0
+	golang.org/x/term v0.43.0
 	google.golang.org/adk v1.2.0
 	google.golang.org/genai v1.56.0
 	gopkg.in/dnaeon/go-vcr.v4 v4.0.6
