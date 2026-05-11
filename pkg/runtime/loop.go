@@ -127,7 +127,7 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 		// block without a reason.
 		message = "Agent terminated by a hook."
 	}
-	events <- Error(message)
+	events <- ErrorWithCode(ErrorCodeHookBlocked, message)
 	r.notifyError(ctx, a, sess.ID, message)
 }
 
@@ -224,7 +224,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 	agentTools, err := r.getTools(ctx, a, sessionSpan, events, true)
 	if err != nil {
-		events <- Error(fmt.Sprintf("failed to get tools: %v", err))
+		events <- ErrorWithCode(ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err))
 		return
 	}
 	agentTools = filterExcludedTools(agentTools, sess.ExcludedTools)
@@ -307,7 +307,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 		agentTools, err := r.getTools(ctx, a, sessionSpan, events, true)
 		if err != nil {
-			events <- Error(fmt.Sprintf("failed to get tools: %v", err))
+			events <- ErrorWithCode(ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err))
 			return
 		}
 		agentTools = filterExcludedTools(agentTools, sess.ExcludedTools)
@@ -614,7 +614,7 @@ func (r *LocalRuntime) runTurn(
 			"Agent terminated: detected %d consecutive identical calls to %s. "+
 				"This indicates a degenerate loop where the model is not making progress.",
 			consecutive, toolName)
-		events <- Error(errMsg)
+		events <- ErrorWithCode(ErrorCodeLoopDetected, errMsg)
 		r.notifyError(ctx, a, sess.ID, errMsg)
 		ls.loopDetector.Reset()
 		endReason = turnEndReasonLoopDetected
