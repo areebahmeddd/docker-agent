@@ -52,7 +52,7 @@ func (f *runExecFlags) startAttachedServer(ctx context.Context, out *cli.Printer
 	out.Println("Control plane listening on", ln.Addr().String())
 	warnIfNotLoopback(out, ln.Addr())
 
-	srv := server.NewWithManager(sm)
+	srv := server.NewWithManager(sm, "")
 	go func() {
 		if err := srv.Serve(ctx, ln); err != nil {
 			slog.ErrorContext(ctx, "Control plane server stopped", "error", err)

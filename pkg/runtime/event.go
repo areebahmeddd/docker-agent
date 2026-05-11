@@ -739,3 +739,37 @@ func SubSessionCompleted(parentSessionID string, subSession any, agentName strin
 		AgentContext:    newAgentContext(agentName),
 	}
 }
+
+// ConnectionLostEvent is emitted when the connection to the remote server is lost
+type ConnectionLostEvent struct {
+	AgentContext
+
+	Type    string `json:"type"`
+	Reason  string `json:"reason"`
+	Attempt int    `json:"attempt"`
+}
+
+func ConnectionLost(reason string, attempt int) Event {
+	return &ConnectionLostEvent{
+		Type:         "connection_lost",
+		Reason:       reason,
+		Attempt:      attempt,
+		AgentContext: newAgentContext(""),
+	}
+}
+
+// ConnectionRestoredEvent is emitted when the connection to the remote server is restored
+type ConnectionRestoredEvent struct {
+	AgentContext
+
+	Type    string `json:"type"`
+	Attempt int    `json:"attempt"`
+}
+
+func ConnectionRestored(attempt int) Event {
+	return &ConnectionRestoredEvent{
+		Type:         "connection_restored",
+		Attempt:      attempt,
+		AgentContext: newAgentContext(""),
+	}
+}

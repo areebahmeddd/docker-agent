@@ -24,6 +24,7 @@ type apiFlags struct {
 	pullIntervalMins int
 	fakeResponses    string
 	recordPath       string
+	authToken        string
 	runConfig        config.RuntimeConfig
 }
 
@@ -42,6 +43,7 @@ func newAPICmd() *cobra.Command {
 	cmd.PersistentFlags().IntVar(&flags.pullIntervalMins, "pull-interval", 0, "Auto-pull OCI reference every N minutes (0 = disabled)")
 	cmd.PersistentFlags().StringVar(&flags.fakeResponses, "fake", "", "Replay AI responses from cassette file (for testing)")
 	cmd.PersistentFlags().StringVar(&flags.recordPath, "record", "", "Record AI API interactions to cassette file")
+	cmd.PersistentFlags().StringVar(&flags.authToken, "auth-token", "", "Bearer token required for API requests (empty = no authentication)")
 	cmd.MarkFlagsMutuallyExclusive("fake", "record")
 	addRuntimeConfigFlags(cmd, &flags.runConfig)
 
@@ -119,7 +121,7 @@ func (f *apiFlags) runAPICommand(cmd *cobra.Command, args []string) (commandErr 
 		return fmt.Errorf("resolving agent sources: %w", err)
 	}
 
-	s, err := server.New(ctx, sessionStore, &f.runConfig, time.Duration(f.pullIntervalMins)*time.Minute, sources)
+	s, err := server.New(ctx, sessionStore, &f.runConfig, time.Duration(f.pullIntervalMins)*time.Minute, sources, f.authToken)
 	if err != nil {
 		return fmt.Errorf("creating server: %w", err)
 	}

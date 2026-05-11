@@ -137,12 +137,12 @@ func (r *RemoteRuntime) SetCurrentAgent(agentName string) error {
 	return nil
 }
 
-// CurrentAgentTools is not exposed by the remote wire protocol today.
-// The server has the real list; the client cannot enumerate it. Return
-// ErrUnsupported so callers (TUI tools dialog, programmatic introspection)
-// can show an explanatory message instead of a silently-empty list.
-func (r *RemoteRuntime) CurrentAgentTools(_ context.Context) ([]tools.Tool, error) {
-	return nil, fmt.Errorf("list tools: %w", ErrUnsupported)
+// CurrentAgentTools returns the tools for the current agent from the session.
+func (r *RemoteRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, error) {
+	if r.sessionID == "" {
+		return nil, nil
+	}
+	return r.client.GetSessionTools(ctx, r.sessionID)
 }
 
 // CurrentAgentToolsetStatuses is not implemented for remote runtimes; the
@@ -152,10 +152,12 @@ func (r *RemoteRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus {
 	return nil
 }
 
-// RestartToolset is not implemented for remote runtimes; toolset
-// restart is a server-side concern.
-func (r *RemoteRuntime) RestartToolset(context.Context, string) error {
-	return fmt.Errorf("restart-toolset: %w", ErrUnsupported)
+// RestartToolset restarts a toolset on the remote server.
+func (r *RemoteRuntime) RestartToolset(ctx context.Context, toolsetName string) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.RestartSessionToolset(ctx, r.sessionID, toolsetName)
 }
 
 // EmitStartupInfo emits initial agent, team, and toolset information
@@ -254,6 +256,7 @@ func (r *RemoteRuntime) RunStream(ctx context.Context, sess *session.Session) <-
 			return
 		}
 
+		// Consume events from the agent stream
 		for streamEvent := range streamChan {
 			if elicitationRequest, ok := streamEvent.(*ElicitationRequestEvent); ok {
 				r.pendingOAuthElicitation = elicitationRequest
@@ -299,6 +302,10 @@ func (r *RemoteRuntime) FollowUp(msg QueuedMessage) error {
 	})
 }
 
+func (r *RemoteRuntime) QueueStatus() QueueStatus {
+	return QueueStatus{}
+}
+
 // Resume allows resuming execution after user confirmation
 func (r *RemoteRuntime) Resume(ctx context.Context, req ResumeRequest) {
 	slog.DebugContext(ctx, "Resuming remote runtime", "agent", r.currentAgent, "type", req.Type, "reason", req.Reason, "tool_name", req.ToolName, "session_id", r.sessionID)
@@ -313,13 +320,18 @@ func (r *RemoteRuntime) Resume(ctx context.Context, req ResumeRequest) {
 	}
 }
 
-// Summarize is not yet supported on remote runtimes. Emit an Error
-// event so the TUI surfaces a clear failure instead of persisting a
-// bogus "not yet implemented" SessionSummary into the session store
-// (the persistence observer writes every SessionSummaryEvent unchanged).
-func (r *RemoteRuntime) Summarize(_ context.Context, _ *session.Session, _ string, events chan Event) {
-	slog.Debug("Summarize not yet implemented for remote runtime", "session_id", r.sessionID)
-	events <- Error(fmt.Sprintf("summarize: %s", ErrUnsupported))
+// Summarize generates a summary for the session by compacting it server-side.
+func (r *RemoteRuntime) Summarize(ctx context.Context, sess *session.Session, _ string, events chan Event) {
+	if r.sessionID == "" {
+		events <- SessionSummary(sess.ID, "No active session to summarize", r.currentAgent, 0)
+		return
+	}
+	if err := r.client.CompactSession(ctx, r.sessionID); err != nil {
+		slog.WarnContext(ctx, "Failed to compact session", "error", err)
+		events <- SessionSummary(sess.ID, fmt.Sprintf("Compaction failed: %v", err), r.currentAgent, 0)
+		return
+	}
+	events <- SessionSummary(sess.ID, "Session compacted successfully", r.currentAgent, 0)
 }
 
 func (r *RemoteRuntime) convertSessionMessages(sess *session.Session) []api.Message {
@@ -513,9 +525,36 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	return nil
 }
 
-// SessionStore returns nil for remote runtime since session storage is handled server-side.
+// SessionStore returns a RemoteSessionStore that wraps the remote client.
 func (r *RemoteRuntime) SessionStore() session.Store {
-	return nil
+	return NewRemoteSessionStore(r.client)
+}
+
+// AvailableModels returns available models for the agent.
+func (r *RemoteRuntime) AvailableModels(ctx context.Context) []ModelChoice {
+	models, err := r.client.GetAvailableModels(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to get available models", "error", err)
+		return nil
+	}
+	choices := make([]ModelChoice, len(models))
+	for i, m := range models {
+		choices[i] = ModelChoice{Name: m, Ref: m}
+	}
+	return choices
+}
+
+// SetAgentModel sets the model for the agent.
+func (r *RemoteRuntime) SetAgentModel(ctx context.Context, _, modelRef string) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.SetAgentModel(ctx, r.sessionID, modelRef)
+}
+
+// SupportsModelSwitching returns true for remote runtimes (model switching is handled server-side).
+func (r *RemoteRuntime) SupportsModelSwitching() bool {
+	return true
 }
 
 // PermissionsInfo returns nil for remote runtime since permissions are handled server-side.
@@ -541,14 +580,32 @@ func (r *RemoteRuntime) UpdateSessionTitle(ctx context.Context, sess *session.Se
 	return r.client.UpdateSessionTitle(ctx, r.sessionID, title)
 }
 
-// CurrentMCPPrompts is not supported on remote runtimes.
-func (r *RemoteRuntime) CurrentMCPPrompts(context.Context) map[string]mcp.PromptInfo {
-	return make(map[string]mcp.PromptInfo)
+// CurrentMCPPrompts returns available MCP prompts from the server.
+func (r *RemoteRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcp.PromptInfo {
+	if r.sessionID == "" {
+		return make(map[string]mcp.PromptInfo)
+	}
+	prompts, err := r.client.GetSessionMCPPrompts(ctx, r.sessionID)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to get MCP prompts", "error", err)
+		return make(map[string]mcp.PromptInfo)
+	}
+	// Convert map[string]any to map[string]mcp.PromptInfo
+	result := make(map[string]mcp.PromptInfo)
+	for k, v := range prompts {
+		if info, ok := v.(mcp.PromptInfo); ok {
+			result[k] = info
+		}
+	}
+	return result
 }
 
-// ExecuteMCPPrompt is not supported on remote runtimes.
-func (r *RemoteRuntime) ExecuteMCPPrompt(context.Context, string, map[string]string) (string, error) {
-	return "", fmt.Errorf("MCP prompts: %w", ErrUnsupported)
+// ExecuteMCPPrompt executes an MCP prompt on the server.
+func (r *RemoteRuntime) ExecuteMCPPrompt(ctx context.Context, promptName string, args map[string]string) (string, error) {
+	if r.sessionID == "" {
+		return "", errors.New("no active session")
+	}
+	return r.client.ExecuteSessionMCPPrompt(ctx, r.sessionID, promptName, args)
 }
 
 // TitleGenerator is not supported on remote runtimes (titles are generated server-side).
@@ -556,26 +613,12 @@ func (r *RemoteRuntime) TitleGenerator() *sessiontitle.Generator {
 	return nil
 }
 
-// TogglePause is not yet supported on remote runtimes.
-func (r *RemoteRuntime) TogglePause(context.Context) (bool, error) {
-	return false, fmt.Errorf("pause: %w", ErrUnsupported)
-}
-
-// SetAgentModel is not yet supported on remote runtimes; the server owns
-// the model selection.
-func (r *RemoteRuntime) SetAgentModel(context.Context, string, string) error {
-	return fmt.Errorf("set agent model: %w", ErrUnsupported)
-}
-
-// AvailableModels is not yet supported on remote runtimes; the wire
-// protocol cannot enumerate the models the server has access to.
-func (r *RemoteRuntime) AvailableModels(context.Context) []ModelChoice {
-	return nil
-}
-
-// SupportsModelSwitching is false for remote runtimes.
-func (r *RemoteRuntime) SupportsModelSwitching() bool {
-	return false
+// TogglePause pauses/resumes a session on the server.
+func (r *RemoteRuntime) TogglePause(ctx context.Context) (bool, error) {
+	if r.sessionID == "" {
+		return false, errors.New("no active session")
+	}
+	return false, r.client.PauseSession(ctx, r.sessionID)
 }
 
 // OnToolsChanged is a no-op for remote runtimes; tool-list changes are
@@ -588,4 +631,145 @@ func (r *RemoteRuntime) Close() error {
 	return nil
 }
 
+// GetSnapshots retrieves available snapshots for the current session.
+func (r *RemoteRuntime) GetSnapshots(ctx context.Context) ([]map[string]any, error) {
+	if r.sessionID == "" {
+		return nil, errors.New("no active session")
+	}
+	return r.client.GetSessionSnapshots(ctx, r.sessionID)
+}
+
+// Undo reverts to the previous snapshot on the remote server.
+func (r *RemoteRuntime) Undo(ctx context.Context) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.UndoSession(ctx, r.sessionID)
+}
+
+// Reset resets the session to its initial state on the remote server.
+func (r *RemoteRuntime) Reset(ctx context.Context) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.ResetSession(ctx, r.sessionID)
+}
+
+// AddMessageToSession adds a message to the current session on the remote server.
+func (r *RemoteRuntime) AddMessageToSession(ctx context.Context, msg *session.Message) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.AddMessage(ctx, r.sessionID, msg)
+}
+
+// UpdateSessionMessage updates a message in the current session on the remote server.
+func (r *RemoteRuntime) UpdateSessionMessage(ctx context.Context, msgID string, msg *session.Message) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.UpdateMessage(ctx, r.sessionID, msgID, msg)
+}
+
+// AddSessionSummary adds a summary to the current session on the remote server.
+func (r *RemoteRuntime) AddSessionSummary(ctx context.Context, summary string, tokens int) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.AddSummary(ctx, r.sessionID, summary, tokens)
+}
+
+// UpdateSessionTokens updates token counts for the current session on the remote server.
+func (r *RemoteRuntime) UpdateSessionTokens(ctx context.Context, inputTokens, outputTokens int64, cost float64) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.UpdateSessionTokens(ctx, r.sessionID, inputTokens, outputTokens, cost)
+}
+
+// SetSessionStarred sets the starred status for the current session on the remote server.
+func (r *RemoteRuntime) SetSessionStarred(ctx context.Context, starred bool) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.SetSessionStarred(ctx, r.sessionID, starred)
+}
+
 var _ Runtime = (*RemoteRuntime)(nil)
+
+// RemoteSessionStore wraps a RemoteClient to implement the session.Store interface.
+type RemoteSessionStore struct {
+	client RemoteClient
+}
+
+// NewRemoteSessionStore creates a new RemoteSessionStore.
+func NewRemoteSessionStore(client RemoteClient) *RemoteSessionStore {
+	return &RemoteSessionStore{client: client}
+}
+
+func (s *RemoteSessionStore) AddSession(context.Context, *session.Session) error {
+	return fmt.Errorf("add session: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) GetSession(context.Context, string) (*session.Session, error) {
+	return nil, fmt.Errorf("get session: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) GetSessions(ctx context.Context) ([]*session.Session, error) {
+	sessions, err := s.client.GetAllSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*session.Session, len(sessions))
+	for i := range sessions {
+		result[i] = &sessions[i]
+	}
+	return result, nil
+}
+
+func (s *RemoteSessionStore) GetSessionSummaries(context.Context) ([]session.Summary, error) {
+	return nil, fmt.Errorf("get session summaries: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) DeleteSession(ctx context.Context, id string) error {
+	return s.client.DeleteRemoteSession(ctx, id)
+}
+
+func (s *RemoteSessionStore) UpdateSession(context.Context, *session.Session) error {
+	return fmt.Errorf("update session: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) SetSessionStarred(context.Context, string, bool) error {
+	return fmt.Errorf("set session starred: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) AddMessage(context.Context, string, *session.Message) (int64, error) {
+	return 0, fmt.Errorf("add message: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) UpdateMessage(context.Context, int64, *session.Message) error {
+	return fmt.Errorf("update message: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) AddSubSession(context.Context, string, *session.Session) error {
+	return fmt.Errorf("add sub session: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) AddSummary(context.Context, string, string, int) error {
+	return fmt.Errorf("add summary: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) UpdateSessionTokens(context.Context, string, int64, int64, float64) error {
+	return fmt.Errorf("update session tokens: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) UpdateSessionTitle(context.Context, string, string) error {
+	return fmt.Errorf("update session title: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) Close() error {
+	return nil
+}
+
+var _ session.Store = (*RemoteSessionStore)(nil)

@@ -81,6 +81,7 @@ func (m *mockRuntime) Close() error                              { return nil }
 func (m *mockRuntime) Stop()                                     {}
 func (m *mockRuntime) Steer(_ runtime.QueuedMessage) error       { return nil }
 func (m *mockRuntime) FollowUp(_ runtime.QueuedMessage) error    { return nil }
+func (m *mockRuntime) QueueStatus() runtime.QueueStatus          { return runtime.QueueStatus{} }
 func (m *mockRuntime) TogglePause(context.Context) (bool, error) { return false, nil }
 func (m *mockRuntime) SetAgentModel(context.Context, string, string) error {
 	return nil

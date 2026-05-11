@@ -30,7 +30,7 @@ func TestAttachedServer_SteerReachesAttachedRuntime(t *testing.T) {
 	fake := &fakeRuntime{}
 	sm.AttachRuntime(sess.ID, fake, sess)
 
-	srv := NewWithManager(sm)
+	srv := NewWithManager(sm, "")
 
 	ln, err := Listen(ctx, "127.0.0.1:0")
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestAttachedServer_EventStreamEmitsRegisteredEvents(t *testing.T) {
 		}
 	})
 
-	srv := NewWithManager(sm)
+	srv := NewWithManager(sm, "")
 	ln, err := Listen(ctx, "127.0.0.1:0")
 	require.NoError(t, err)
 	go func() { _ = srv.Serve(ctx, ln) }()
@@ -128,7 +128,7 @@ func TestAttachedServer_DeleteSessionStopsEventStream(t *testing.T) {
 		close(sourceCtxDone)
 	})
 
-	srv := NewWithManager(sm)
+	srv := NewWithManager(sm, "")
 	ln, err := Listen(ctx, "127.0.0.1:0")
 	require.NoError(t, err)
 	go func() { _ = srv.Serve(ctx, ln) }()

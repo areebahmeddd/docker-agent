@@ -177,3 +177,84 @@ type UpdateSessionTitleResponse struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 }
+
+// AddMessageRequest represents a request to add a message to a session
+type AddMessageRequest struct {
+	Message *session.Message `json:"message"`
+}
+
+// UpdateMessageRequest represents a request to update a message in a session
+type UpdateMessageRequest struct {
+	Message *session.Message `json:"message"`
+}
+
+// AddSummaryRequest represents a request to add a summary to a session
+type AddSummaryRequest struct {
+	Summary string `json:"summary"`
+	Tokens  int    `json:"tokens,omitempty"`
+}
+
+// UpdateSessionTokensRequest represents a request to update session token counts
+type UpdateSessionTokensRequest struct {
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	Cost         float64 `json:"cost,omitempty"`
+}
+
+// SetSessionStarredRequest represents a request to star or unstar a session
+type SetSessionStarredRequest struct {
+	Starred bool `json:"starred"`
+}
+
+// BatchDeleteSessionsRequest represents a request to delete multiple sessions
+type BatchDeleteSessionsRequest struct {
+	SessionIDs []string `json:"session_ids"`
+}
+
+// BatchDeleteSessionsResponse represents the response from batch delete
+type BatchDeleteSessionsResponse struct {
+	DeletedCount int      `json:"deleted_count"`
+	FailedCount  int      `json:"failed_count"`
+	FailedIDs    []string `json:"failed_ids,omitempty"`
+}
+
+// BatchExportSessionsRequest represents a request to export multiple sessions
+type BatchExportSessionsRequest struct {
+	SessionIDs []string `json:"session_ids"`
+	Format     string   `json:"format,omitempty"` // "json" (default) or "zip"
+}
+
+// BatchExportSessionsResponse represents the response from batch export
+type BatchExportSessionsResponse struct {
+	ExportFormat string `json:"export_format"`
+	DataURL      string `json:"data_url,omitempty"`  // Base64 data URL for small exports
+	FilePath     string `json:"file_path,omitempty"` // Temporary file path for large exports
+	SessionCount int    `json:"session_count"`
+}
+
+// HealthResponse represents the response from the health check endpoint
+type HealthResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+}
+
+// ReadyResponse represents the response from the readiness check endpoint
+type ReadyResponse struct {
+	Ready          bool   `json:"ready"`
+	ActiveSessions int    `json:"active_sessions"`
+	StoreConnected bool   `json:"store_connected"`
+	ToolsetHealth  string `json:"toolset_health,omitempty"`
+	LatestError    string `json:"latest_error,omitempty"`
+}
+
+// QueueDepthResponse represents the queue depth information for a session
+type QueueDepthResponse struct {
+	Steer struct {
+		Depth    int `json:"depth"`
+		Capacity int `json:"capacity"`
+	} `json:"steer"`
+	Followup struct {
+		Depth    int `json:"depth"`
+		Capacity int `json:"capacity"`
+	} `json:"followup"`
+}

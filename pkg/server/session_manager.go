@@ -542,3 +542,142 @@ func (sm *SessionManager) GetAgentToolCount(ctx context.Context, agentFilename, 
 
 	return len(agentTools), nil
 }
+
+// AddMessage adds a message to a session.
+func (sm *SessionManager) AddMessage(ctx context.Context, sessionID string, msg *session.Message) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	_, err := sm.sessionStore.AddMessage(ctx, sessionID, msg)
+	if err != nil {
+		return err
+	}
+
+	// If the session is actively running, update the in-memory session
+	if rt, ok := sm.runtimeSessions.Load(sessionID); ok && rt.session != nil {
+		rt.session.AddMessage(msg)
+	}
+
+	return nil
+}
+
+// UpdateMessage updates a message in a session.
+func (sm *SessionManager) UpdateMessage(ctx context.Context, sessionID, msgID string, msg *session.Message) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	// Parse msgID as int64
+	var msgPos int64
+	_, err := fmt.Sscanf(msgID, "%d", &msgPos)
+	if err != nil {
+		return fmt.Errorf("invalid message ID: %w", err)
+	}
+
+	return sm.sessionStore.UpdateMessage(ctx, msgPos, msg)
+}
+
+// AddSummary adds a summary to a session.
+func (sm *SessionManager) AddSummary(ctx context.Context, sessionID, summary string, tokens int) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	return sm.sessionStore.AddSummary(ctx, sessionID, summary, tokens)
+}
+
+// UpdateSessionTokens updates the token counts for a session.
+func (sm *SessionManager) UpdateSessionTokens(ctx context.Context, sessionID string, inputTokens, outputTokens int64, cost float64) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	return sm.sessionStore.UpdateSessionTokens(ctx, sessionID, inputTokens, outputTokens, cost)
+}
+
+// SetSessionStarred sets the starred status for a session.
+func (sm *SessionManager) SetSessionStarred(ctx context.Context, sessionID string, starred bool) error {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	return sm.sessionStore.SetSessionStarred(ctx, sessionID, starred)
+}
+
+// BatchDeleteSessions deletes multiple sessions in a single operation.
+func (sm *SessionManager) BatchDeleteSessions(ctx context.Context, sessionIDs []string) (int, []string) {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	deleted := 0
+	var failed []string
+
+	for _, sessionID := range sessionIDs {
+		if err := sm.sessionStore.DeleteSession(ctx, sessionID); err != nil {
+			failed = append(failed, sessionID)
+		} else {
+			deleted++
+			if sessionRuntime, ok := sm.runtimeSessions.Load(sessionID); ok {
+				sessionRuntime.cancel()
+				sm.runtimeSessions.Delete(sessionID)
+			}
+			sm.eventSources.Delete(sessionID)
+		}
+	}
+
+	return deleted, failed
+}
+
+// BatchExportSessions exports multiple sessions as JSON
+func (sm *SessionManager) BatchExportSessions(ctx context.Context, sessionIDs []string) (map[string]any, error) {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	export := make(map[string]any)
+	export["export_format"] = "json"
+	export["timestamp"] = time.Now().Format(time.RFC3339)
+
+	exportedSessions := make([]map[string]any, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		sess, err := sm.sessionStore.GetSession(ctx, sessionID)
+		if err != nil {
+			continue // Skip sessions that can't be retrieved
+		}
+
+		sessData := map[string]any{
+			"id":             sess.ID,
+			"title":          sess.Title,
+			"created_at":     sess.CreatedAt,
+			"messages":       sess.GetAllMessages(),
+			"input_tokens":   sess.InputTokens,
+			"output_tokens":  sess.OutputTokens,
+			"working_dir":    sess.WorkingDir,
+			"tools_approved": sess.ToolsApproved,
+		}
+		exportedSessions = append(exportedSessions, sessData)
+	}
+
+	export["sessions"] = exportedSessions
+	export["session_count"] = len(exportedSessions)
+
+	return export, nil
+}
+
+// ExportSessionForRecovery exports a single session as JSON for recovery
+func (sm *SessionManager) ExportSessionForRecovery(ctx context.Context, sessionID string) (map[string]any, error) {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"id":             sess.ID,
+		"title":          sess.Title,
+		"created_at":     sess.CreatedAt,
+		"messages":       sess.GetAllMessages(),
+		"input_tokens":   sess.InputTokens,
+		"output_tokens":  sess.OutputTokens,
+		"working_dir":    sess.WorkingDir,
+		"tools_approved": sess.ToolsApproved,
+		"permissions":    sess.Permissions,
+	}, nil
+}

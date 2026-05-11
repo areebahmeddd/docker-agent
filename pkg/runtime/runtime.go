@@ -133,6 +133,9 @@ type Runtime interface {
 	// can implement this as a no-op.
 	OnToolsChanged(handler func(Event))
 
+	// QueueStatus returns the current depth and capacity of message queues
+	QueueStatus() QueueStatus
+
 	// TogglePause toggles whether the run loop is paused at iteration
 	// boundaries. Returns the new state (true if now paused). Returns
 	// [ErrUnsupported] for runtimes that don't expose pause control.
@@ -1225,6 +1228,19 @@ func (r *LocalRuntime) FollowUp(msg QueuedMessage) error {
 		return errors.New("follow-up queue full")
 	}
 	return nil
+}
+
+func (r *LocalRuntime) QueueStatus() QueueStatus {
+	status := QueueStatus{}
+	if steerQ, ok := r.steerQueue.(*inMemoryMessageQueue); ok {
+		status.SteerDepth = len(steerQ.ch)
+		status.SteerCapacity = cap(steerQ.ch)
+	}
+	if followupQ, ok := r.followUpQueue.(*inMemoryMessageQueue); ok {
+		status.FollowupDepth = len(followupQ.ch)
+		status.FollowupCapacity = cap(followupQ.ch)
+	}
+	return status
 }
 
 // Run starts the agent's interaction loop

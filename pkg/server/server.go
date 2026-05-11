@@ -3,6 +3,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -22,28 +24,38 @@ import (
 )
 
 type Server struct {
-	e  *echo.Echo
-	sm *SessionManager
+	e         *echo.Echo
+	sm        *SessionManager
+	authToken string
 }
 
-func New(ctx context.Context, sessionStore session.Store, runConfig *config.RuntimeConfig, refreshInterval time.Duration, agentSources config.Sources) (*Server, error) {
-	return NewWithManager(NewSessionManager(ctx, agentSources, sessionStore, refreshInterval, runConfig)), nil
+func New(ctx context.Context, sessionStore session.Store, runConfig *config.RuntimeConfig, refreshInterval time.Duration, agentSources config.Sources, authToken string) (*Server, error) {
+	return NewWithManager(NewSessionManager(ctx, agentSources, sessionStore, refreshInterval, runConfig), authToken), nil
 }
 
 // NewWithManager builds a Server around an already-constructed SessionManager.
 // Useful when the runtime is owned by another component (e.g. the TUI) and
 // only needs to be exposed over HTTP.
-func NewWithManager(sm *SessionManager) *Server {
+func NewWithManager(sm *SessionManager, authToken string) *Server {
 	e := echo.New()
 	e.Use(echolog.RedactedRequestLogger())
 	e.Use(echo.WrapMiddleware(upstream.Handler))
 
-	s := &Server{e: e, sm: sm}
+	// Add bearer token middleware if token is configured
+	if authToken != "" {
+		e.Use(BearerTokenMiddleware(authToken))
+	}
+
+	s := &Server{e: e, sm: sm, authToken: authToken}
 	s.registerRoutes()
 	return s
 }
 
 func (s *Server) registerRoutes() {
+	// Health and readiness endpoints (not under /api)
+	s.e.GET("/health", s.health)
+	s.e.GET("/ready", s.ready)
+
 	group := s.e.Group("/api")
 
 	group.GET("/agents", s.getAgents)
@@ -55,6 +67,8 @@ func (s *Server) registerRoutes() {
 	group.POST("/sessions/:id/tools/toggle", s.toggleSessionYolo)
 	group.PATCH("/sessions/:id/permissions", s.updateSessionPermissions)
 	group.PATCH("/sessions/:id/title", s.updateSessionTitle)
+	group.PATCH("/sessions/:id/tokens", s.updateSessionTokens)
+	group.PATCH("/sessions/:id/starred", s.setSessionStarred)
 	group.POST("/sessions", s.createSession)
 	group.DELETE("/sessions/:id", s.deleteSession)
 	group.POST("/sessions/:id/agent/:agent", s.runAgent)
@@ -63,6 +77,13 @@ func (s *Server) registerRoutes() {
 	group.POST("/sessions/:id/steer", s.steerSession)
 	group.POST("/sessions/:id/followup", s.followUpSession)
 	group.GET("/sessions/:id/events", s.sessionEvents)
+	group.POST("/sessions/:id/messages", s.addMessage)
+	group.PATCH("/sessions/:id/messages/:msg_id", s.updateMessage)
+	group.POST("/sessions/:id/summaries", s.addSummary)
+	group.GET("/sessions/:id/queue", s.getSessionQueueStatus)
+	group.GET("/sessions/:id/recovery", s.getSessionRecoveryData)
+	group.POST("/sessions/batch/delete", s.batchDeleteSessions)
+	group.POST("/sessions/batch/export", s.batchExportSessions)
 
 	group.GET("/agents/:id/:agent_name/tools/count", s.getAgentToolCount)
 
@@ -297,16 +318,23 @@ func (s *Server) runAgent(c echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("Connection", "keep-alive")
 	c.Response().WriteHeader(http.StatusOK)
-	for event := range streamChan {
-		data, err := json.Marshal(event)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to marshal event: %v", err))
+	for {
+		select {
+		case event, ok := <-streamChan:
+			if !ok {
+				return nil
+			}
+			data, err := json.Marshal(event)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to marshal event: %v", err))
+			}
+			fmt.Fprintf(c.Response(), "data: %s\n\n", string(data))
+			c.Response().Flush()
+		case <-c.Request().Context().Done():
+			slog.DebugContext(c.Request().Context(), "Client disconnected from stream", "session_id", sessionID)
+			return nil
 		}
-		fmt.Fprintf(c.Response(), "data: %s\n\n", string(data))
-		c.Response().Flush()
 	}
-
-	return nil
 }
 
 func (s *Server) elicitation(c echo.Context) error {
@@ -335,6 +363,10 @@ func (s *Server) steerSession(c echo.Context) error {
 	}
 
 	if err := s.sm.SteerSession(c.Request().Context(), sessionID, req.Messages); err != nil {
+		if strings.Contains(err.Error(), "queue full") {
+			c.Response().Header().Set("Retry-After", "1")
+			return echo.NewHTTPError(http.StatusTooManyRequests, "steer queue full")
+		}
 		return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf("failed to steer session: %v", err))
 	}
 
@@ -377,8 +409,245 @@ func (s *Server) followUpSession(c echo.Context) error {
 	}
 
 	if err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages); err != nil {
+		if strings.Contains(err.Error(), "queue full") {
+			c.Response().Header().Set("Retry-After", "1")
+			return echo.NewHTTPError(http.StatusTooManyRequests, "follow-up queue full")
+		}
 		return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf("failed to enqueue follow-up: %v", err))
 	}
 
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued"})
+}
+
+func (s *Server) addMessage(c echo.Context) error {
+	sessionID := c.Param("id")
+	var req api.AddMessageRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if req.Message == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "message is required")
+	}
+
+	if err := s.sm.AddMessage(c.Request().Context(), sessionID, req.Message); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to add message: %v", err))
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{"status": "added"})
+}
+
+func (s *Server) updateMessage(c echo.Context) error {
+	sessionID := c.Param("id")
+	msgID := c.Param("msg_id")
+	var req api.UpdateMessageRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if req.Message == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "message is required")
+	}
+
+	if err := s.sm.UpdateMessage(c.Request().Context(), sessionID, msgID, req.Message); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to update message: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) addSummary(c echo.Context) error {
+	sessionID := c.Param("id")
+	var req api.AddSummaryRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if req.Summary == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "summary is required")
+	}
+
+	if err := s.sm.AddSummary(c.Request().Context(), sessionID, req.Summary, req.Tokens); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to add summary: %v", err))
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{"status": "added"})
+}
+
+func (s *Server) updateSessionTokens(c echo.Context) error {
+	sessionID := c.Param("id")
+	var req api.UpdateSessionTokensRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if err := s.sm.UpdateSessionTokens(c.Request().Context(), sessionID, req.InputTokens, req.OutputTokens, req.Cost); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to update tokens: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) setSessionStarred(c echo.Context) error {
+	sessionID := c.Param("id")
+	var req api.SetSessionStarredRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if err := s.sm.SetSessionStarred(c.Request().Context(), sessionID, req.Starred); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to set starred: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) batchDeleteSessions(c echo.Context) error {
+	var req api.BatchDeleteSessionsRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if len(req.SessionIDs) == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "session_ids cannot be empty")
+	}
+
+	deleted, failed := s.sm.BatchDeleteSessions(c.Request().Context(), req.SessionIDs)
+
+	return c.JSON(http.StatusOK, api.BatchDeleteSessionsResponse{
+		DeletedCount: deleted,
+		FailedCount:  len(failed),
+		FailedIDs:    failed,
+	})
+}
+
+func (s *Server) batchExportSessions(c echo.Context) error {
+	var req api.BatchExportSessionsRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if len(req.SessionIDs) == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "session_ids cannot be empty")
+	}
+
+	export, err := s.sm.BatchExportSessions(c.Request().Context(), req.SessionIDs)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to export sessions: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, export)
+}
+
+func (s *Server) health(c echo.Context) error {
+	return c.JSON(http.StatusOK, api.HealthResponse{
+		Status: "ok",
+	})
+}
+
+func (s *Server) ready(c echo.Context) error {
+	// Check if session store is accessible (quick connectivity check)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 100*time.Millisecond)
+	defer cancel()
+
+	sessions, err := s.sm.GetSessions(ctx)
+	var storeConnected bool
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		// We assume store is connected if we can query it or we hit a timeout
+		// (timeout is still better than a hard connection failure)
+		storeConnected = true
+	}
+
+	activeSessions := 0
+	if sessions != nil {
+		activeSessions = len(sessions)
+	}
+
+	var toolsetHealth string
+	var latestError string
+
+	// Determine overall readiness
+	ready := storeConnected
+	if !ready {
+		latestError = "store disconnected"
+	}
+
+	status := http.StatusOK
+	if !ready {
+		status = http.StatusServiceUnavailable
+	}
+
+	if !ready {
+		toolsetHealth = "unavailable"
+	} else {
+		toolsetHealth = "ok"
+	}
+
+	return c.JSON(status, api.ReadyResponse{
+		Ready:          ready,
+		ActiveSessions: activeSessions,
+		StoreConnected: storeConnected,
+		ToolsetHealth:  toolsetHealth,
+		LatestError:    latestError,
+	})
+}
+
+func (s *Server) getSessionRecoveryData(c echo.Context) error {
+	sessionID := c.Param("id")
+	data, err := s.sm.ExportSessionForRecovery(c.Request().Context(), sessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to export session: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, data)
+}
+
+func (s *Server) getSessionQueueStatus(c echo.Context) error {
+	sessionID := c.Param("id")
+
+	// Get the session runtime to check queue status
+	sessionRuntime, ok := s.sm.runtimeSessions.Load(sessionID)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found or not running")
+	}
+
+	queueStatus := sessionRuntime.runtime.QueueStatus()
+
+	resp := api.QueueDepthResponse{}
+	resp.Steer.Depth = queueStatus.SteerDepth
+	resp.Steer.Capacity = queueStatus.SteerCapacity
+	resp.Followup.Depth = queueStatus.FollowupDepth
+	resp.Followup.Capacity = queueStatus.FollowupCapacity
+
+	return c.JSON(http.StatusOK, resp)
+}
+
+// BearerTokenMiddleware validates bearer token authentication
+func BearerTokenMiddleware(expectedToken string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip authentication for health and readiness endpoints
+			if c.Path() == "/health" || c.Path() == "/ready" {
+				return next(c)
+			}
+
+			auth := c.Request().Header.Get("Authorization")
+			if auth == "" {
+				return echo.NewHTTPError(http.StatusUnauthorized, "missing Authorization header")
+			}
+
+			// Extract Bearer token
+			const prefix = "Bearer "
+			if len(auth) < len(prefix) || auth[:len(prefix)] != prefix {
+				return echo.NewHTTPError(http.StatusUnauthorized, "invalid Authorization header format")
+			}
+
+			token := auth[len(prefix):]
+			if subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) != 1 {
+				return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+			}
+
+			return next(c)
+		}
+	}
 }

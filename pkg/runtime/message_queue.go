@@ -83,3 +83,11 @@ func (q *inMemoryMessageQueue) Drain(_ context.Context) []QueuedMessage {
 		}
 	}
 }
+
+// QueueStatus represents the current depth and capacity of message queues
+type QueueStatus struct {
+	SteerDepth       int
+	SteerCapacity    int
+	FollowupDepth    int
+	FollowupCapacity int
+}

@@ -73,6 +73,7 @@ func (m *mockRuntime) TitleGenerator() *sessiontitle.Generator             { ret
 func (m *mockRuntime) Close() error                                        { return nil }
 func (m *mockRuntime) Steer(QueuedMessage) error                           { return nil }
 func (m *mockRuntime) FollowUp(QueuedMessage) error                        { return nil }
+func (m *mockRuntime) QueueStatus() QueueStatus                            { return QueueStatus{} }
 func (m *mockRuntime) TogglePause(context.Context) (bool, error)           { return false, nil }
 func (m *mockRuntime) SetAgentModel(context.Context, string, string) error { return nil }
 func (m *mockRuntime) AvailableModels(context.Context) []ModelChoice       { return nil }
