@@ -58,7 +58,7 @@ func TestConvertDocument_StrategyB64_ImageDropped(t *testing.T) {
 // where callers passed a bare model name instead of a "provider/model" ID,
 // causing modelcaps to miss the model and silently drop image/PDF attachments.
 //
-// It calls ConvertMultiContentFromStore with an injected fake store, exercising
+// It calls ConvertMultiContent with an injected fake store, exercising
 // the same path as the production client (which calls ConvertMessages with c.ID()).
 func TestConvertDocument_QualifiedIDRequired(t *testing.T) {
 	store := modelsdev.NewDatabaseStore(&modelsdev.Database{
@@ -85,11 +85,11 @@ func TestConvertDocument_QualifiedIDRequired(t *testing.T) {
 	}}
 
 	// Bare model name (the original bug): image must be dropped.
-	partsBare := ConvertMultiContentFromStore(t.Context(), msgParts, "gpt-4o", store)
+	partsBare := ConvertMultiContent(t.Context(), msgParts, "gpt-4o", store)
 	assert.Empty(t, partsBare, "bare model name must not resolve caps: image should be dropped")
 
 	// Qualified ID (the fix, matching what c.ID() returns): image must be preserved.
-	partsQualified := ConvertMultiContentFromStore(t.Context(), msgParts, "openai/gpt-4o", store)
+	partsQualified := ConvertMultiContent(t.Context(), msgParts, "openai/gpt-4o", store)
 	require.Len(t, partsQualified, 1, "qualified ID must resolve caps: image should be present")
 	assert.NotNil(t, partsQualified[0].OfImageURL, "expected image URL part for qualified model ID")
 }

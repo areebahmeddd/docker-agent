@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 type RuntimeConfig struct {
@@ -17,6 +18,11 @@ type RuntimeConfig struct {
 	EnvProviderForTests environment.Provider
 	envProvider         environment.Provider
 	envProviderLock     sync.Mutex
+
+	ModelsDevStoreOverride *modelsdev.Store
+	modelsDevStore         *modelsdev.Store
+	modelsDevStoreErr      error
+	modelsDevStoreOnce     sync.Once
 }
 
 type Config struct {
@@ -41,9 +47,14 @@ type Config struct {
 }
 
 func (runConfig *RuntimeConfig) Clone() *RuntimeConfig {
+	store, storeErr := runConfig.ModelsDevStore()
 	clone := &RuntimeConfig{
-		Config: runConfig.Config,
+		Config:                 runConfig.Config,
+		ModelsDevStoreOverride: runConfig.ModelsDevStoreOverride,
+		modelsDevStore:         store,
+		modelsDevStoreErr:      storeErr,
 	}
+	clone.modelsDevStoreOnce.Do(func() {}) // mark as resolved
 	clone.EnvFiles = slices.Clone(runConfig.EnvFiles)
 	clone.Models = maps.Clone(runConfig.Models)
 	clone.Providers = maps.Clone(runConfig.Providers)
@@ -55,6 +66,19 @@ func (runConfig *RuntimeConfig) Clone() *RuntimeConfig {
 	clone.HookOnUserInput = slices.Clone(runConfig.HookOnUserInput)
 	clone.HookStop = slices.Clone(runConfig.HookStop)
 	return clone
+}
+
+// ModelsDevStore returns the lazily-initialized models.dev store.
+// The store is created on first access and shared across clones.
+// If ModelsDevStoreOverride is set, it is returned directly.
+func (runConfig *RuntimeConfig) ModelsDevStore() (*modelsdev.Store, error) {
+	if runConfig.ModelsDevStoreOverride != nil {
+		return runConfig.ModelsDevStoreOverride, nil
+	}
+	runConfig.modelsDevStoreOnce.Do(func() {
+		runConfig.modelsDevStore, runConfig.modelsDevStoreErr = modelsdev.NewStore()
+	})
+	return runConfig.modelsDevStore, runConfig.modelsDevStoreErr
 }
 
 func (runConfig *RuntimeConfig) EnvProvider() environment.Provider {

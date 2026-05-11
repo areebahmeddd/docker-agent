@@ -15,7 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
-// convertDocumentFromStore converts a chat.Document to zero or more
+// convertDocument converts a chat.Document to zero or more
 // ChatCompletionContentPartUnionParam values using the OpenAI Chat Completions
 // format. It uses the provided modelsdev.Store for capability lookups.
 //
@@ -24,8 +24,8 @@ import (
 //   - other binary MIMEs with InlineData → drop (no native document block on Chat Completions)
 //   - text MIMEs with InlineText → text part with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocumentFromStore(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]openai.ChatCompletionContentPartUnionParam, error) {
-	mc := modelcaps.LoadFromStore(store, modelID)
+func convertDocument(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]openai.ChatCompletionContentPartUnionParam, error) {
+	mc := modelcaps.Load(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

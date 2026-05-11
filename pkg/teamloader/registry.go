@@ -523,6 +523,7 @@ func createRAGTool(ctx context.Context, toolset latest.Toolset, parentDir string
 		Env:           runConfig.EnvProvider(),
 		Models:        runConfig.Models,
 		Providers:     runConfig.Providers,
+		RuntimeConfig: runConfig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RAG manager: %w", err)

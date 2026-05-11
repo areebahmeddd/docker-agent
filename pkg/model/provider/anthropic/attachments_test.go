@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
@@ -79,14 +80,17 @@ func TestConvertDocumentAnthropic_QualifiedIDRequired(t *testing.T) {
 		},
 	})
 
+	var modelOpts options.ModelOptions
+	options.WithModelsDevStore(store)(&modelOpts)
+
 	c := &Client{
 		Config: base.Config{
 			ModelConfig: latest.ModelConfig{
 				Provider: "anthropic",
 				Model:    "claude-sonnet-4-6",
 			},
+			ModelOptions: modelOpts,
 		},
-		modelsStore: store,
 	}
 
 	parts := []chat.MessagePart{

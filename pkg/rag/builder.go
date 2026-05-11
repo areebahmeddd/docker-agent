@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider"
@@ -22,6 +23,7 @@ type ManagersBuildConfig struct {
 	Env           environment.Provider
 	Models        map[string]latest.ModelConfig    // Model configurations from config
 	Providers     map[string]latest.ProviderConfig // Custom provider configurations from config
+	RuntimeConfig *config.RuntimeConfig
 }
 
 // NewProvider creates a model provider using the build config's environment,
@@ -58,6 +60,7 @@ func NewManager(
 		Env:           buildCfg.Env,
 		ModelsGateway: buildCfg.ModelsGateway,
 		RespectVCS:    ragCfg.GetRespectVCS(),
+		RuntimeConfig: buildCfg.RuntimeConfig,
 	}
 
 	strategyConfigs, strategyEvents, err := buildStrategyConfigs(ctx, *ragCfg, strategyBuildCtx, ragName)

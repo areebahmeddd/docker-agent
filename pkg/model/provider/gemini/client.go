@@ -34,8 +34,7 @@ import (
 type Client struct {
 	base.Config
 
-	clientFn    func(context.Context) (*genai.Client, error)
-	modelsStore *modelsdev.Store // initialised in NewClient
+	clientFn func(context.Context) (*genai.Client, error)
 }
 
 // NewClient creates a new Gemini client from the provided configuration
@@ -169,20 +168,13 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 	slog.DebugContext(ctx, "Gemini client created successfully", "model", cfg.Model)
 
-	store, err := modelsdev.NewStore()
-	if err != nil {
-		slog.WarnContext(ctx, "gemini: failed to load models.dev store, attachments will use conservative caps", "error", err)
-		store = modelsdev.NewDatabaseStore(&modelsdev.Database{})
-	}
-
 	return &Client{
 		Config: base.Config{
 			ModelConfig:  *cfg,
 			ModelOptions: globalOptions,
 			Env:          env,
 		},
-		clientFn:    clientFn,
-		modelsStore: store,
+		clientFn: clientFn,
 	}, nil
 }
 
@@ -310,7 +302,7 @@ func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, t
 			}
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docPart, err := convertDocumentFromStore(ctx, *part.Document, modelID, store)
+				docPart, err := convertDocument(ctx, *part.Document, modelID, store)
 				if err != nil {
 					slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 					continue
@@ -610,7 +602,7 @@ func (c *Client) CreateChatCompletionStream(
 		}
 	}
 
-	contents := convertMessagesToGemini(ctx, messages, c.ID(), c.modelsStore)
+	contents := convertMessagesToGemini(ctx, messages, c.ID(), c.ModelOptions.ModelsDevStore())
 
 	// Debug: Log the messages we're sending
 	slog.DebugContext(ctx, "Gemini messages", "count", len(contents))

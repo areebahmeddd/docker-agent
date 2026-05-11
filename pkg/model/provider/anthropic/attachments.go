@@ -15,7 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
-// convertDocumentFromStore converts a chat.Document to standard Anthropic SDK content blocks
+// convertDocument converts a chat.Document to standard Anthropic SDK content blocks
 // using an explicit modelsdev.Store for capability lookup.
 //
 // Routing:
@@ -23,8 +23,8 @@ import (
 //   - application/pdf with InlineData → DocumentBlockParam (base64)
 //   - text with InlineText → TextBlockParam with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocumentFromStore(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]anthropic.ContentBlockParamUnion, error) {
-	mc := modelcaps.LoadFromStore(store, modelID)
+func convertDocument(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]anthropic.ContentBlockParamUnion, error) {
+	mc := modelcaps.Load(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

@@ -33,7 +33,7 @@ func imageFormatFromMIME(mimeType string) (types.ImageFormat, bool) {
 	}
 }
 
-// convertDocumentFromStore converts a chat.Document to zero or more Bedrock ContentBlocks
+// convertDocument converts a chat.Document to zero or more Bedrock ContentBlocks
 // using the provided modelsdev.Store for capability lookup.
 //
 // Routing:
@@ -41,8 +41,8 @@ func imageFormatFromMIME(mimeType string) (types.ImageFormat, bool) {
 //   - application/pdf with InlineData → ContentBlockMemberDocument (PDF)
 //   - text/* with InlineText → ContentBlockMemberText with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocumentFromStore(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]types.ContentBlock, error) {
-	mc := modelcaps.LoadFromStore(store, modelID)
+func convertDocument(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]types.ContentBlock, error) {
+	mc := modelcaps.Load(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

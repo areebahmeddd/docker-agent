@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider"
@@ -21,6 +22,7 @@ type BuildContext struct {
 	Env           environment.Provider
 	ModelsGateway string
 	RespectVCS    bool // Whether to respect VCS ignore files (e.g., .gitignore) when collecting files
+	RuntimeConfig *config.RuntimeConfig
 }
 
 // NewProvider creates a model provider using the build context's environment,

@@ -16,7 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
-// convertDocumentToResponseInputFromStore converts a chat.Document to zero or
+// convertDocumentToResponseInput converts a chat.Document to zero or
 // more ResponseInputContentUnionParam values for the OpenAI Responses API,
 // using the provided modelsdev.Store for capability lookup.
 //
@@ -25,8 +25,8 @@ import (
 //   - application/pdf with InlineData → OfInputFile (base64)
 //   - text MIMEs with InlineText → OfInputText with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocumentToResponseInputFromStore(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]responses.ResponseInputContentUnionParam, error) {
-	mc := modelcaps.LoadFromStore(store, modelID)
+func convertDocumentToResponseInput(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]responses.ResponseInputContentUnionParam, error) {
+	mc := modelcaps.Load(store, modelID)
 	return convertDocumentToResponseInputWithCaps(ctx, doc, mc)
 }
 

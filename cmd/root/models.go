@@ -14,7 +14,6 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/model/provider"
-	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/telemetry"
 )
 
@@ -161,7 +160,7 @@ func (f *modelsListFlags) collectModels(ctx context.Context, availableProviders 
 	}
 
 	// Fetch catalog and add all text-capable models.
-	store, err := modelsdev.NewStore()
+	store, err := f.runConfig.ModelsDevStore()
 	if err != nil {
 		return rows
 	}
