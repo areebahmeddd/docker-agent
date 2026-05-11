@@ -73,9 +73,34 @@ func TestCreateSessionRequest_RoundTrip(t *testing.T) {
 func TestCreateSessionRequest_OmitsEmptyFields(t *testing.T) {
 	t.Parallel()
 
+	// Boolean fields are always serialized (no `omitempty`) so that an
+	// explicit `false` survives the wire round-trip and stays distinct
+	// from "unset" semantics owned by the server. String fields with
+	// `omitempty` still drop out of the empty case.
 	data, err := json.Marshal(CreateSessionRequest{})
 	require.NoError(t, err)
-	assert.JSONEq(t, `{}`, string(data))
+	assert.JSONEq(t, `{"tools_approved":false,"hide_tool_results":false,"snapshots_enabled":false}`, string(data))
+}
+
+func TestCreateSessionRequest_PreservesExplicitFalseOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	// Pins the contract that `omitempty` on booleans is intentionally
+	// absent: a client sending an explicit `false` must reach the
+	// server as `false`, not as the field's absence. If the server's
+	// default ever flips to `true`, this guarantee keeps existing
+	// clients' "no, really, false" intact.
+	in := CreateSessionRequest{
+		AgentName:        "main",
+		ToolsApproved:    false,
+		HideToolResults:  false,
+		SnapshotsEnabled: false,
+	}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"tools_approved":false`)
+	assert.Contains(t, string(data), `"hide_tool_results":false`)
+	assert.Contains(t, string(data), `"snapshots_enabled":false`)
 }
 
 func TestCreateSessionRequest_NonSerializableFieldsExcluded(t *testing.T) {

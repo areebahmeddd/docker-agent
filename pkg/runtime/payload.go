@@ -31,16 +31,22 @@ type LoadTeamRequest struct {
 // The same forward-compatibility argument as LoadTeamRequest applies: this
 // is the payload a remote backend will eventually send over the wire.
 //
+// Boolean fields intentionally do NOT use `omitempty`. With `omitempty`,
+// an explicit `false` is wire-indistinguishable from "unset", so a future
+// server-side default flip from `false` to `true` would silently change
+// the semantics for clients that omitted the field on purpose. Always
+// serialising the boolean keeps the sender's choice authoritative.
+//
 // GlobalPermissions is currently json:"-" (the permissions.Checker is an
 // opaque struct without a wire form yet); it'll get a serializable
 // representation in a follow-up.
 type CreateSessionRequest struct {
 	AgentName         string               `json:"agent_name,omitempty"`
-	ToolsApproved     bool                 `json:"tools_approved,omitempty"`
-	HideToolResults   bool                 `json:"hide_tool_results,omitempty"`
+	ToolsApproved     bool                 `json:"tools_approved"`
+	HideToolResults   bool                 `json:"hide_tool_results"`
 	SessionDB         string               `json:"session_db,omitempty"`
 	ResumeSessionID   string               `json:"resume_session_id,omitempty"`
-	SnapshotsEnabled  bool                 `json:"snapshots_enabled,omitempty"`
+	SnapshotsEnabled  bool                 `json:"snapshots_enabled"`
 	GlobalPermissions *permissions.Checker `json:"-"`
 	WorkingDir        string               `json:"working_dir,omitempty"`
 }
