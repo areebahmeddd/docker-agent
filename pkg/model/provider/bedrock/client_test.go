@@ -1234,7 +1234,7 @@ func TestDetectCachingSupport_SupportedModel(t *testing.T) {
 	t.Parallel()
 
 	// Uses real models.dev lookup to verify Claude models support caching
-	supported := detectCachingSupport(t.Context(), "anthropic.claude-3-5-sonnet-20241022-v2:0")
+	supported := detectCachingSupport(t.Context(), "anthropic.claude-opus-4-7")
 	assert.True(t, supported)
 }
 
