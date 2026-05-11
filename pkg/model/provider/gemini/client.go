@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
 	"github.com/docker/docker-agent/pkg/modelinfo"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/rag/prompts"
 	"github.com/docker/docker-agent/pkg/rag/types"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -33,7 +34,8 @@ import (
 type Client struct {
 	base.Config
 
-	clientFn func(context.Context) (*genai.Client, error)
+	clientFn    func(context.Context) (*genai.Client, error)
+	modelsStore *modelsdev.Store // initialised in NewClient
 }
 
 // NewClient creates a new Gemini client from the provided configuration
@@ -167,13 +169,20 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 	slog.DebugContext(ctx, "Gemini client created successfully", "model", cfg.Model)
 
+	store, err := modelsdev.NewStore()
+	if err != nil {
+		slog.WarnContext(ctx, "gemini: failed to load models.dev store, attachments will use conservative caps", "error", err)
+		store = modelsdev.NewDatabaseStore(&modelsdev.Database{})
+	}
+
 	return &Client{
 		Config: base.Config{
 			ModelConfig:  *cfg,
 			ModelOptions: globalOptions,
 			Env:          env,
 		},
-		clientFn: clientFn,
+		clientFn:    clientFn,
+		modelsStore: store,
 	}, nil
 }
 
@@ -193,7 +202,7 @@ func thoughtSignatureOrDefault(sig []byte) []byte {
 }
 
 // convertMessagesToGemini converts chat.Messages into Gemini Contents
-func convertMessagesToGemini(ctx context.Context, messages []chat.Message, modelID string) []*genai.Content {
+func convertMessagesToGemini(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []*genai.Content {
 	contents := make([]*genai.Content, 0, len(messages))
 	for i := range messages {
 		msg := &messages[i]
@@ -258,7 +267,7 @@ func convertMessagesToGemini(ctx context.Context, messages []chat.Message, model
 
 		// Handle regular messages
 		if len(msg.MultiContent) > 0 {
-			parts := convertMultiContent(ctx, msg.MultiContent, msg.ThoughtSignature, modelID)
+			parts := convertMultiContent(ctx, msg.MultiContent, msg.ThoughtSignature, modelID, store)
 			if len(parts) > 0 {
 				contents = append(contents, genai.NewContentFromParts(parts, role))
 			}
@@ -288,7 +297,7 @@ func newTextPartWithSignature(text string, signature []byte) *genai.Part {
 }
 
 // convertMultiContent converts multi-part content to Gemini parts
-func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, thoughtSignature []byte, modelID string) []*genai.Part {
+func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, thoughtSignature []byte, modelID string, store *modelsdev.Store) []*genai.Part {
 	parts := make([]*genai.Part, 0, len(multiContent))
 	for _, part := range multiContent {
 		switch part.Type {
@@ -301,7 +310,7 @@ func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, t
 			}
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docPart, err := convertDocument(ctx, *part.Document, modelID)
+				docPart, err := convertDocumentFromStore(ctx, *part.Document, modelID, store)
 				if err != nil {
 					slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 					continue
@@ -601,7 +610,7 @@ func (c *Client) CreateChatCompletionStream(
 		}
 	}
 
-	contents := convertMessagesToGemini(ctx, messages, c.ModelConfig.Model)
+	contents := convertMessagesToGemini(ctx, messages, c.ID(), c.modelsStore)
 
 	// Debug: Log the messages we're sending
 	slog.DebugContext(ctx, "Gemini messages", "count", len(contents))

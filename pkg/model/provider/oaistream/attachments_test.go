@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // minJPEG is a minimal JPEG magic-byte header for use in tests.
@@ -53,6 +54,46 @@ func TestConvertDocument_StrategyB64_ImageDropped(t *testing.T) {
 	assert.Nil(t, parts, "image should be dropped for text-only model")
 }
 
+// TestConvertDocument_QualifiedIDRequired is the regression test for the bug
+// where callers passed a bare model name instead of a "provider/model" ID,
+// causing modelcaps to miss the model and silently drop image/PDF attachments.
+//
+// It calls ConvertMultiContentFromStore with an injected fake store, exercising
+// the same path as the production client (which calls ConvertMessages with c.ID()).
+func TestConvertDocument_QualifiedIDRequired(t *testing.T) {
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{
+		Providers: map[string]modelsdev.Provider{
+			"openai": {
+				Models: map[string]modelsdev.Model{
+					"gpt-4o": {
+						Modalities: modelsdev.Modalities{
+							Input: []string{"text", "image"},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	msgParts := []chat.MessagePart{{
+		Type: chat.MessagePartTypeDocument,
+		Document: &chat.Document{
+			Name:     "photo.jpg",
+			MimeType: "image/jpeg",
+			Source:   chat.DocumentSource{InlineData: minJPEG},
+		},
+	}}
+
+	// Bare model name (the original bug): image must be dropped.
+	partsBare := ConvertMultiContentFromStore(t.Context(), msgParts, "gpt-4o", store)
+	assert.Empty(t, partsBare, "bare model name must not resolve caps: image should be dropped")
+
+	// Qualified ID (the fix, matching what c.ID() returns): image must be preserved.
+	partsQualified := ConvertMultiContentFromStore(t.Context(), msgParts, "openai/gpt-4o", store)
+	require.Len(t, partsQualified, 1, "qualified ID must resolve caps: image should be present")
+	assert.NotNil(t, partsQualified[0].OfImageURL, "expected image URL part for qualified model ID")
+}
+
 func TestConvertDocument_StrategyTXT(t *testing.T) {
 	doc := chat.Document{
 		Name:     "readme.md",
@@ -60,7 +101,7 @@ func TestConvertDocument_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "# Hello World"},
 	}
 
-	parts, err := convertDocument(t.Context(), doc, "")
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
@@ -76,7 +117,7 @@ func TestConvertDocument_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "a,b,c\n1,2,3"},
 	}
 
-	parts, err := convertDocument(t.Context(), doc, "")
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
@@ -91,7 +132,7 @@ func TestConvertDocument_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	parts, err := convertDocument(t.Context(), doc, "")
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, parts, "should be dropped when no inline content")
 }

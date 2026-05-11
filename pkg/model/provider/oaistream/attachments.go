@@ -12,20 +12,20 @@ import (
 	"github.com/docker/docker-agent/pkg/attachment"
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
-// convertDocument converts a chat.Document to zero or more
+// convertDocumentFromStore converts a chat.Document to zero or more
 // ChatCompletionContentPartUnionParam values using the OpenAI Chat Completions
-// format.  It is also used by all oaistream-based providers (Mistral, xAI,
-// Ollama, Nebius, MiniMax, GitHub Copilot, Azure, Requesty).
+// format. It uses the provided modelsdev.Store for capability lookups.
 //
 // Routing:
 //   - image/* with InlineData → data-URI image part
-//   - other binary MIMEs with InlineData → text part with TXTEnvelope fallback
+//   - other binary MIMEs with InlineData → drop (no native document block on Chat Completions)
 //   - text MIMEs with InlineText → text part with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocument(ctx context.Context, doc chat.Document, modelID string) ([]openai.ChatCompletionContentPartUnionParam, error) {
-	mc, _ := modelcaps.Load(modelID)
+func convertDocumentFromStore(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]openai.ChatCompletionContentPartUnionParam, error) {
+	mc := modelcaps.LoadFromStore(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

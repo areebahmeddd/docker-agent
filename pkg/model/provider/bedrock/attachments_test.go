@@ -79,7 +79,7 @@ func TestConvertDocumentBedrock_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "## Notes"},
 	}
 
-	blocks, err := convertDocument(t.Context(), doc, "")
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	textBlock, ok := blocks[0].(*types.ContentBlockMemberText)
@@ -96,7 +96,7 @@ func TestConvertDocumentBedrock_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "a,b"},
 	}
 
-	blocks, err := convertDocument(t.Context(), doc, "")
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	textBlock, ok := blocks[0].(*types.ContentBlockMemberText)
@@ -111,7 +111,7 @@ func TestConvertDocumentBedrock_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	blocks, err := convertDocument(t.Context(), doc, "")
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "should be nil when no inline content")
 }

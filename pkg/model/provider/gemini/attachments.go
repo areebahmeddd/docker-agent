@@ -10,16 +10,18 @@ import (
 	"github.com/docker/docker-agent/pkg/attachment"
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
-// convertDocument converts a chat.Document to a Gemini genai.Part.
+// convertDocumentFromStore converts a chat.Document to a Gemini genai.Part
+// using the provided modelsdev.Store for capability lookup.
 //
 // Routing:
 //   - image/* or binary with InlineData → genai.Blob part
 //   - text MIMEs with InlineText → genai.Text part with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocument(ctx context.Context, doc chat.Document, modelID string) (*genai.Part, error) {
-	mc, _ := modelcaps.Load(modelID)
+func convertDocumentFromStore(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) (*genai.Part, error) {
+	mc := modelcaps.LoadFromStore(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

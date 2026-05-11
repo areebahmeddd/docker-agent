@@ -30,7 +30,8 @@ type Client struct {
 	base.Config
 
 	bedrockClient    *bedrockruntime.Client
-	cachingSupported bool // Cached at init time for efficiency
+	cachingSupported bool             // Cached at init time for efficiency
+	modelsStore      *modelsdev.Store // initialised in NewClient
 }
 
 // bearerTokenTransport adds Authorization header with bearer token to requests
@@ -116,6 +117,12 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	// Uses models.dev cache pricing as proxy for capability detection.
 	cachingSupported := detectCachingSupport(ctx, cfg.Model)
 
+	attachStore, err := modelsdev.NewStore()
+	if err != nil {
+		slog.WarnContext(ctx, "bedrock: failed to load models.dev store, attachments will use conservative caps", "error", err)
+		attachStore = modelsdev.NewDatabaseStore(&modelsdev.Database{})
+	}
+
 	slog.DebugContext(ctx, "Bedrock client created successfully",
 		"model", cfg.Model,
 		"region", awsCfg.Region,
@@ -129,6 +136,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		},
 		bedrockClient:    bedrockClient,
 		cachingSupported: cachingSupported,
+		modelsStore:      attachStore,
 	}, nil
 }
 
@@ -236,7 +244,7 @@ func (c *Client) buildConverseStreamInput(ctx context.Context, messages []chat.M
 	enableCaching := c.promptCachingEnabled()
 
 	// Convert and set messages (excluding system)
-	input.Messages, input.System = convertMessages(ctx, messages, c.ModelConfig.Model, enableCaching)
+	input.Messages, input.System = convertMessages(ctx, messages, c.ID(), c.modelsStore, enableCaching)
 
 	// Compute thinking fields first — its presence drives the inference config.
 	additionalFields := c.buildAdditionalModelRequestFields()

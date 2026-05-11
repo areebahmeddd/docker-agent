@@ -60,7 +60,7 @@ func TestConvertDocumentResponseInput_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "## API Spec"},
 	}
 
-	parts, err := convertDocumentToResponseInput(t.Context(), doc, "")
+	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfInputText)
@@ -77,7 +77,7 @@ func TestConvertDocumentResponseInput_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "x,y"},
 	}
 
-	parts, err := convertDocumentToResponseInput(t.Context(), doc, "")
+	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfInputText)
@@ -92,7 +92,7 @@ func TestConvertDocumentResponseInput_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	parts, err := convertDocumentToResponseInput(t.Context(), doc, "")
+	parts, err := convertDocumentToResponseInputWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, parts, "should be nil when no inline content")
 }
