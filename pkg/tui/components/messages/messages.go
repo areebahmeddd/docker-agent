@@ -11,7 +11,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/docker/docker-agent/pkg/chat"
@@ -80,8 +79,9 @@ type Model interface {
 
 // renderedItem represents a cached rendered message with position information
 type renderedItem struct {
-	view   string // Cached rendered content
-	height int    // Height in lines
+	view   string   // Cached rendered content
+	lines  []string // Pre-split lines (avoids re-splitting on every rebuild)
+	height int      // Height in lines
 }
 
 // blockIDCounter generates unique IDs for reasoning blocks.
@@ -992,8 +992,11 @@ func (m *model) renderItem(index int, view layout.Model) renderedItem {
 	// If this message is being inline edited, render the textarea instead
 	if index == m.inlineEditMsgIndex {
 		rendered := m.renderInlineEditTextarea()
-		height := lipgloss.Height(rendered)
-		return renderedItem{view: rendered, height: height}
+		var lines []string
+		if rendered != "" {
+			lines = strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
+		}
+		return renderedItem{view: rendered, lines: lines, height: len(lines)}
 	}
 
 	isSelected := m.focused && index == m.selectedMessageIndex
@@ -1015,12 +1018,12 @@ func (m *model) renderItem(index int, view layout.Model) renderedItem {
 	}
 
 	rendered := view.View()
-	height := lipgloss.Height(rendered)
-	if rendered == "" {
-		height = 0
+	var lines []string
+	if rendered != "" {
+		lines = strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
 	}
 
-	item := renderedItem{view: rendered, height: height}
+	item := renderedItem{view: rendered, lines: lines, height: len(lines)}
 
 	if shouldCache {
 		m.renderedItems[index] = item
@@ -1103,13 +1106,11 @@ func (m *model) ensureAllItemsRendered() {
 
 	for i, view := range m.views {
 		item := m.renderItem(i, view)
-		if item.view == "" {
+		if len(item.lines) == 0 {
 			continue
 		}
 
-		viewContent := strings.TrimSuffix(item.view, "\n")
-		lines := strings.Split(viewContent, "\n")
-		allLines = append(allLines, lines...)
+		allLines = append(allLines, item.lines...)
 
 		if m.needsSeparator(i) {
 			allLines = append(allLines, "")
@@ -1683,12 +1684,11 @@ func (m *model) isEditLabelClick(msgIdx, localLine, col int) (bool, *types.Messa
 	}
 
 	item := m.renderItem(msgIdx, m.views[msgIdx])
-	lines := strings.Split(item.view, "\n")
-	if localLine < 0 || localLine >= len(lines) {
+	if localLine < 0 || localLine >= len(item.lines) {
 		return false, nil
 	}
 
-	plainLine := ansi.Strip(lines[localLine])
+	plainLine := ansi.Strip(item.lines[localLine])
 	before, _, ok := strings.Cut(plainLine, types.UserMessageEditLabel)
 	if !ok {
 		return false, nil
@@ -1721,12 +1721,11 @@ func (m *model) isCopyLabelClick(msgIdx, localLine, col int) bool {
 	}
 
 	item := m.renderItem(msgIdx, m.views[msgIdx])
-	lines := strings.Split(item.view, "\n")
-	if localLine < 0 || localLine >= len(lines) {
+	if localLine < 0 || localLine >= len(item.lines) {
 		return false
 	}
 
-	plainLine := ansi.Strip(lines[localLine])
+	plainLine := ansi.Strip(item.lines[localLine])
 	before, _, ok := strings.Cut(plainLine, types.AssistantMessageCopyLabel)
 	if !ok {
 		return false
