@@ -314,8 +314,25 @@ func (s *Server) updateSessionTitle(c echo.Context) error {
 func (s *Server) deleteSession(c echo.Context) error {
 	sessionID := c.Param("id")
 
+	timeout := 10 * time.Second
+	if v := c.QueryParam("timeout"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid timeout: %v", err))
+		}
+		timeout = d
+	}
+
 	if err := s.sm.DeleteSession(c.Request().Context(), sessionID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to delete session: %v", err))
+	}
+
+	// When ?wait=true, block until the runtime's stream goroutine has
+	// fully exited (the streaming mutex is released) or the timeout fires.
+	if c.QueryParam("wait") == "true" {
+		if err := s.sm.WaitStopped(c.Request().Context(), sessionID, timeout); err != nil {
+			return c.JSON(http.StatusAccepted, map[string]string{"message": "session deleted, stop still in progress"})
+		}
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"message": "session deleted"})

@@ -37,6 +37,7 @@ type activeRuntimes struct {
 // SessionManager manages sessions for HTTP and Connect-RPC servers.
 type SessionManager struct {
 	runtimeSessions *concurrent.Map[string, *activeRuntimes]
+	deletedSessions *concurrent.Map[string, *activeRuntimes]
 	eventSources    *concurrent.Map[string, EventSource]
 	sessionStore    session.Store
 	Sources         config.Sources
@@ -69,6 +70,7 @@ func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore
 
 	sm := &SessionManager{
 		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
 		eventSources:    concurrent.NewMap[string, EventSource](),
 		sessionStore:    sessionStore,
 		Sources:         loaders,
@@ -233,7 +235,9 @@ func (sm *SessionManager) GetSessions(ctx context.Context) ([]*session.Session, 
 	return sessions, nil
 }
 
-// DeleteSession deletes a session by ID.
+// DeleteSession deletes a session by ID. It cancels the runtime context and
+// removes the session from all registries. Callers that need to wait for
+// the stream to fully stop should call WaitStopped afterwards.
 func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) error {
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
@@ -248,11 +252,41 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 
 	if sessionRuntime, ok := sm.runtimeSessions.Load(sess.ID); ok {
 		sessionRuntime.cancel()
+		// Keep the entry in deletedSessions so WaitStopped can probe the
+		// streaming mutex after the runtime is deregistered.
+		sm.deletedSessions.Store(sess.ID, sessionRuntime)
 		sm.runtimeSessions.Delete(sess.ID)
 	}
 	sm.eventSources.Delete(sess.ID)
 
 	return nil
+}
+
+// WaitStopped blocks until the session's runtime stream goroutine has fully
+// exited (streaming mutex released) or the timeout fires. It should be called
+// after DeleteSession. Returns nil when the stream has stopped.
+func (sm *SessionManager) WaitStopped(_ context.Context, sessionID string, timeout time.Duration) error {
+	rs, ok := sm.deletedSessions.Load(sessionID)
+	if !ok {
+		return nil // already cleaned up
+	}
+
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if rs.streaming.TryLock() {
+			rs.streaming.Unlock()
+			sm.deletedSessions.Delete(sessionID)
+			return nil
+		}
+		select {
+		case <-deadline:
+			return fmt.Errorf("timeout waiting for session %s to stop", sessionID)
+		case <-ticker.C:
+		}
+	}
 }
 
 // ErrSessionBusy is returned when a session is already processing a request.

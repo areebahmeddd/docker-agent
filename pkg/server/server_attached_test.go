@@ -268,3 +268,40 @@ func TestAttachedServer_ReadyEndpointTimesOut(t *testing.T) {
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
+
+// TestAttachedServer_DeleteWithWaitBlocksUntilStreamStops verifies that
+// DELETE /api/sessions/:id?wait=true blocks until the stream goroutine exits.
+func TestAttachedServer_DeleteWithWaitBlocksUntilStreamStops(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	store := session.NewInMemorySessionStore()
+	sess := session.New()
+	require.NoError(t, store.AddSession(ctx, sess))
+
+	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
+	fake := &fakeRuntime{streamDelay: 200 * time.Millisecond}
+	sm.AttachRuntime(sess.ID, fake, sess)
+
+	srv := NewWithManager(sm)
+
+	ln, err := Listen(ctx, "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = srv.Serve(ctx, ln) }()
+
+	addr := "http://" + ln.Addr().String()
+
+	// Start a stream so the streaming lock is held.
+	ch, err := sm.RunSession(ctx, sess.ID, "agent", "root", []api.Message{{Content: "hello"}})
+	require.NoError(t, err)
+
+	// DELETE with wait should block until stream finishes (200ms).
+	resp := httpDoTCP(t, ctx, http.MethodDelete, addr+"/api/sessions/"+sess.ID+"?wait=true&timeout=5s", nil)
+	assert.Contains(t, string(resp), "deleted")
+
+	// Stream channel should be drained by now.
+	for range ch {
+	}
+}

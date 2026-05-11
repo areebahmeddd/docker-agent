@@ -67,6 +67,7 @@ func newTestSessionManager(t *testing.T, sess *session.Session, fake *fakeRuntim
 
 	sm := &SessionManager{
 		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
 		sessionStore:    store,
 		Sources:         config.Sources{},
 		runConfig:       &config.RuntimeConfig{},
@@ -211,6 +212,7 @@ func TestRunSession_DifferentSessionsConcurrently(t *testing.T) {
 
 	sm := &SessionManager{
 		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
 		sessionStore:    store,
 		Sources:         config.Sources{},
 		runConfig:       &config.RuntimeConfig{},
