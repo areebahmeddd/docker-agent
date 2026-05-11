@@ -646,11 +646,12 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 
 // handleMaxIterationsReached handles max iterations events.
 func (a *Agent) handleMaxIterationsReached(ctx context.Context, acpSess *Session, e *runtime.MaxIterationsReachedEvent) error {
+	title := fmt.Sprintf("Maximum iterations (%d) reached", e.MaxIterations)
 	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 		SessionId: acp.SessionId(acpSess.id),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: "max_iterations",
-			Title:      new(fmt.Sprintf("Maximum iterations (%d) reached", e.MaxIterations)),
+			Title:      &title,
 			Kind:       acp.Ptr(acp.ToolKindExecute),
 			Status:     acp.Ptr(acp.ToolCallStatusPending),
 		},
