@@ -108,8 +108,10 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	return nil
 }
 
+const maxAPITimeout = 5 * time.Minute
+
 // ready blocks until at least one session is registered. The caller
-// may supply a ?timeout=<duration> query parameter (default 30s).
+// may supply a ?timeout=<duration> query parameter (default 30s, max 5m).
 func (s *Server) ready(c echo.Context) error {
 	timeout := 30 * time.Second
 	if v := c.QueryParam("timeout"); v != "" {
@@ -117,7 +119,7 @@ func (s *Server) ready(c echo.Context) error {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid timeout: %v", err))
 		}
-		timeout = d
+		timeout = min(d, maxAPITimeout)
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request().Context(), timeout)
@@ -320,7 +322,7 @@ func (s *Server) deleteSession(c echo.Context) error {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid timeout: %v", err))
 		}
-		timeout = d
+		timeout = min(d, maxAPITimeout)
 	}
 
 	if err := s.sm.DeleteSession(c.Request().Context(), sessionID); err != nil {

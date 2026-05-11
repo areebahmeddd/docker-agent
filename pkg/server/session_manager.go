@@ -256,6 +256,28 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 		// streaming mutex after the runtime is deregistered.
 		sm.deletedSessions.Store(sess.ID, sessionRuntime)
 		sm.runtimeSessions.Delete(sess.ID)
+
+		// Background cleanup: remove the deletedSessions entry once the
+		// stream goroutine has exited. This prevents a memory leak when
+		// the caller does not use ?wait=true.
+		go func() {
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			deadline := time.After(5 * time.Minute)
+			for {
+				if sessionRuntime.streaming.TryLock() {
+					sessionRuntime.streaming.Unlock()
+					sm.deletedSessions.Delete(sess.ID)
+					return
+				}
+				select {
+				case <-deadline:
+					sm.deletedSessions.Delete(sess.ID)
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
 	}
 	sm.eventSources.Delete(sess.ID)
 
@@ -263,9 +285,10 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 }
 
 // WaitStopped blocks until the session's runtime stream goroutine has fully
-// exited (streaming mutex released) or the timeout fires. It should be called
-// after DeleteSession. Returns nil when the stream has stopped.
-func (sm *SessionManager) WaitStopped(_ context.Context, sessionID string, timeout time.Duration) error {
+// exited (streaming mutex released), the timeout fires, or ctx is cancelled
+// (e.g. client disconnect). It should be called after DeleteSession.
+// Returns nil when the stream has stopped.
+func (sm *SessionManager) WaitStopped(ctx context.Context, sessionID string, timeout time.Duration) error {
 	rs, ok := sm.deletedSessions.Load(sessionID)
 	if !ok {
 		return nil // already cleaned up
@@ -282,6 +305,8 @@ func (sm *SessionManager) WaitStopped(_ context.Context, sessionID string, timeo
 			return nil
 		}
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-deadline:
 			return fmt.Errorf("timeout waiting for session %s to stop", sessionID)
 		case <-ticker.C:
