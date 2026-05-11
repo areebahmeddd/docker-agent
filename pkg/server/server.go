@@ -72,6 +72,8 @@ func (s *Server) registerRoutes() {
 	group.POST("/sessions/:id/messages", s.addMessage)
 	group.PATCH("/sessions/:id/messages/:msg_id", s.updateMessage)
 	group.POST("/sessions/:id/summaries", s.addSummary)
+	group.POST("/sessions/batch/delete", s.batchDeleteSessions)
+	group.POST("/sessions/batch/export", s.batchExportSessions)
 
 	group.GET("/agents/:id/:agent_name/tools/count", s.getAgentToolCount)
 
@@ -480,6 +482,43 @@ func (s *Server) setSessionStarred(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) batchDeleteSessions(c echo.Context) error {
+	var req api.BatchDeleteSessionsRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if len(req.SessionIDs) == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "session_ids cannot be empty")
+	}
+
+	deleted, failed := s.sm.BatchDeleteSessions(c.Request().Context(), req.SessionIDs)
+
+	return c.JSON(http.StatusOK, api.BatchDeleteSessionsResponse{
+		DeletedCount: deleted,
+		FailedCount:  len(failed),
+		FailedIDs:    failed,
+	})
+}
+
+func (s *Server) batchExportSessions(c echo.Context) error {
+	var req api.BatchExportSessionsRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+
+	if len(req.SessionIDs) == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "session_ids cannot be empty")
+	}
+
+	export, err := s.sm.BatchExportSessions(c.Request().Context(), req.SessionIDs)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to export sessions: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, export)
 }
 
 func (s *Server) health(c echo.Context) error {

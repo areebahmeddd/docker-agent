@@ -613,3 +613,62 @@ func (sm *SessionManager) SetSessionStarred(ctx context.Context, sessionID strin
 
 	return sm.sessionStore.SetSessionStarred(ctx, sessionID, starred)
 }
+
+// BatchDeleteSessions deletes multiple sessions in a single operation.
+func (sm *SessionManager) BatchDeleteSessions(ctx context.Context, sessionIDs []string) (int, []string) {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	deleted := 0
+	var failed []string
+
+	for _, sessionID := range sessionIDs {
+		if err := sm.sessionStore.DeleteSession(ctx, sessionID); err != nil {
+			failed = append(failed, sessionID)
+		} else {
+			deleted++
+			if sessionRuntime, ok := sm.runtimeSessions.Load(sessionID); ok {
+				sessionRuntime.cancel()
+				sm.runtimeSessions.Delete(sessionID)
+			}
+			sm.eventSources.Delete(sessionID)
+		}
+	}
+
+	return deleted, failed
+}
+
+// BatchExportSessions exports multiple sessions as JSON
+func (sm *SessionManager) BatchExportSessions(ctx context.Context, sessionIDs []string) (map[string]any, error) {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	export := make(map[string]any)
+	export["export_format"] = "json"
+	export["timestamp"] = time.Now().Format(time.RFC3339)
+
+	exportedSessions := make([]map[string]any, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		sess, err := sm.sessionStore.GetSession(ctx, sessionID)
+		if err != nil {
+			continue // Skip sessions that can't be retrieved
+		}
+
+		sessData := map[string]any{
+			"id":             sess.ID,
+			"title":          sess.Title,
+			"created_at":     sess.CreatedAt,
+			"messages":       sess.GetAllMessages(),
+			"input_tokens":   sess.InputTokens,
+			"output_tokens":  sess.OutputTokens,
+			"working_dir":    sess.WorkingDir,
+			"tools_approved": sess.ToolsApproved,
+		}
+		exportedSessions = append(exportedSessions, sessData)
+	}
+
+	export["sessions"] = exportedSessions
+	export["session_count"] = len(exportedSessions)
+
+	return export, nil
+}

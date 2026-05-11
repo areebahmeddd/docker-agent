@@ -206,6 +206,32 @@ type SetSessionStarredRequest struct {
 	Starred bool `json:"starred"`
 }
 
+// BatchDeleteSessionsRequest represents a request to delete multiple sessions
+type BatchDeleteSessionsRequest struct {
+	SessionIDs []string `json:"session_ids"`
+}
+
+// BatchDeleteSessionsResponse represents the response from batch delete
+type BatchDeleteSessionsResponse struct {
+	DeletedCount int      `json:"deleted_count"`
+	FailedCount  int      `json:"failed_count"`
+	FailedIDs    []string `json:"failed_ids,omitempty"`
+}
+
+// BatchExportSessionsRequest represents a request to export multiple sessions
+type BatchExportSessionsRequest struct {
+	SessionIDs []string `json:"session_ids"`
+	Format     string   `json:"format,omitempty"` // "json" (default) or "zip"
+}
+
+// BatchExportSessionsResponse represents the response from batch export
+type BatchExportSessionsResponse struct {
+	ExportFormat string `json:"export_format"`
+	DataURL      string `json:"data_url,omitempty"`  // Base64 data URL for small exports
+	FilePath     string `json:"file_path,omitempty"` // Temporary file path for large exports
+	SessionCount int    `json:"session_count"`
+}
+
 // HealthResponse represents the response from the health check endpoint
 type HealthResponse struct {
 	Status  string `json:"status"`
