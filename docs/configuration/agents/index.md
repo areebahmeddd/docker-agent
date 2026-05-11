@@ -161,7 +161,7 @@ agents:
       - type: shell
 ```
 
-Detection uses the docker-agent `secretsscan` ruleset, which recognises common secret patterns including:
+Detection uses the [portcullis](https://github.com/docker/portcullis) ruleset, which recognises common secret patterns including:
 
 - GitHub Personal Access Tokens (`ghp_*`, `gho_*`, `ghu_*`, `ghs_*`, `ghr_*`, fine-grained `github_pat_*`)
 - AWS access keys (`AKIA*`, `ASIA*`, …) and secret access keys
