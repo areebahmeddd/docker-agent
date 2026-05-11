@@ -366,7 +366,6 @@ func (c *Client) runAgentWithAgentName(ctx context.Context, sessionID, agent, ag
 		req.Header.Set("Authorization", "Bearer "+c.authToken)
 	}
 
-
 	resp, err := c.httpClient.Do(req) //nolint:bodyclose // body is closed in the goroutine below
 	if err != nil {
 		return nil, fmt.Errorf("performing request: %w", err)
