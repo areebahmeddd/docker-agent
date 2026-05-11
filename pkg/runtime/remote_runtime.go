@@ -113,20 +113,24 @@ func (r *RemoteRuntime) CurrentAgentInfo(ctx context.Context) CurrentAgentInfo {
 
 // SetCurrentAgent sets the currently active agent for subsequent user messages.
 // It validates the name against the remote team config; an unknown agent is
-// rejected so callers see the same behaviour as LocalRuntime.
+// rejected so callers see the same behaviour as LocalRuntime. A failure to
+// fetch the team config (network error, auth failure, missing remote) is
+// propagated rather than silently accepted — the whole point of this check
+// is closing that silent-breakage gap.
 func (r *RemoteRuntime) SetCurrentAgent(agentName string) error {
 	cfg, err := r.client.GetAgent(context.Background(), r.agentFilename)
-	if err == nil {
-		found := false
-		for _, a := range cfg.Agents {
-			if a.Name == agentName {
-				found = true
-				break
-			}
+	if err != nil {
+		return fmt.Errorf("validate agent %q against remote team: %w", agentName, err)
+	}
+	found := false
+	for _, a := range cfg.Agents {
+		if a.Name == agentName {
+			found = true
+			break
 		}
-		if !found {
-			return fmt.Errorf("agent %q not found in remote team", agentName)
-		}
+	}
+	if !found {
+		return fmt.Errorf("agent %q not found in remote team", agentName)
 	}
 	r.currentAgent = agentName
 	slog.Debug("Switched current agent (remote)", "agent", agentName)

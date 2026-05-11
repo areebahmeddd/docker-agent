@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/api"
@@ -19,10 +21,14 @@ import (
 // CreateSession) panic so an accidental wiring against them is loud
 // rather than silent.
 type stubRemoteClient struct {
-	cfg *latest.Config
+	cfg      *latest.Config
+	getAgent func(context.Context, string) (*latest.Config, error)
 }
 
-func (s *stubRemoteClient) GetAgent(context.Context, string) (*latest.Config, error) {
+func (s *stubRemoteClient) GetAgent(ctx context.Context, id string) (*latest.Config, error) {
+	if s.getAgent != nil {
+		return s.getAgent(ctx, id)
+	}
 	return s.cfg, nil
 }
 
@@ -84,4 +90,27 @@ func TestRemoteRuntime_Contract(t *testing.T) {
 		rt.sessionID = "test-session"
 		return rt
 	})
+}
+
+// TestRemoteRuntime_SetCurrentAgent_PropagatesClientError pins the
+// fixed behaviour reviewers flagged: when GetAgent fails (network,
+// auth, missing remote config), SetCurrentAgent must NOT silently
+// accept the name. That would re-introduce the silent-gap pattern the
+// PR set out to close.
+func TestRemoteRuntime_SetCurrentAgent_PropagatesClientError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("boom: network unreachable")
+	client := &stubRemoteClient{
+		getAgent: func(context.Context, string) (*latest.Config, error) {
+			return nil, want
+		},
+	}
+	rt, err := NewRemoteRuntime(client)
+	require.NoError(t, err)
+
+	err = rt.SetCurrentAgent("anything")
+	require.Error(t, err)
+	require.ErrorIs(t, err, want)
+	assert.Empty(t, rt.currentAgent, "currentAgent must not be mutated when validation fails")
 }
