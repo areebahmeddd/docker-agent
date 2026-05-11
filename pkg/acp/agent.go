@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/acp-go-sdk"
 
@@ -97,6 +98,11 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 		},
 		AgentCapabilities: acp.AgentCapabilities{
 			LoadSession: false,
+			SessionCapabilities: acp.SessionCapabilities{
+				Close:  &acp.SessionCloseCapabilities{},
+				List:   &acp.SessionListCapabilities{},
+				Resume: &acp.SessionResumeCapabilities{},
+			},
 			PromptCapabilities: acp.PromptCapabilities{
 				EmbeddedContext: true,
 				Image:           false, // Not yet supported
@@ -194,7 +200,7 @@ func (a *Agent) LoadSession(ctx context.Context, _ acp.LoadSessionRequest) (acp.
 	return acp.LoadSessionResponse{}, errors.New("load session not supported")
 }
 
-// CloseSession implements [acp.Agent] (optional, not advertised in capabilities)
+// CloseSession implements [acp.Agent]
 func (a *Agent) CloseSession(_ context.Context, params acp.CloseSessionRequest) (acp.CloseSessionResponse, error) {
 	sid := string(params.SessionId)
 	slog.Debug("ACP CloseSession called", "session_id", sid)
@@ -214,16 +220,90 @@ func (a *Agent) CloseSession(_ context.Context, params acp.CloseSessionRequest) 
 	return acp.CloseSessionResponse{}, nil
 }
 
-// ListSessions implements [acp.Agent] (optional, not advertised in capabilities)
+// ListSessions implements [acp.Agent]
 func (a *Agent) ListSessions(ctx context.Context, _ acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
-	slog.DebugContext(ctx, "ACP ListSessions called (not supported)")
-	return acp.ListSessionsResponse{}, errors.New("list sessions not supported")
+	slog.DebugContext(ctx, "ACP ListSessions called")
+
+	summaries, err := a.sessionStore.GetSessionSummaries(ctx)
+	if err != nil {
+		return acp.ListSessionsResponse{}, fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	sessions := make([]acp.SessionInfo, 0, len(summaries))
+	for _, s := range summaries {
+		info := acp.SessionInfo{
+			SessionId: acp.SessionId(s.ID),
+			Title:     &s.Title,
+		}
+		if !s.CreatedAt.IsZero() {
+			updatedAt := s.CreatedAt.UTC().Format(time.RFC3339)
+			info.UpdatedAt = &updatedAt
+		}
+		sessions = append(sessions, info)
+	}
+
+	return acp.ListSessionsResponse{Sessions: sessions}, nil
 }
 
-// ResumeSession implements [acp.Agent] (optional, not advertised in capabilities)
-func (a *Agent) ResumeSession(ctx context.Context, _ acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
-	slog.DebugContext(ctx, "ACP ResumeSession called (not supported)")
-	return acp.ResumeSessionResponse{}, errors.New("resume session not supported")
+// ResumeSession implements [acp.Agent]
+func (a *Agent) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
+	sid := string(params.SessionId)
+	slog.DebugContext(ctx, "ACP ResumeSession called", "session_id", sid)
+
+	// Check if session is already active in memory
+	a.mu.Lock()
+	if _, ok := a.sessions[sid]; ok {
+		a.mu.Unlock()
+		return acp.ResumeSessionResponse{}, nil
+	}
+	a.mu.Unlock()
+
+	// Load the session from the store
+	sess, err := a.sessionStore.GetSession(ctx, sid)
+	if err != nil {
+		return acp.ResumeSessionResponse{}, fmt.Errorf("failed to load session %s: %w", sid, err)
+	}
+
+	// Validate and normalize working directory
+	var workingDir string
+	if wd := strings.TrimSpace(params.Cwd); wd != "" {
+		absWd, err := filepath.Abs(wd)
+		if err != nil {
+			return acp.ResumeSessionResponse{}, fmt.Errorf("invalid working directory: %w", err)
+		}
+		workingDir = absWd
+		sess.WorkingDir = workingDir
+	}
+
+	if a.team == nil {
+		return acp.ResumeSessionResponse{}, errors.New("agent not initialized")
+	}
+
+	defaultAgent, err := a.team.DefaultAgent()
+	if err != nil {
+		return acp.ResumeSessionResponse{}, fmt.Errorf("failed to resolve default agent: %w", err)
+	}
+
+	rt, err := runtime.New(a.team,
+		runtime.WithCurrentAgent(defaultAgent.Name()),
+		runtime.WithSessionStore(a.sessionStore),
+	)
+	if err != nil {
+		return acp.ResumeSessionResponse{}, fmt.Errorf("failed to create runtime: %w", err)
+	}
+
+	a.mu.Lock()
+	a.sessions[sid] = &Session{
+		id:         sid,
+		sess:       sess,
+		rt:         rt,
+		workingDir: workingDir,
+	}
+	a.mu.Unlock()
+
+	slog.DebugContext(ctx, "ACP session resumed", "session_id", sid)
+
+	return acp.ResumeSessionResponse{}, nil
 }
 
 // SetSessionConfigOption implements [acp.Agent] (optional, not advertised in capabilities)
@@ -493,6 +573,58 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) error {
 				return err
 			}
 
+		case *runtime.WarningEvent:
+			if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+				SessionId: acp.SessionId(acpSess.id),
+				Update:    acp.UpdateAgentMessageText(fmt.Sprintf("\nWarning: %s\n", e.Message)),
+			}); err != nil {
+				return err
+			}
+
+		case *runtime.SessionTitleEvent:
+			if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+				SessionId: acp.SessionId(acpSess.id),
+				Update: acp.SessionUpdate{
+					SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
+						SessionUpdate: "session_info_update",
+						Title:         &e.Title,
+					},
+				},
+			}); err != nil {
+				return err
+			}
+
+		case *runtime.TokenUsageEvent:
+			if e.Usage != nil {
+				usageUpdate := acp.SessionUsageUpdate{
+					SessionUpdate: "usage_update",
+					Size:          int(e.Usage.ContextLimit),
+					Used:          int(e.Usage.ContextLength),
+				}
+				if e.Usage.Cost > 0 {
+					usageUpdate.Cost = &acp.Cost{
+						Amount:   e.Usage.Cost,
+						Currency: "USD",
+					}
+				}
+				if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+					SessionId: acp.SessionId(acpSess.id),
+					Update: acp.SessionUpdate{
+						UsageUpdate: &usageUpdate,
+					},
+				}); err != nil {
+					return err
+				}
+			}
+
+		case *runtime.ModelFallbackEvent:
+			if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+				SessionId: acp.SessionId(acpSess.id),
+				Update:    acp.UpdateAgentMessageText(fmt.Sprintf("\nModel %s failed, falling back to %s (%s)\n", e.FailedModel, e.FallbackModel, e.Reason)),
+			}); err != nil {
+				return err
+			}
+
 		case *runtime.MaxIterationsReachedEvent:
 			if err := a.handleMaxIterationsReached(ctx, acpSess, e); err != nil {
 				return err
@@ -714,12 +846,17 @@ func determineToolKind(toolName string, tool tools.Tool) acp.ToolKind {
 
 // buildToolCallComplete creates a tool call completion update
 func buildToolCallComplete(arguments string, event *runtime.ToolCallResponseEvent) acp.SessionUpdate {
+	status := acp.ToolCallStatusCompleted
+	if event.Result != nil && event.Result.IsError {
+		status = acp.ToolCallStatusFailed
+	}
+
 	// Check if this is a file edit operation and try to extract diff info
 	if isFileEditTool(event.ToolDefinition.Name) {
 		if diffContent := extractDiffContent(event.ToolDefinition.Name, arguments); diffContent != nil {
 			return acp.UpdateToolCall(
 				acp.ToolCallId(event.ToolCallID),
-				acp.WithUpdateStatus(acp.ToolCallStatusCompleted),
+				acp.WithUpdateStatus(status),
 				acp.WithUpdateContent([]acp.ToolCallContent{*diffContent}),
 				acp.WithUpdateRawOutput(map[string]any{"content": event.Response}),
 			)
@@ -728,7 +865,7 @@ func buildToolCallComplete(arguments string, event *runtime.ToolCallResponseEven
 
 	return acp.UpdateToolCall(
 		acp.ToolCallId(event.ToolCallID),
-		acp.WithUpdateStatus(acp.ToolCallStatusCompleted),
+		acp.WithUpdateStatus(status),
 		acp.WithUpdateContent([]acp.ToolCallContent{acp.ToolContent(acp.TextBlock(event.Response))}),
 		acp.WithUpdateRawOutput(map[string]any{"content": event.Response}),
 	)
