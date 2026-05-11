@@ -640,6 +640,30 @@ func (r *RemoteRuntime) Close() error {
 	return nil
 }
 
+// GetSnapshots retrieves available snapshots for the current session.
+func (r *RemoteRuntime) GetSnapshots(ctx context.Context) ([]map[string]any, error) {
+	if r.sessionID == "" {
+		return nil, errors.New("no active session")
+	}
+	return r.client.GetSessionSnapshots(ctx, r.sessionID)
+}
+
+// Undo reverts to the previous snapshot on the remote server.
+func (r *RemoteRuntime) Undo(ctx context.Context) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.UndoSession(ctx, r.sessionID)
+}
+
+// Reset resets the session to its initial state on the remote server.
+func (r *RemoteRuntime) Reset(ctx context.Context) error {
+	if r.sessionID == "" {
+		return errors.New("no active session")
+	}
+	return r.client.ResetSession(ctx, r.sessionID)
+}
+
 var _ Runtime = (*RemoteRuntime)(nil)
 
 // RemoteSessionStore wraps a RemoteClient to implement the session.Store interface.
