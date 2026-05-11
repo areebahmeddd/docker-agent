@@ -666,18 +666,23 @@ func (m *model) Focus() tea.Cmd {
 		// Fall back to last selectable if no assistant messages
 		m.selectedMessageIndex = m.findLastSelectableMessage()
 	}
-	// Invalidate render cache so selection highlight is shown
-	m.invalidateAllItems()
+	// Only invalidate the newly selected message
+	if m.selectedMessageIndex >= 0 {
+		m.invalidateItem(m.selectedMessageIndex)
+	}
 	m.renderDirty = true
 	return nil
 }
 
 // Blur removes focus from the component
 func (m *model) Blur() tea.Cmd {
+	oldIndex := m.selectedMessageIndex
 	m.focused = false
 	m.selectedMessageIndex = -1
-	// Invalidate render cache so selection highlight is cleared
-	m.invalidateAllItems()
+	// Only invalidate the previously selected message
+	if oldIndex >= 0 {
+		m.invalidateItem(oldIndex)
+	}
 	m.renderDirty = true
 	return nil
 }
@@ -698,7 +703,13 @@ func (m *model) FocusAt(x, y int) tea.Cmd {
 		}
 	}
 
-	m.invalidateAllItems()
+	// Only invalidate the old and new selected messages
+	if oldIndex >= 0 {
+		m.invalidateItem(oldIndex)
+	}
+	if m.selectedMessageIndex >= 0 && m.selectedMessageIndex != oldIndex {
+		m.invalidateItem(m.selectedMessageIndex)
+	}
 	m.renderDirty = true
 
 	if m.messageTypeChanged(oldIndex, m.selectedMessageIndex) {
@@ -892,7 +903,11 @@ func (m *model) selectPreviousMessage() tea.Cmd {
 	if prevIndex := m.findPreviousSelectableMessage(m.selectedMessageIndex); prevIndex >= 0 {
 		oldIndex := m.selectedMessageIndex
 		m.selectedMessageIndex = prevIndex
-		m.invalidateAllItems()
+		if oldIndex >= 0 {
+			m.invalidateItem(oldIndex)
+		}
+		m.invalidateItem(prevIndex)
+		m.renderDirty = true
 		m.scrollToSelectedMessage()
 		if m.messageTypeChanged(oldIndex, prevIndex) {
 			return core.CmdHandler(messages.InvalidateStatusBarMsg{})
@@ -908,7 +923,11 @@ func (m *model) selectNextMessage() tea.Cmd {
 	if nextIndex := m.findNextSelectableMessage(m.selectedMessageIndex); nextIndex >= 0 {
 		oldIndex := m.selectedMessageIndex
 		m.selectedMessageIndex = nextIndex
-		m.invalidateAllItems()
+		if oldIndex >= 0 {
+			m.invalidateItem(oldIndex)
+		}
+		m.invalidateItem(nextIndex)
+		m.renderDirty = true
 		m.scrollToSelectedMessage()
 		if m.messageTypeChanged(oldIndex, nextIndex) {
 			return core.CmdHandler(messages.InvalidateStatusBarMsg{})
