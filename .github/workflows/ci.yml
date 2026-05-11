@@ -39,6 +39,9 @@ jobs:
           fail-on-error: true
           pyflakes: false
 
+      - name: Lint GitHub Workflows
+        run: ./scripts/workflow-lint.sh
+
   build-and-test:
     runs-on: ubuntu-latest
     steps:
