@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,6 +67,90 @@ func (s *stubRemoteClient) UpdateSessionTitle(context.Context, string, string) e
 
 func (s *stubRemoteClient) GetAgentToolCount(context.Context, string, string) (int, error) {
 	return 0, nil
+}
+
+func (s *stubRemoteClient) StreamSessionEvents(context.Context, string) (<-chan Event, error) {
+	panic("StreamSessionEvents not exercised by the contract test")
+}
+
+func (s *stubRemoteClient) GetAllSessions(context.Context) ([]session.Session, error) {
+	return nil, nil
+}
+
+func (s *stubRemoteClient) DeleteRemoteSession(context.Context, string) error {
+	return nil
+}
+
+func (s *stubRemoteClient) GetSessionTools(context.Context, string) ([]tools.Tool, error) {
+	return nil, nil
+}
+
+func (s *stubRemoteClient) GetAvailableModels(context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (s *stubRemoteClient) SetAgentModel(context.Context, string, string) error {
+	return nil
+}
+
+func (s *stubRemoteClient) GetSessionMCPPrompts(context.Context, string) (map[string]any, error) {
+	return nil, nil
+}
+
+func (s *stubRemoteClient) ExecuteSessionMCPPrompt(_ context.Context, _, promptName string, _ map[string]string) (string, error) {
+	return "", fmt.Errorf("prompt %q not found", promptName)
+}
+
+func (s *stubRemoteClient) GetSessionSkills(context.Context, string) (map[string]any, error) {
+	return nil, nil
+}
+
+func (s *stubRemoteClient) CompactSession(context.Context, string) error {
+	return nil
+}
+
+func (s *stubRemoteClient) GetSessionToolsets(context.Context, string) ([]map[string]any, error) {
+	return nil, nil
+}
+
+func (s *stubRemoteClient) RestartSessionToolset(_ context.Context, _, name string) error {
+	return fmt.Errorf("toolset %q not found", name)
+}
+
+func (s *stubRemoteClient) PauseSession(context.Context, string) error {
+	return nil
+}
+
+func (s *stubRemoteClient) GetSessionSnapshots(context.Context, string) ([]map[string]any, error) {
+	return nil, nil
+}
+
+func (s *stubRemoteClient) UndoSession(context.Context, string) error {
+	return nil
+}
+
+func (s *stubRemoteClient) ResetSession(context.Context, string) error {
+	return nil
+}
+
+func (s *stubRemoteClient) AddMessage(context.Context, string, *session.Message) error {
+	return nil
+}
+
+func (s *stubRemoteClient) UpdateMessage(context.Context, string, string, *session.Message) error {
+	return nil
+}
+
+func (s *stubRemoteClient) AddSummary(context.Context, string, string, int) error {
+	return nil
+}
+
+func (s *stubRemoteClient) UpdateSessionTokens(context.Context, string, int64, int64, float64) error {
+	return nil
+}
+
+func (s *stubRemoteClient) SetSessionStarred(context.Context, string, bool) error {
+	return nil
 }
 
 // TestRemoteRuntime_Contract runs the same surface contract LocalRuntime

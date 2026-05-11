@@ -531,21 +531,25 @@ func (r *RemoteRuntime) SessionStore() session.Store {
 }
 
 // AvailableModels returns available models for the agent.
-func (r *RemoteRuntime) AvailableModels(ctx context.Context) []string {
+func (r *RemoteRuntime) AvailableModels(ctx context.Context) []ModelChoice {
 	models, err := r.client.GetAvailableModels(ctx)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to get available models", "error", err)
 		return nil
 	}
-	return models
+	choices := make([]ModelChoice, len(models))
+	for i, m := range models {
+		choices[i] = ModelChoice{Name: m, Ref: m}
+	}
+	return choices
 }
 
 // SetAgentModel sets the model for the agent.
-func (r *RemoteRuntime) SetAgentModel(ctx context.Context, model string) error {
+func (r *RemoteRuntime) SetAgentModel(ctx context.Context, _, modelRef string) error {
 	if r.sessionID == "" {
 		return errors.New("no active session")
 	}
-	return r.client.SetAgentModel(ctx, r.sessionID, model)
+	return r.client.SetAgentModel(ctx, r.sessionID, modelRef)
 }
 
 // SupportsModelSwitching returns true for remote runtimes (model switching is handled server-side).
@@ -615,23 +619,6 @@ func (r *RemoteRuntime) TogglePause(ctx context.Context) (bool, error) {
 		return false, errors.New("no active session")
 	}
 	return false, r.client.PauseSession(ctx, r.sessionID)
-}
-
-// SetAgentModel is not yet supported on remote runtimes; the server owns
-// the model selection.
-func (r *RemoteRuntime) SetAgentModel(context.Context, string, string) error {
-	return fmt.Errorf("set agent model: %w", ErrUnsupported)
-}
-
-// AvailableModels is not yet supported on remote runtimes; the wire
-// protocol cannot enumerate the models the server has access to.
-func (r *RemoteRuntime) AvailableModels(context.Context) []ModelChoice {
-	return nil
-}
-
-// SupportsModelSwitching is false for remote runtimes.
-func (r *RemoteRuntime) SupportsModelSwitching() bool {
-	return false
 }
 
 // OnToolsChanged is a no-op for remote runtimes; tool-list changes are
