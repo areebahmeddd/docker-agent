@@ -46,6 +46,14 @@ type Backend interface {
 	CreateSession(ctx context.Context, req runtime.CreateSessionRequest) (CreateSessionResponse, error)
 }
 
+// maxRequestBodyBytes caps the JSON payload size each HTTP handler will
+// read before failing the request. The cap exists purely to keep an
+// unbounded body from being read into memory; the largest legitimate
+// request today (CreateSessionRequest) is a few dozen bytes, so 1 MiB
+// is generous by orders of magnitude. Bump it (or make it configurable)
+// when a future endpoint legitimately needs more.
+const maxRequestBodyBytes = 1 << 20 // 1 MiB
+
 // NewHandler returns an http.Handler that decodes the JSON request
 // payloads, dispatches to b, and JSON-encodes the response.
 //
@@ -56,7 +64,7 @@ func NewHandler(b Backend) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/team/load", func(w http.ResponseWriter, r *http.Request) {
 		var req runtime.LoadTeamRequest
-		if err := decodeJSON(r, &req); err != nil {
+		if err := decodeJSON(w, r, &req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -69,7 +77,7 @@ func NewHandler(b Backend) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/session/create", func(w http.ResponseWriter, r *http.Request) {
 		var req runtime.CreateSessionRequest
-		if err := decodeJSON(r, &req); err != nil {
+		if err := decodeJSON(w, r, &req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -83,7 +91,12 @@ func NewHandler(b Backend) http.Handler {
 	return mux
 }
 
-func decodeJSON(r *http.Request, v any) error {
+// decodeJSON reads a JSON request body into v. The body is wrapped in
+// an [http.MaxBytesReader] so a malicious or buggy client cannot stream
+// an unbounded payload and exhaust server memory. Unknown fields are
+// rejected so the wire schema stays a strict contract.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)

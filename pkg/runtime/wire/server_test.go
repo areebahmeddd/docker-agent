@@ -174,3 +174,34 @@ func TestLoadTeam_RejectsUnknownField(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
+func TestLoadTeam_RejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	// Pins the [http.MaxBytesReader] guard: an over-cap body must be
+	// rejected with 4xx instead of being streamed into memory. The
+	// handler logs the cause and replies via http.Error, which
+	// translates the MaxBytesReader limit error into a 400 today;
+	// what the test cares about is that the request never reaches
+	// the backend and the server stays healthy.
+	var reached bool
+	srv := httptest.NewServer(wire.NewHandler(&stubBackend{
+		loadFn: func(context.Context, runtime.LoadTeamRequest) (wire.LoadTeamResponse, error) {
+			reached = true
+			return wire.LoadTeamResponse{}, nil
+		},
+	}))
+	t.Cleanup(srv.Close)
+
+	// 2 MiB of JSON-string padding, well past the 1 MiB cap.
+	padding := bytes.Repeat([]byte("a"), 2<<20)
+	body := append([]byte(`{"model_overrides":["`), padding...)
+	body = append(body, []byte(`"]}`)...)
+
+	resp := post(t, srv.URL+"/v1/team/load", body)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	assert.GreaterOrEqual(t, resp.StatusCode, 400, "oversized body must not return success")
+	assert.Less(t, resp.StatusCode, 500, "oversized body is a client error, not a server crash")
+	assert.False(t, reached, "backend must not see an oversized body")
+}
