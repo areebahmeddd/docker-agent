@@ -417,7 +417,8 @@ func (s *Server) followUpSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one message is required")
 	}
 
-	if err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages); err != nil {
+	streaming, err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages)
+	if err != nil {
 		if strings.Contains(err.Error(), "queue full") {
 			c.Response().Header().Set("Retry-After", "1")
 			return echo.NewHTTPError(http.StatusTooManyRequests, "follow-up queue full")
@@ -425,7 +426,11 @@ func (s *Server) followUpSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf("failed to enqueue follow-up: %v", err))
 	}
 
-	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued"})
+	status := "queued_streaming"
+	if !streaming {
+		status = "queued_idle"
+	}
+	return c.JSON(http.StatusAccepted, map[string]string{"status": status})
 }
 
 func (s *Server) addMessage(c echo.Context) error {

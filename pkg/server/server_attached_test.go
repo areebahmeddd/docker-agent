@@ -191,3 +191,31 @@ func TestAttachedServer_StatusEndpointReturnsCurrentState(t *testing.T) {
 	assert.Equal(t, "Test Session", status.Title)
 	assert.False(t, status.Streaming)
 }
+
+// TestAttachedServer_FollowUpWhileIdleReturnsQueuedIdle verifies that
+// POST /api/sessions/:id/followup returns status "queued_idle" when the
+// agent is not currently streaming.
+func TestAttachedServer_FollowUpWhileIdleReturnsQueuedIdle(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	store := session.NewInMemorySessionStore()
+	sess := session.New()
+	require.NoError(t, store.AddSession(ctx, sess))
+
+	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
+	sm.AttachRuntime(sess.ID, &fakeRuntime{}, sess)
+
+	srv := NewWithManager(sm)
+
+	ln, err := Listen(ctx, "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = srv.Serve(ctx, ln) }()
+
+	addr := "http://" + ln.Addr().String()
+	resp := httpDoTCP(t, ctx, http.MethodPost, addr+"/api/sessions/"+sess.ID+"/followup",
+		api.SteerSessionRequest{Messages: []api.Message{{Content: "hello"}}})
+
+	assert.Contains(t, string(resp), "queued_idle")
+}

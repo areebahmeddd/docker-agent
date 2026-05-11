@@ -378,10 +378,14 @@ func (sm *SessionManager) SteerSession(_ context.Context, sessionID string, mess
 // FollowUpSession enqueues user messages for end-of-turn processing in a
 // running session. Each message is popped one at a time after the current
 // turn finishes, giving each follow-up a full undivided agent turn.
-func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, messages []api.Message) error {
+//
+// If no stream is currently running (agent is idle), the messages are still
+// enqueued but will not be consumed until the next RunSession starts a new
+// stream. The returned boolean indicates whether a stream is active.
+func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, messages []api.Message) (streaming bool, err error) {
 	rt, exists := sm.runtimeSessions.Load(sessionID)
 	if !exists {
-		return errors.New("session not found or not running")
+		return false, errors.New("session not found or not running")
 	}
 
 	for _, msg := range messages {
@@ -389,11 +393,18 @@ func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, m
 			Content:      msg.Content,
 			MultiContent: msg.MultiContent,
 		}); err != nil {
-			return err
+			return false, err
 		}
 	}
 
-	return nil
+	// Probe streaming state so the caller knows whether the follow-up
+	// will be consumed by the current turn or sit idle until the next.
+	streaming = !rt.streaming.TryLock()
+	if !streaming {
+		rt.streaming.Unlock()
+	}
+
+	return streaming, nil
 }
 
 // ResumeElicitation resumes an elicitation request.
