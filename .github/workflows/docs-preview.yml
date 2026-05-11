@@ -6,23 +6,19 @@ on:
       - "docs/**"
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
   pull-requests: write
 
 concurrency:
   group: docs-preview-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
 
 jobs:
   build-preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-      pull-requests: write
+    environment:
+      name: github-pages
+      url: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr-${{ github.event.pull_request.number }}/
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -31,24 +27,24 @@ jobs:
         uses: ruby/setup-ruby@e5517072e87f198d9533967ae13d97c11b604005 # v1.99.0
         with:
           ruby-version: "3.3"
-          bundler-cache: true
           working-directory: docs
 
+      - name: Install dependencies
+        run: bundle install
+        working-directory: docs
+
       - name: Build Jekyll site
-        run: |
-          cd docs
-          bundle exec jekyll build --baseurl "/docker-agent/pr-${{ github.event.pull_request.number }}"
+        run: bundle exec jekyll build --baseurl "/docker-agent/pr-${{ github.event.pull_request.number }}"
+        working-directory: docs
         env:
           JEKYLL_ENV: production
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
-        with:
-          path: docs/_site
-
       - name: Deploy to GitHub Pages
-        id: deploy
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/_site
+          destination_dir: pr-${{ github.event.pull_request.number }}
 
       - name: Comment preview URL
         if: success()
@@ -56,4 +52,4 @@ jobs:
         with:
           header: docs-preview
           message: |
-            📖 **Docs preview**: ${{ steps.deploy.outputs.page_url }}
+            📖 **Docs preview**: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr-${{ github.event.pull_request.number }}/
