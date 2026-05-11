@@ -553,7 +553,7 @@ func (c *Client) convertUserMultiContent(ctx context.Context, parts []chat.Messa
 
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docBlocks, err := convertDocument(ctx, *part.Document, c.ModelConfig.Model)
+				docBlocks, err := convertDocument(ctx, *part.Document, c.ModelConfig.Provider+"/"+c.ModelConfig.Model)
 				if err != nil {
 					return nil, fmt.Errorf("failed to convert document attachment %q: %w", part.Document.Name, err)
 				}

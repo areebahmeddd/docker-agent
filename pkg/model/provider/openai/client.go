@@ -181,7 +181,7 @@ func (c *Client) Close() {
 // convertMessages converts chat.Message to openai.ChatCompletionMessageParamUnion
 // using the shared oaistream implementation.
 func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) []openai.ChatCompletionMessageParamUnion {
-	return oaistream.ConvertMessages(ctx, messages, c.ModelConfig.Model)
+	return oaistream.ConvertMessages(ctx, messages, c.ModelConfig.Provider+"/"+c.ModelConfig.Model)
 }
 
 // CreateChatCompletionStream creates a streaming chat completion request
@@ -613,7 +613,7 @@ func (c *Client) convertMessagesToResponseInput(ctx context.Context, messages []
 						}
 					case chat.MessagePartTypeDocument:
 						if part.Document != nil {
-							docParts, err := convertDocumentToResponseInput(ctx, *part.Document, c.ModelConfig.Model)
+							docParts, err := convertDocumentToResponseInput(ctx, *part.Document, c.ModelConfig.Provider+"/"+c.ModelConfig.Model)
 							if err != nil {
 								slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 								continue
