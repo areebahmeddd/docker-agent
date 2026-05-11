@@ -140,7 +140,7 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 // the StreamStoppedEvent so external consumers (boards, dashboards) can
 // distinguish between successful completion, crashes, and user-initiated
 // stops without reverse-engineering reconnect failures.
-func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, reason *string, prevElicitationCh, events chan Event) {
+func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, reason string, prevElicitationCh, events chan Event) {
 	// Swap back the parent's elicitation channel before closing this
 	// stream's channel. This prevents a send-on-closed-channel panic
 	// and restores elicitation for the parent session.
@@ -154,14 +154,10 @@ func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.S
 	// cleanup hooks run even when the stream was interrupted (e.g. Ctrl+C).
 	r.executeSessionEndHooks(context.WithoutCancel(ctx), sess, a)
 
-	stopReason := ""
-	if reason != nil {
-		stopReason = *reason
+	if ctx.Err() != nil && reason == "" {
+		reason = turnEndReasonCanceled
 	}
-	if ctx.Err() != nil && stopReason == "" {
-		stopReason = turnEndReasonCanceled
-	}
-	events <- StreamStopped(sess.ID, a.Name(), stopReason)
+	events <- StreamStopped(sess.ID, a.Name(), reason)
 
 	r.executeOnUserInputHooks(ctx, sess.ID, "stream stopped")
 
@@ -260,9 +256,11 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 	// streamReason records the exit reason from the final turn so
 	// finalizeEventChannel can surface it in the StreamStoppedEvent.
-	// It is updated by each turn via runTurn's returned reason.
+	// It is updated by each turn via runTurn (passed by pointer).
 	var streamReason string
-	defer r.finalizeEventChannel(ctx, sess, &streamReason, prevElicitationCh, events)
+	defer func() {
+		r.finalizeEventChannel(ctx, sess, streamReason, prevElicitationCh, events)
+	}()
 
 	// Response cache lookup. On a hit, replay the stored answer and
 	// skip the model entirely. The matching storage half is
@@ -387,8 +385,8 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// AFTER the closure body has assigned both, so callers see the same
 		// reason the runtime took. ctrl drives the outer for-loop's
 		// continue-or-exit decision.
-		ctrl, reason := r.runTurn(ctx, sess, a, m, model, modelID, contextLimit, sessionSpan, agentTools, ls, events)
-		streamReason = reason
+		ctrl := r.runTurn(ctx, sess, a, m, model, modelID, contextLimit, sessionSpan, agentTools, ls, events)
+		streamReason = ls.exitReason
 		switch ctrl {
 		case turnContinue:
 			continue
@@ -429,6 +427,7 @@ type loopState struct {
 	loopDetector        *toolexec.LoopDetector
 	sessionStartMsgs    []chat.Message
 	userPromptMsgs      []chat.Message
+	exitReason          string
 }
 
 // runTurn performs one iteration of the run-stream loop, from
@@ -457,7 +456,7 @@ func (r *LocalRuntime) runTurn(
 	agentTools []tools.Tool,
 	ls *loopState,
 	events chan Event,
-) (ctrl turnControl, exitReason string) {
+) turnControl {
 	streamCtx, streamSpan := r.startSpan(ctx, "runtime.stream", trace.WithAttributes(
 		attribute.String("agent", a.Name()),
 		attribute.String("session.id", sess.ID),
@@ -494,7 +493,7 @@ func (r *LocalRuntime) runTurn(
 		// matching the same guarantee session_end has at the
 		// finalizeEventChannel level.
 		r.executeTurnEndHooks(context.WithoutCancel(ctx), sess, a, endReason, events)
-		exitReason = endReason
+		ls.exitReason = endReason
 	}()
 
 	// Run turn_start hooks BEFORE building messages so their
@@ -525,7 +524,7 @@ func (r *LocalRuntime) runTurn(
 		r.emitHookDrivenShutdown(ctx, a, sess, msg, events)
 		endStreamSpan()
 		endReason = turnEndReasonHookBlocked
-		return turnExit, ""
+		return turnExit
 	}
 	if rewritten != nil {
 		messages = rewritten
@@ -548,9 +547,9 @@ func (r *LocalRuntime) runTurn(
 		endStreamSpan()
 		endReason = turnEndReasonError
 		if outcome == streamErrorRetry {
-			return turnContinue, ""
+			return turnContinue
 		}
-		return turnExit, ""
+		return turnExit
 	}
 
 	// A successful model call resets the overflow compaction counter.
@@ -618,7 +617,7 @@ func (r *LocalRuntime) runTurn(
 		r.notifyError(ctx, a, sess.ID, errMsg)
 		ls.loopDetector.Reset()
 		endReason = turnEndReasonLoopDetected
-		return turnExit, ""
+		return turnExit
 	}
 
 	// post_tool_use hook signalled run termination via a deny
@@ -631,7 +630,7 @@ func (r *LocalRuntime) runTurn(
 			"agent", a.Name(), "session_id", sess.ID, "reason", stopMsg)
 		r.emitHookDrivenShutdown(ctx, a, sess, stopMsg, events)
 		endReason = turnEndReasonHookBlocked
-		return turnExit, ""
+		return turnExit
 	}
 
 	// Record per-toolset model override for the next LLM turn.
@@ -641,7 +640,7 @@ func (r *LocalRuntime) runTurn(
 	if drained, _ := r.drainAndEmitSteered(ctx, sess, events); drained {
 		r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 		endReason = turnEndReasonSteered
-		return turnContinue, ""
+		return turnContinue
 	}
 
 	if res.Stopped {
@@ -652,7 +651,7 @@ func (r *LocalRuntime) runTurn(
 		if drained, _ := r.drainAndEmitSteered(ctx, sess, events); drained {
 			r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 			endReason = turnEndReasonSteered
-			return turnContinue, ""
+			return turnContinue
 		}
 
 		// --- FOLLOW-UP: end-of-turn injection ---
@@ -667,16 +666,16 @@ func (r *LocalRuntime) runTurn(
 			events <- UserMessage(followUp.Content, sess.ID, followUp.MultiContent, len(sess.Messages)-1)
 			r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 			endReason = turnEndReasonContinue
-			return turnContinue, "" // re-enter the loop for a new turn
+			return turnContinue // re-enter the loop for a new turn
 		}
 
 		endReason = turnEndReasonNormal
-		return turnExit, ""
+		return turnExit
 	}
 
 	r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 	endReason = turnEndReasonContinue
-	return turnContinue, ""
+	return turnContinue
 }
 
 // Run executes the agent loop synchronously and returns the final session

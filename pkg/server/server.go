@@ -91,7 +91,7 @@ func (s *Server) registerRoutes() {
 	group.GET("/ping", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	group.GET("/ready", s.ready)
+	group.GET("/ready", s.sessionsReady)
 }
 
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
@@ -112,7 +112,7 @@ const maxAPITimeout = 5 * time.Minute
 
 // ready blocks until at least one session is registered. The caller
 // may supply a ?timeout=<duration> query parameter (default 30s, max 5m).
-func (s *Server) ready(c echo.Context) error {
+func (s *Server) sessionsReady(c echo.Context) error {
 	timeout := 30 * time.Second
 	if v := c.QueryParam("timeout"); v != "" {
 		d, err := time.ParseDuration(v)
