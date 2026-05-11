@@ -23,6 +23,7 @@ import (
 type Client struct {
 	baseURL    *url.URL
 	httpClient *http.Client
+	authToken  string
 	registry   map[string]func() Event
 }
 
@@ -33,6 +34,13 @@ type ClientOption func(*Client)
 func WithHTTPClient(client *http.Client) ClientOption {
 	return func(c *Client) {
 		c.httpClient = client
+	}
+}
+
+// WithAuthToken sets the bearer token for authentication
+func WithAuthToken(token string) ClientOption {
+	return func(c *Client) {
+		c.authToken = token
 	}
 }
 
@@ -151,6 +159,10 @@ func (c *Client) doRequestWithTimeout(ctx context.Context, method, endpoint stri
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -349,6 +361,14 @@ func (c *Client) runAgentWithAgentName(ctx context.Context, sessionID, agent, ag
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
+
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
+
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
 
 	resp, err := c.httpClient.Do(req) //nolint:bodyclose // body is closed in the goroutine below
 	if err != nil {

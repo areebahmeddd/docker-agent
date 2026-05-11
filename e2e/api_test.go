@@ -88,7 +88,7 @@ func startCagentAPI(t *testing.T, db string) string {
 	sessionStore, err := session.NewSQLiteSessionStore(dbCopy)
 	require.NoError(t, err)
 
-	srv, err := server.New(t.Context(), sessionStore, &config.RuntimeConfig{}, 0, nil)
+	srv, err := server.New(t.Context(), sessionStore, &config.RuntimeConfig{}, 0, nil, "")
 	require.NoError(t, err)
 
 	go func() {

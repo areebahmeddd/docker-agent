@@ -22,23 +22,29 @@ import (
 )
 
 type Server struct {
-	e  *echo.Echo
-	sm *SessionManager
+	e         *echo.Echo
+	sm        *SessionManager
+	authToken string
 }
 
-func New(ctx context.Context, sessionStore session.Store, runConfig *config.RuntimeConfig, refreshInterval time.Duration, agentSources config.Sources) (*Server, error) {
-	return NewWithManager(NewSessionManager(ctx, agentSources, sessionStore, refreshInterval, runConfig)), nil
+func New(ctx context.Context, sessionStore session.Store, runConfig *config.RuntimeConfig, refreshInterval time.Duration, agentSources config.Sources, authToken string) (*Server, error) {
+	return NewWithManager(NewSessionManager(ctx, agentSources, sessionStore, refreshInterval, runConfig), authToken), nil
 }
 
 // NewWithManager builds a Server around an already-constructed SessionManager.
 // Useful when the runtime is owned by another component (e.g. the TUI) and
 // only needs to be exposed over HTTP.
-func NewWithManager(sm *SessionManager) *Server {
+func NewWithManager(sm *SessionManager, authToken string) *Server {
 	e := echo.New()
 	e.Use(echolog.RedactedRequestLogger())
 	e.Use(echo.WrapMiddleware(upstream.Handler))
 
-	s := &Server{e: e, sm: sm}
+	// Add bearer token middleware if token is configured
+	if authToken != "" {
+		e.Use(BearerTokenMiddleware(authToken))
+	}
+
+	s := &Server{e: e, sm: sm, authToken: authToken}
 	s.registerRoutes()
 	return s
 }
@@ -583,4 +589,34 @@ func (s *Server) getSessionRecoveryData(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, data)
+}
+
+// BearerTokenMiddleware validates bearer token authentication
+func BearerTokenMiddleware(expectedToken string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip authentication for health and readiness endpoints
+			if c.Path() == "/health" || c.Path() == "/ready" {
+				return next(c)
+			}
+
+			auth := c.Request().Header.Get("Authorization")
+			if auth == "" {
+				return echo.NewHTTPError(http.StatusUnauthorized, "missing Authorization header")
+			}
+
+			// Extract Bearer token
+			const prefix = "Bearer "
+			if len(auth) < len(prefix) || auth[:len(prefix)] != prefix {
+				return echo.NewHTTPError(http.StatusUnauthorized, "invalid Authorization header format")
+			}
+
+			token := auth[len(prefix):]
+			if token != expectedToken {
+				return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+			}
+
+			return next(c)
+		}
+	}
 }
