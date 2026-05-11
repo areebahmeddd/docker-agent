@@ -400,6 +400,18 @@ func (c *Client) runAgentWithAgentName(ctx context.Context, sessionID, agent, ag
 	return eventChan, nil
 }
 
+// GetAllSessions retrieves all sessions from the remote store.
+func (c *Client) GetAllSessions(ctx context.Context) ([]session.Session, error) {
+	var sessions []session.Session
+	err := c.doRequest(ctx, http.MethodGet, "/api/sessions", nil, &sessions)
+	return sessions, err
+}
+
+// DeleteRemoteSession deletes a session from the remote store.
+func (c *Client) DeleteRemoteSession(ctx context.Context, sessionID string) error {
+	return c.doRequest(ctx, http.MethodDelete, "/api/sessions/"+sessionID, nil, nil)
+}
+
 func (c *Client) ResumeElicitation(ctx context.Context, sessionID string, action tools.ElicitationAction, content map[string]any) error {
 	req := api.ResumeElicitationRequest{Action: string(action), Content: content}
 	return c.doRequest(ctx, http.MethodPost, "/api/sessions/"+sessionID+"/elicitation", req, nil)

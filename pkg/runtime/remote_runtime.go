@@ -514,9 +514,9 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	return nil
 }
 
-// SessionStore returns nil for remote runtime since session storage is handled server-side.
+// SessionStore returns a RemoteSessionStore that wraps the remote client.
 func (r *RemoteRuntime) SessionStore() session.Store {
-	return nil
+	return NewRemoteSessionStore(r.client)
 }
 
 // PermissionsInfo returns nil for remote runtime since permissions are handled server-side.
@@ -590,3 +590,80 @@ func (r *RemoteRuntime) Close() error {
 }
 
 var _ Runtime = (*RemoteRuntime)(nil)
+
+// RemoteSessionStore wraps a RemoteClient to implement the session.Store interface.
+type RemoteSessionStore struct {
+	client RemoteClient
+}
+
+// NewRemoteSessionStore creates a new RemoteSessionStore.
+func NewRemoteSessionStore(client RemoteClient) *RemoteSessionStore {
+	return &RemoteSessionStore{client: client}
+}
+
+func (s *RemoteSessionStore) AddSession(context.Context, *session.Session) error {
+	return fmt.Errorf("add session: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) GetSession(context.Context, string) (*session.Session, error) {
+	return nil, fmt.Errorf("get session: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) GetSessions(ctx context.Context) ([]*session.Session, error) {
+	sessions, err := s.client.GetAllSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*session.Session, len(sessions))
+	for i := range sessions {
+		result[i] = &sessions[i]
+	}
+	return result, nil
+}
+
+func (s *RemoteSessionStore) GetSessionSummaries(context.Context) ([]session.Summary, error) {
+	return nil, fmt.Errorf("get session summaries: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) DeleteSession(ctx context.Context, id string) error {
+	return s.client.DeleteRemoteSession(ctx, id)
+}
+
+func (s *RemoteSessionStore) UpdateSession(context.Context, *session.Session) error {
+	return fmt.Errorf("update session: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) SetSessionStarred(context.Context, string, bool) error {
+	return fmt.Errorf("set session starred: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) AddMessage(context.Context, string, *session.Message) (int64, error) {
+	return 0, fmt.Errorf("add message: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) UpdateMessage(context.Context, int64, *session.Message) error {
+	return fmt.Errorf("update message: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) AddSubSession(context.Context, string, *session.Session) error {
+	return fmt.Errorf("add sub session: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) AddSummary(context.Context, string, string, int) error {
+	return fmt.Errorf("add summary: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) UpdateSessionTokens(context.Context, string, int64, int64, float64) error {
+	return fmt.Errorf("update session tokens: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) UpdateSessionTitle(context.Context, string, string) error {
+	return fmt.Errorf("update session title: %w", ErrUnsupported)
+}
+
+func (s *RemoteSessionStore) Close() error {
+	return nil
+}
+
+var _ session.Store = (*RemoteSessionStore)(nil)

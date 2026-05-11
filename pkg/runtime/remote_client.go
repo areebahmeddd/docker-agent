@@ -45,6 +45,12 @@ type RemoteClient interface {
 
 	// StreamSessionEvents streams runtime events for a session as they occur
 	StreamSessionEvents(ctx context.Context, sessionID string) (<-chan Event, error)
+
+	// GetAllSessions retrieves all sessions from the remote store
+	GetAllSessions(ctx context.Context) ([]session.Session, error)
+
+	// DeleteRemoteSession deletes a session from the remote store
+	DeleteRemoteSession(ctx context.Context, sessionID string) error
 }
 
 var _ RemoteClient = (*Client)(nil)
