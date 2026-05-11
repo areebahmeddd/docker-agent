@@ -97,7 +97,7 @@ func (r *LocalRuntime) dispatchHook(
 	a *agent.Agent,
 	event hooks.EventType,
 	input *hooks.Input,
-	events chan Event,
+	events EventSink,
 ) *hooks.Result {
 	exec := r.hooksExec(a)
 	if exec == nil || !exec.Has(event) {
@@ -106,11 +106,11 @@ func (r *LocalRuntime) dispatchHook(
 
 	started := time.Now()
 	if events != nil {
-		events <- HookStarted(event, input.SessionID, a.Name())
+		events.Emit(HookStarted(event, input.SessionID, a.Name()))
 	}
 	result, err := exec.Dispatch(ctx, event, input)
 	if events != nil {
-		events <- HookFinished(event, input.SessionID, result, err, time.Since(started), a.Name())
+		events.Emit(HookFinished(event, input.SessionID, result, err, time.Since(started), a.Name()))
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "Hook execution failed", "event", event, "agent", a.Name(), "error", err)
@@ -118,7 +118,7 @@ func (r *LocalRuntime) dispatchHook(
 	}
 
 	if events != nil && result.SystemMessage != "" {
-		events <- Warning(result.SystemMessage, a.Name())
+		events.Emit(Warning(result.SystemMessage, a.Name()))
 	}
 	return result
 }
@@ -138,7 +138,7 @@ func (r *LocalRuntime) dispatchHook(
 // included in every model call after a compaction, without any extra
 // dispatch — there's nothing to "re-inject" because nothing was
 // persisted in the first place.
-func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events chan Event) []chat.Message {
+func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events EventSink) []chat.Message {
 	return contextMessages(r.dispatchHook(ctx, a, hooks.EventSessionStart, &hooks.Input{
 		SessionID: sess.ID,
 		Source:    "startup",
@@ -151,7 +151,7 @@ func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *sessi
 // every iteration so its content is recomputed each turn — the right
 // semantics for fast-changing context like the current date or the
 // contents of a prompt file the user might be editing mid-session.
-func (r *LocalRuntime) executeTurnStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events chan Event) []chat.Message {
+func (r *LocalRuntime) executeTurnStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events EventSink) []chat.Message {
 	return contextMessages(r.dispatchHook(ctx, a, hooks.EventTurnStart, &hooks.Input{
 		SessionID: sess.ID,
 	}, events))
@@ -191,7 +191,7 @@ const (
 // turn_start. Observational; the result is discarded. Reason is one
 // of the turnEndReason* constants above and is reported via
 // [hooks.Input.Reason] so handlers can branch on the exit path.
-func (r *LocalRuntime) executeTurnEndHooks(ctx context.Context, sess *session.Session, a *agent.Agent, reason string, events chan Event) {
+func (r *LocalRuntime) executeTurnEndHooks(ctx context.Context, sess *session.Session, a *agent.Agent, reason string, events EventSink) {
 	r.dispatchHook(ctx, a, hooks.EventTurnEnd, &hooks.Input{
 		SessionID: sess.ID,
 		AgentName: a.Name(),
@@ -226,7 +226,7 @@ func (r *LocalRuntime) executeSessionEndHooks(ctx context.Context, sess *session
 // surfaced as a Warning by [dispatchHook]. AgentName + LastUserMessage
 // are populated so builtins like cache_response can key on the user's
 // question and resolve the agent through the runtime closure.
-func (r *LocalRuntime) executeStopHooks(ctx context.Context, sess *session.Session, a *agent.Agent, responseContent string, events chan Event) {
+func (r *LocalRuntime) executeStopHooks(ctx context.Context, sess *session.Session, a *agent.Agent, responseContent string, events EventSink) {
 	r.dispatchHook(ctx, a, hooks.EventStop, &hooks.Input{
 		SessionID:       sess.ID,
 		AgentName:       a.Name(),
@@ -482,7 +482,7 @@ func (r *LocalRuntime) executeBeforeCompactionHooks(
 	a *agent.Agent,
 	reason string,
 	contextLimit int64,
-	events chan Event,
+	events EventSink,
 ) *hooks.Result {
 	return r.dispatchHook(ctx, a, hooks.EventBeforeCompaction, &hooks.Input{
 		SessionID:        sess.ID,
@@ -509,7 +509,7 @@ func (r *LocalRuntime) executeAfterCompactionHooks(
 	contextLimit int64,
 	preInputTokens, preOutputTokens int64,
 	summary string,
-	events chan Event,
+	events EventSink,
 ) {
 	r.dispatchHook(ctx, a, hooks.EventAfterCompaction, &hooks.Input{
 		SessionID:        sess.ID,
@@ -527,7 +527,7 @@ func (r *LocalRuntime) executeAfterCompactionHooks(
 // (decision="block" / continue=false / exit 2) stops the run loop;
 // AdditionalContext is returned as a transient system message that
 // callers splice into the conversation for that turn only.
-func (r *LocalRuntime) executeUserPromptSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, prompt string, events chan Event) (stop bool, message string, contextMsgs []chat.Message) {
+func (r *LocalRuntime) executeUserPromptSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, prompt string, events EventSink) (stop bool, message string, contextMsgs []chat.Message) {
 	result := r.dispatchHook(ctx, a, hooks.EventUserPromptSubmit, &hooks.Input{
 		SessionID: sess.ID,
 		Prompt:    prompt,
@@ -546,7 +546,7 @@ func (r *LocalRuntime) executeUserPromptSubmitHooks(ctx context.Context, sess *s
 // is reported in [hooks.Input.Source]. A terminating verdict skips
 // compaction entirely; AdditionalContext is appended to the
 // compaction prompt so handlers can steer the summary.
-func (r *LocalRuntime) executePreCompactHooks(ctx context.Context, sess *session.Session, a *agent.Agent, source string, events chan Event) (skip bool, message, additionalPrompt string) {
+func (r *LocalRuntime) executePreCompactHooks(ctx context.Context, sess *session.Session, a *agent.Agent, source string, events EventSink) (skip bool, message, additionalPrompt string) {
 	result := r.dispatchHook(ctx, a, hooks.EventPreCompact, &hooks.Input{
 		SessionID: sess.ID,
 		Source:    source,

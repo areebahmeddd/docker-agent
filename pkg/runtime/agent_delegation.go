@@ -214,16 +214,16 @@ func mergeExcludedTools(parent, child []string) []string {
 //
 // Use as `defer r.swapCurrentAgent(ctx, sessionID, from, to, evts)()` so the
 // swap takes effect immediately and the restore runs at function exit.
-func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, from, to *agent.Agent, evts chan<- Event) func() {
-	evts <- AgentSwitching(true, from.Name(), to.Name())
+func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, from, to *agent.Agent, evts EventSink) func() {
+	evts.Emit(AgentSwitching(true, from.Name(), to.Name()))
 	r.executeOnAgentSwitchHooks(ctx, from, sessionID, from.Name(), to.Name(), agentSwitchKindTransferTask)
 	r.setCurrentAgent(to.Name())
-	evts <- AgentInfo(to.Name(), getAgentModelID(to), to.Description(), to.WelcomeMessage())
+	evts.Emit(AgentInfo(to.Name(), getAgentModelID(to), to.Description(), to.WelcomeMessage()))
 	return func() {
 		r.setCurrentAgent(from.Name())
-		evts <- AgentSwitching(false, to.Name(), from.Name())
+		evts.Emit(AgentSwitching(false, to.Name(), from.Name()))
 		r.executeOnAgentSwitchHooks(ctx, from, sessionID, to.Name(), from.Name(), agentSwitchKindTransferTaskReturn)
-		evts <- AgentInfo(from.Name(), getAgentModelID(from), from.Description(), from.WelcomeMessage())
+		evts.Emit(AgentInfo(from.Name(), getAgentModelID(from), from.Description(), from.WelcomeMessage()))
 	}
 }
 
@@ -245,7 +245,7 @@ func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, f
 // swapping the current agent (if requested), resolving the child agent,
 // building the sub-session, driving RunStream, and recording the
 // sub-session on the parent.
-func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, evts chan<- Event, req delegationRequest) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, evts EventSink, req delegationRequest) (*tools.ToolCallResult, error) {
 	span := trace.SpanFromContext(ctx)
 
 	callerAgent, err := r.team.Agent(r.CurrentAgentName())
@@ -276,12 +276,12 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 
 	childEvents := r.RunStream(ctx, s)
 	for event := range childEvents {
-		evts <- event
+		evts.Emit(event)
 		if errEvent, ok := event.(*ErrorEvent); ok {
 			// Drain remaining events (including StreamStoppedEvent) so the
 			// TUI's streamDepth counter stays balanced.
 			for remaining := range childEvents {
-				evts <- remaining
+				evts.Emit(remaining)
 			}
 			err := fmt.Errorf("%s", errEvent.Error)
 			span.RecordError(err)
@@ -292,7 +292,7 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 
 	parent.ToolsApproved = s.ToolsApproved
 	parent.AddSubSession(s)
-	evts <- SubSessionCompleted(parent.ID, s, callerAgent.Name())
+	evts.Emit(SubSessionCompleted(parent.ID, s, callerAgent.Name()))
 
 	span.SetStatus(codes.Ok, "sub-session completed")
 	return tools.ResultSuccess(s.GetLastAssistantMessageContent()), nil
@@ -391,7 +391,7 @@ func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams)
 	}, params.OnContent)
 }
 
-func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts chan Event) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink) (*tools.ToolCallResult, error) {
 	var params struct {
 		Agent          string `json:"agent"`
 		Task           string `json:"task"`
@@ -428,7 +428,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 	})
 }
 
-func (r *LocalRuntime) handleHandoff(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ chan Event) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleHandoff(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ EventSink) (*tools.ToolCallResult, error) {
 	var params handoff.Args
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)

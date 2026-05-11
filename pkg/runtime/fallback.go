@@ -230,7 +230,7 @@ func (e *fallbackExecutor) execute(
 	agentTools []tools.Tool,
 	sess *session.Session,
 	m *modelsdev.Model,
-	events chan Event,
+	events EventSink,
 ) (streamResult, provider.Provider, error) {
 	fallbackModels := a.FallbackModels()
 	fallbackRetries := getEffectiveRetries(a)
@@ -272,14 +272,14 @@ func (e *fallbackExecutor) execute(
 				if lastErr != nil {
 					reason = lastErr.Error()
 				}
-				events <- ModelFallback(
+				events.Emit(ModelFallback(
 					a.Name(),
 					prevModelID,
 					modelEntry.provider.ID(),
 					reason,
 					attempt+1,
 					maxAttempts,
-				)
+				))
 			}
 
 			slog.DebugContext(ctx, "Creating chat completion stream",
@@ -308,7 +308,7 @@ func (e *fallbackExecutor) execute(
 			// of the selected sub-model's YAML-configured name.
 			if rp, ok := modelEntry.provider.(interface{ LastSelectedModelID() string }); ok {
 				if selected := rp.LastSelectedModelID(); selected != "" {
-					events <- AgentInfo(a.Name(), selected, a.Description(), a.WelcomeMessage())
+					events.Emit(AgentInfo(a.Name(), selected, a.Description(), a.WelcomeMessage()))
 				}
 			}
 

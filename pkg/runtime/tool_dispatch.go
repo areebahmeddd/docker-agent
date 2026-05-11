@@ -29,7 +29,7 @@ import (
 // (false, "") in every other path — including user cancellation, which
 // halts the *batch* but keeps the loop alive so the synthesised tool
 // error responses can be sent back to the model on the next turn.
-func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, calls []tools.ToolCall, agentTools []tools.Tool, events chan Event) (stopRun bool, stopMessage string) {
+func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, calls []tools.ToolCall, agentTools []tools.Tool, events EventSink) (stopRun bool, stopMessage string) {
 	// Bind runtime-managed handlers (transfer_task, handoff, change_model, ...)
 	// to the current events channel: r.toolMap entries take chan Event,
 	// toolexec.ToolHandler doesn't.
@@ -48,7 +48,7 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 		Permissions: r.permissionCheckers,
 		Handlers:    handlers,
 	}
-	return d.Process(ctx, sess, calls, agentTools, &chanEmitter{events: events})
+	return d.Process(ctx, sess, calls, agentTools, &sinkEmitter{events: events})
 }
 
 // permissionCheckers returns the ordered list of permission checkers to
@@ -74,32 +74,32 @@ func (r *LocalRuntime) permissionCheckers(sess *session.Session) []toolexec.Name
 	return checkers
 }
 
-// chanEmitter adapts a chan Event into a [toolexec.Emitter]. It's the
+// sinkEmitter adapts an [EventSink] into a [toolexec.Emitter]. It's the
 // only place where the dispatcher's typed event surface meets the
 // runtime's event channel; new dispatcher events grow this type in
 // lockstep with the [toolexec.Emitter] interface.
-type chanEmitter struct {
-	events chan Event
+type sinkEmitter struct {
+	events EventSink
 }
 
-func (e *chanEmitter) EmitToolCall(toolCall tools.ToolCall, tool tools.Tool, agentName string) {
-	e.events <- ToolCall(toolCall, tool, agentName)
+func (e *sinkEmitter) EmitToolCall(toolCall tools.ToolCall, tool tools.Tool, agentName string) {
+	e.events.Emit(ToolCall(toolCall, tool, agentName))
 }
 
-func (e *chanEmitter) EmitToolCallResponse(toolCallID string, tool tools.Tool, result *tools.ToolCallResult, output, agentName string) {
-	e.events <- ToolCallResponse(toolCallID, tool, result, output, agentName)
+func (e *sinkEmitter) EmitToolCallResponse(toolCallID string, tool tools.Tool, result *tools.ToolCallResult, output, agentName string) {
+	e.events.Emit(ToolCallResponse(toolCallID, tool, result, output, agentName))
 }
 
-func (e *chanEmitter) EmitToolCallConfirmation(toolCall tools.ToolCall, tool tools.Tool, agentName string) {
-	e.events <- ToolCallConfirmation(toolCall, tool, agentName)
+func (e *sinkEmitter) EmitToolCallConfirmation(toolCall tools.ToolCall, tool tools.Tool, agentName string) {
+	e.events.Emit(ToolCallConfirmation(toolCall, tool, agentName))
 }
 
-func (e *chanEmitter) EmitHookBlocked(toolCall tools.ToolCall, tool tools.Tool, message, agentName string) {
-	e.events <- HookBlocked(toolCall, tool, message, agentName)
+func (e *sinkEmitter) EmitHookBlocked(toolCall tools.ToolCall, tool tools.Tool, message, agentName string) {
+	e.events.Emit(HookBlocked(toolCall, tool, message, agentName))
 }
 
-func (e *chanEmitter) EmitMessageAdded(sessionID string, msg *session.Message, agentName string) {
-	e.events <- MessageAdded(sessionID, msg, agentName)
+func (e *sinkEmitter) EmitMessageAdded(sessionID string, msg *session.Message, agentName string) {
+	e.events.Emit(MessageAdded(sessionID, msg, agentName))
 }
 
 // hookDispatcher adapts the runtime's per-agent [hooks.Executor] machinery
@@ -108,7 +108,7 @@ func (e *chanEmitter) EmitMessageAdded(sessionID string, msg *session.Message, a
 // as a Warning event during dispatch.
 type hookDispatcher struct {
 	r      *LocalRuntime
-	events chan Event
+	events EventSink
 }
 
 func (h *hookDispatcher) Dispatch(ctx context.Context, a *agent.Agent, event hooks.EventType, in *hooks.Input) *hooks.Result {
@@ -146,8 +146,8 @@ func denySourceFor(checkerSource string) string {
 // resulting MessageAdded event. Used by the loop for assistant messages
 // and max-iteration stop messages. The dispatcher emits its own variant
 // directly via the [toolexec.Emitter] interface.
-func addAgentMessage(sess *session.Session, a *agent.Agent, msg *chat.Message, events chan Event) {
+func addAgentMessage(sess *session.Session, a *agent.Agent, msg *chat.Message, events EventSink) {
 	agentMsg := session.NewAgentMessage(a.Name(), msg)
 	sess.AddMessage(agentMsg)
-	events <- MessageAdded(sess.ID, agentMsg, a.Name())
+	events.Emit(MessageAdded(sess.ID, agentMsg, a.Name()))
 }

@@ -40,7 +40,7 @@ func (m *mockRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, erro
 func (m *mockRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus { return nil }
 func (m *mockRuntime) RestartToolset(context.Context, string) error       { return nil }
 
-func (m *mockRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events chan runtime.Event) {
+func (m *mockRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events runtime.EventSink) {
 }
 func (m *mockRuntime) ResetStartupInfo() {}
 func (m *mockRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event {
@@ -57,7 +57,7 @@ func (m *mockRuntime) ResumeElicitation(ctx context.Context, action tools.Elicit
 	return nil
 }
 func (m *mockRuntime) SessionStore() session.Store { return m.store }
-func (m *mockRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan runtime.Event) {
+func (m *mockRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events runtime.EventSink) {
 }
 func (m *mockRuntime) PermissionsInfo() *runtime.PermissionsInfo { return nil }
 func (m *mockRuntime) CurrentAgentSkillsToolset() *skillstool.Toolset {

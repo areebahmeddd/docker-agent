@@ -125,7 +125,7 @@ func New(ctx context.Context, rt runtime.Runtime, sess *session.Session, opts ..
 		startupEvents := make(chan runtime.Event, 10)
 		go func() {
 			defer close(startupEvents)
-			rt.EmitStartupInfo(ctx, sess, startupEvents)
+			rt.EmitStartupInfo(ctx, sess, runtime.NewChannelSink(startupEvents))
 		}()
 		for event := range startupEvents {
 			select {
@@ -303,7 +303,7 @@ func (a *App) ResolveCommand(ctx context.Context, userInput string) string {
 
 // EmitStartupInfo emits initial agent, team, and toolset information to the provided channel
 func (a *App) EmitStartupInfo(ctx context.Context, events chan runtime.Event) {
-	a.runtime.EmitStartupInfo(ctx, a.session, events)
+	a.runtime.EmitStartupInfo(ctx, a.session, runtime.NewChannelSink(events))
 }
 
 // Run one agent loop
@@ -657,7 +657,7 @@ func (a *App) reEmitStartupInfo(ctx context.Context) {
 		startupEvents := make(chan runtime.Event, 10)
 		go func() {
 			defer close(startupEvents)
-			a.runtime.EmitStartupInfo(ctx, a.session, startupEvents)
+			a.runtime.EmitStartupInfo(ctx, a.session, runtime.NewChannelSink(startupEvents))
 		}()
 		for event := range startupEvents {
 			select {
@@ -885,7 +885,7 @@ func (a *App) CompactSession(ctx context.Context, additionalPrompt string) {
 		events := make(chan runtime.Event, 100)
 		go func() {
 			defer close(events)
-			a.runtime.Summarize(ctx, sess, additionalPrompt, events)
+			a.runtime.Summarize(ctx, sess, additionalPrompt, runtime.NewChannelSink(events))
 		}()
 		for event := range events {
 			if ctx.Err() != nil {

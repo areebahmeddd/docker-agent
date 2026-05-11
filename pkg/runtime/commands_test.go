@@ -37,8 +37,8 @@ func (m *mockRuntime) CurrentAgentInfo(context.Context) CurrentAgentInfo {
 func (m *mockRuntime) SetCurrentAgent(string) error {
 	return nil
 }
-func (m *mockRuntime) EmitStartupInfo(context.Context, *session.Session, chan Event) {}
-func (m *mockRuntime) ResetStartupInfo()                                             {}
+func (m *mockRuntime) EmitStartupInfo(context.Context, *session.Session, EventSink) {}
+func (m *mockRuntime) ResetStartupInfo()                                            {}
 func (m *mockRuntime) RunStream(context.Context, *session.Session) <-chan Event {
 	return nil
 }
@@ -51,7 +51,7 @@ func (m *mockRuntime) ResumeElicitation(context.Context, tools.ElicitationAction
 	return nil
 }
 func (m *mockRuntime) SessionStore() session.Store { return nil }
-func (m *mockRuntime) Summarize(context.Context, *session.Session, string, chan Event) {
+func (m *mockRuntime) Summarize(context.Context, *session.Session, string, EventSink) {
 }
 func (m *mockRuntime) PermissionsInfo() *PermissionsInfo { return nil }
 func (m *mockRuntime) CurrentAgentSkillsToolset() *skillstool.Toolset {

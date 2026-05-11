@@ -845,11 +845,11 @@ func TestGetTools_WarningHandling(t *testing.T) {
 			sessionSpan := trace.SpanFromContext(t.Context())
 
 			// First call
-			tools1, err := rt.getTools(t.Context(), root, sessionSpan, events, true)
+			tools1, err := rt.getTools(t.Context(), root, sessionSpan, NewChannelSink(events), true)
 			require.NoError(t, err)
 			require.Len(t, tools1, tt.wantToolCount)
 
-			rt.emitAgentWarnings(root, chanSend(events))
+			rt.emitAgentWarnings(root, NewChannelSink(events))
 			evs := collectEvents(events)
 			require.Equal(t, tt.wantWarning, hasWarningEvent(evs), "warning event mismatch on first call")
 		})
@@ -890,7 +890,7 @@ func TestProcessToolCalls_UnknownTool_ReturnsErrorResponse(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, nil, events)
+	rt.processToolCalls(t.Context(), sess, calls, nil, NewChannelSink(events))
 	close(events)
 	for range events {
 	}
@@ -997,7 +997,7 @@ func TestEmitStartupInfo_DoesNotBlockOnInteractiveOAuth(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		rt.EmitStartupInfo(t.Context(), nil, events)
+		rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 		close(done)
 	}()
 
@@ -1055,7 +1055,7 @@ func TestEmitStartupInfo_SurfacesToolsetStartFailureAsWarning(t *testing.T) {
 	require.NoError(t, err)
 
 	events := make(chan Event, 32)
-	rt.EmitStartupInfo(t.Context(), nil, events)
+	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
 	var warning *WarningEvent
@@ -1094,7 +1094,7 @@ func TestEmitStartupInfo_AuthRequiredIsSilent(t *testing.T) {
 	require.NoError(t, err)
 
 	events := make(chan Event, 32)
-	rt.EmitStartupInfo(t.Context(), nil, events)
+	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
 	for e := range events {
@@ -1134,7 +1134,7 @@ func TestEmitStartupInfo_DeferredAuthDoesNotConsumeFailureGate(t *testing.T) {
 	require.NoError(t, err)
 
 	events := make(chan Event, 32)
-	rt.EmitStartupInfo(t.Context(), nil, events)
+	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 	for range events {
 	}
@@ -1176,11 +1176,11 @@ func TestEmitAgentWarnings_OnlyEmitsFailures(t *testing.T) {
 	root.AddToolWarning("toolset_a start failed: connection refused")
 
 	var emitted []*WarningEvent
-	rt.emitAgentWarnings(root, func(e Event) {
+	rt.emitAgentWarnings(root, EventSinkFunc(func(e Event) {
 		if w, ok := e.(*WarningEvent); ok {
 			emitted = append(emitted, w)
 		}
-	})
+	}))
 
 	require.Len(t, emitted, 1, "expected exactly one event for one failure (recoveries are silent)")
 	w := emitted[0]
@@ -1202,7 +1202,7 @@ func TestEmitAgentWarnings_NoEventsWhenQueueEmpty(t *testing.T) {
 	require.NoError(t, err)
 
 	var emitted int
-	rt.emitAgentWarnings(root, func(Event) { emitted++ })
+	rt.emitAgentWarnings(root, EventSinkFunc(func(Event) { emitted++ }))
 	assert.Zero(t, emitted, "empty warnings queue must produce zero events")
 }
 
@@ -1227,7 +1227,7 @@ func TestEmitStartupInfo(t *testing.T) {
 	events := make(chan Event, 10)
 
 	// Call EmitStartupInfo
-	rt.EmitStartupInfo(t.Context(), nil, events)
+	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
 	// Collect events
@@ -1250,7 +1250,7 @@ func TestEmitStartupInfo(t *testing.T) {
 
 	// Test that calling EmitStartupInfo again doesn't emit duplicate events
 	events2 := make(chan Event, 10)
-	rt.EmitStartupInfo(t.Context(), nil, events2)
+	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events2))
 	close(events2)
 
 	var collectedEvents2 []Event
@@ -1283,7 +1283,7 @@ func TestEmitStartupInfo_WithSessionTokenData(t *testing.T) {
 	sess.OutputTokens = 1000
 
 	events := make(chan Event, 20)
-	rt.EmitStartupInfo(t.Context(), sess, events)
+	rt.EmitStartupInfo(t.Context(), sess, NewChannelSink(events))
 	close(events)
 
 	// Collect events and find the TokenUsageEvent
@@ -1352,7 +1352,7 @@ func TestEmitStartupInfo_CostIncludesSubSessions(t *testing.T) {
 	sess.Messages = append(sess.Messages, session.Item{SubSession: subSess})
 
 	events := make(chan Event, 20)
-	rt.EmitStartupInfo(t.Context(), sess, events)
+	rt.EmitStartupInfo(t.Context(), sess, NewChannelSink(events))
 	close(events)
 
 	var tokenEvent *TokenUsageEvent
@@ -1402,7 +1402,7 @@ func TestEmitStartupInfo_LastMessageFinishReason(t *testing.T) {
 	})
 
 	events := make(chan Event, 20)
-	rt.EmitStartupInfo(t.Context(), sess, events)
+	rt.EmitStartupInfo(t.Context(), sess, NewChannelSink(events))
 	close(events)
 
 	var tokenEvent *TokenUsageEvent
@@ -1435,7 +1435,7 @@ func TestEmitStartupInfo_NilSessionNoTokenEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	events := make(chan Event, 20)
-	rt.EmitStartupInfo(t.Context(), nil, events)
+	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
 	for event := range events {
@@ -1479,7 +1479,7 @@ func TestPermissions_DenyBlocksToolExecution(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// The tool should be denied, look for a ToolCallResponseEvent with error
@@ -1535,7 +1535,7 @@ func TestPermissions_AllowAutoApprovesTool(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// The tool should have been executed due to allow pattern
@@ -1576,7 +1576,7 @@ func TestPermissions_DenyTakesPriorityOverAllow(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// The tool should be denied despite wildcard allow
@@ -1624,7 +1624,7 @@ func TestSessionPermissions_DenyBlocksToolExecution(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	var toolResponse *ToolCallResponseEvent
@@ -1677,7 +1677,7 @@ func TestSessionPermissions_AllowAutoApprovesTool(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	require.True(t, executed, "expected tool to be auto-approved by session permissions")
@@ -1723,7 +1723,7 @@ func TestSessionPermissions_TakePriorityOverTeamPermissions(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// Session deny should take priority over team allow
@@ -1773,7 +1773,7 @@ func TestToolRejectionWithReason(t *testing.T) {
 
 	// Run in goroutine since it will block waiting for confirmation
 	go func() {
-		rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+		rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 		close(events)
 	}()
 
@@ -1829,7 +1829,7 @@ func TestToolRejectionWithoutReason(t *testing.T) {
 
 	// Run in goroutine since it will block waiting for confirmation
 	go func() {
-		rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+		rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 		close(events)
 	}()
 
@@ -1879,7 +1879,7 @@ func TestTransferTaskRejectsNonSubAgent(t *testing.T) {
 		},
 	}
 
-	result, err := rt.handleTaskTransfer(t.Context(), sess, toolCall, evts)
+	result, err := rt.handleTaskTransfer(t.Context(), sess, toolCall, NewChannelSink(evts))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsError, "transfer to non-sub-agent should return an error result")
@@ -1917,7 +1917,7 @@ func TestTransferTaskAllowsSubAgent(t *testing.T) {
 		},
 	}
 
-	result, err := rt.handleTaskTransfer(t.Context(), sess, toolCall, evts)
+	result, err := rt.handleTaskTransfer(t.Context(), sess, toolCall, NewChannelSink(evts))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError, "transfer to valid sub-agent should succeed")
@@ -1962,7 +1962,7 @@ func TestYoloMode_OverridesPermissionsDeny(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// With --yolo, the tool should execute despite deny permission
@@ -2008,7 +2008,7 @@ func TestYoloMode_OverridesForceAsk(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// With --yolo, the tool should execute without asking
@@ -2053,7 +2053,7 @@ func TestYoloMode_OverridesSessionDeny(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// With --yolo, the tool should execute despite session deny
@@ -2352,7 +2352,7 @@ func TestProcessToolCalls_UsesPinnedAgent(t *testing.T) {
 	}}
 
 	events := make(chan Event, 32)
-	rt.processToolCalls(t.Context(), sess, calls, []tools.Tool{workerTool}, events)
+	rt.processToolCalls(t.Context(), sess, calls, []tools.Tool{workerTool}, NewChannelSink(events))
 	close(events)
 
 	assert.True(t, executed, "worker_tool handler should have been called")
@@ -3202,7 +3202,7 @@ func TestDrainAndEmitSteered_MultipleMessages(t *testing.T) {
 	sess := session.New()
 	events := make(chan Event, 16)
 
-	drained, _ := rt.drainAndEmitSteered(t.Context(), sess, events)
+	drained, _ := rt.drainAndEmitSteered(t.Context(), sess, NewChannelSink(events))
 	close(events)
 
 	assert.True(t, drained, "should report messages were drained")
@@ -3266,7 +3266,7 @@ func TestDrainAndEmitSteered_MultiContent(t *testing.T) {
 	sess := session.New()
 	events := make(chan Event, 16)
 
-	drained, _ := rt.drainAndEmitSteered(t.Context(), sess, events)
+	drained, _ := rt.drainAndEmitSteered(t.Context(), sess, NewChannelSink(events))
 	close(events)
 
 	assert.True(t, drained)
@@ -3336,7 +3336,7 @@ func TestPostToolHookReceivesToolResult(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 
 	require.NotNil(t, got)
 	assert.Equal(t, hooks.EventPostToolUse, got.HookEventName)
@@ -3388,7 +3388,7 @@ func TestPostToolHookEmitsLifecycleEvents(t *testing.T) {
 	}}
 
 	events := make(chan Event, 10)
-	rt.processToolCalls(t.Context(), sess, calls, agentTools, events)
+	rt.processToolCalls(t.Context(), sess, calls, agentTools, NewChannelSink(events))
 
 	var started *HookStartedEvent
 	var finished *HookFinishedEvent
