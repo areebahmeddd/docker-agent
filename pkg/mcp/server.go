@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
@@ -65,6 +66,7 @@ func StartHTTPServer(ctx context.Context, agentFilename, agentName string, runCo
 		Handler: mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
 			return server
 		}, nil),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	errCh := make(chan error, 1)

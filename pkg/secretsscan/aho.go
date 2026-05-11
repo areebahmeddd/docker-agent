@@ -51,7 +51,7 @@ func buildAhoCorasick(patterns []string) *acAutomaton {
 			c := p[i]
 			child, ok := trie[cur].children[c]
 			if !ok {
-				child = int32(len(trie))
+				child = int32(len(trie)) //nolint:gosec // bounded by len(patterns) <= 256
 				trie = append(trie, &tnode{children: map[byte]int32{}})
 				trie[cur].children[c] = child
 			}

@@ -1370,7 +1370,7 @@ func applyTextEditsToFile(filePath string, edits []lspTextEdit) error {
 	}
 
 	newContent := strings.Join(lines, "\n")
-	if err := os.WriteFile(filePath, []byte(newContent), 0o644); err != nil {
+	if err := os.WriteFile(filePath, []byte(newContent), 0o644); err != nil { //nolint:gosec // file pre-exists; mode is only applied on creation
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 

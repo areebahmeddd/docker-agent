@@ -26,7 +26,7 @@ func listenUnix(ctx context.Context, path string) (net.Listener, error) {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // socket access is gated by socket file permissions, not directory
 		return nil, err
 	}
 

@@ -1166,7 +1166,7 @@ func coerceToInt(v any) int {
 	case int64:
 		return int(val)
 	case uint64:
-		return int(val)
+		return int(val) //nolint:gosec // frozen config: value comes from validated YAML; bounds enforced by schema
 	case float64:
 		return int(val)
 	default:

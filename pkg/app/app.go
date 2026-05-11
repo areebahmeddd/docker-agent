@@ -319,7 +319,7 @@ func (a *App) Run(ctx context.Context, cancel context.CancelFunc, message string
 		go a.generateTitle(ctx, []string{message})
 	}
 
-	go func() {
+	go func() { //nolint:gosec // background processing intentionally continues after request ctx ends; uses context.Background() only to forward StreamStoppedEvent
 		if len(attachments) > 0 {
 			// Build a single text string with the user's message and inlined text files.
 			// Keeping everything in one text block ensures the model sees file content
@@ -522,7 +522,7 @@ func (a *App) RunWithMessage(ctx context.Context, cancel context.CancelFunc, msg
 		go a.generateTitle(ctx, []string{userMessage})
 	}
 
-	go func() {
+	go func() { //nolint:gosec // background processing intentionally continues after request ctx ends; uses context.Background() only to forward StreamStoppedEvent
 		a.session.AddMessage(msg)
 		for event := range a.runtime.RunStream(ctx, a.session) {
 			// If context is cancelled, continue draining but don't forward events

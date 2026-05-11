@@ -160,7 +160,7 @@ func commandSource(argv []string) option.IdentityTokenFunc {
 		}
 		ctx, cancel := context.WithTimeout(ctx, tokenCommandTimeout)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // user-provided per config; intentional
+		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		var stdout, stderr strings.Builder
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr

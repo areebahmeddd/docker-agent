@@ -47,7 +47,7 @@ var NewStore = sync.OnceValues(func() (*Store, error) {
 	}
 
 	cacheDir := filepath.Join(homeDir, ".cagent")
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
@@ -245,7 +245,7 @@ func saveToCache(cacheFile string, database *Database, etag string) error {
 		return fmt.Errorf("failed to marshal cached data: %w", err)
 	}
 
-	if err := os.WriteFile(cacheFile, data, 0o644); err != nil {
+	if err := os.WriteFile(cacheFile, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 

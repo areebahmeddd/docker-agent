@@ -60,7 +60,8 @@ func newSemanticVectorDB(dbPath string, vectorDimensions int, strategyName strin
 }
 
 func (d *semanticVectorDB) createSchema() error {
-	schema := fmt.Sprintf(`
+	schema := fmt.Sprintf( //nolint:gosec // table names are internal, no user input
+		`
 	CREATE TABLE IF NOT EXISTS %s (
 		source_path TEXT PRIMARY KEY,
 		file_hash TEXT NOT NULL,
@@ -135,7 +136,8 @@ func (d *semanticVectorDB) AddDocumentWithEmbedding(ctx context.Context, doc dat
 
 // SearchSimilarVectors implements vectorStoreDB.
 func (d *semanticVectorDB) SearchSimilarVectors(ctx context.Context, queryEmbedding []float64, limit int) ([]VectorSearchResultData, error) {
-	query := fmt.Sprintf(`
+	query := fmt.Sprintf( //nolint:gosec // table names are internal, no user input
+		`
 	SELECT c.source_path, c.chunk_index, c.content, c.embedding, c.embedding_input, f.file_hash, f.indexed_at
 	FROM %s c
 	JOIN %s f ON c.source_path = f.source_path

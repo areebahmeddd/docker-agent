@@ -99,7 +99,7 @@ func (m *MemoryDatabase) SearchMemories(ctx context.Context, query, category str
 
 	stmt := "SELECT id, created_at, memory, COALESCE(category, '') FROM memories"
 	if len(conditions) > 0 {
-		stmt += " WHERE " + strings.Join(conditions, " AND ")
+		stmt += " WHERE " + strings.Join(conditions, " AND ") //nolint:gosec // conditions are internal SQL fragments; values are bound parameters
 	}
 
 	rows, err := m.db.QueryContext(ctx, stmt, args...)

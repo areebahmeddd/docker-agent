@@ -259,7 +259,7 @@ func (c *Client) buildInferenceConfig(thinkingEnabled bool) *types.InferenceConf
 	cfg := &types.InferenceConfiguration{}
 
 	if c.ModelConfig.MaxTokens != nil && *c.ModelConfig.MaxTokens > 0 {
-		cfg.MaxTokens = aws.Int32(int32(*c.ModelConfig.MaxTokens))
+		cfg.MaxTokens = aws.Int32(int32(*c.ModelConfig.MaxTokens)) //nolint:gosec // user-configured token count; realistic values fit in int32
 	}
 
 	// Temperature and TopP cannot be set when extended thinking is enabled

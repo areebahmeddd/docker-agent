@@ -77,7 +77,7 @@ func extractRelease(body io.ReadCloser, destDir, format string, files []PackageF
 // with executable permissions. The body is bounded by maxFileUncompressed
 // to avoid an attacker-controlled release asset from filling the disk.
 func writeRawBinary(r io.Reader, destPath string) error {
-	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // extracted binary needs +x
 	if err != nil {
 		return fmt.Errorf("creating raw binary %s: %w", destPath, err)
 	}
@@ -152,11 +152,11 @@ func extractTarGz(r io.Reader, destDir string, files []PackageFile, tmplData tem
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil { //nolint:gosec // tar entry directory for extracted binaries
 			return err
 		}
 
-		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // extracted binary needs +x
 		if err != nil {
 			return err
 		}
@@ -210,7 +210,7 @@ func extractZip(ra io.ReaderAt, size int64, destDir string, files []PackageFile,
 		// UncompressedSize64 comes from the central directory and
 		// is attacker-controlled, but lets us reject obvious bombs
 		// without spending CPU on decompression first.
-		if f.UncompressedSize64 > uint64(maxFileUncompressed) {
+		if f.UncompressedSize64 > uint64(maxFileUncompressed) { //nolint:gosec // maxFileUncompressed is a positive constant
 			return errExtractTooLarge
 		}
 
@@ -233,7 +233,7 @@ func extractZip(ra io.ReaderAt, size int64, destDir string, files []PackageFile,
 }
 
 func extractZipFile(f *zip.File, destPath string) (int64, error) {
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil { //nolint:gosec // zip entry directory for extracted binaries
 		return 0, err
 	}
 
@@ -243,7 +243,7 @@ func extractZipFile(f *zip.File, destPath string) (int64, error) {
 	}
 	defer rc.Close()
 
-	outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // extracted binary needs +x
 	if err != nil {
 		return 0, err
 	}
