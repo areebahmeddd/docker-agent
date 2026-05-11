@@ -107,6 +107,32 @@ type Runtime interface {
 	// gets a full undivided agent turn. Returns an error if the queue is full.
 	FollowUp(msg QueuedMessage) error
 
+	// SetAgentModel sets a model override for the named agent.
+	// modelRef can be:
+	//   - "" (empty) to clear the override and use the agent's default model
+	//   - A model name from the config (e.g., "my_fast_model")
+	//   - An inline spec (e.g., "openai/gpt-4o")
+	// Returns [ErrUnsupported] for runtimes that don't expose model
+	// switching (e.g. remote runtimes, where the server owns the choice).
+	SetAgentModel(ctx context.Context, agentName, modelRef string) error
+
+	// AvailableModels returns the models the user can pick from in the
+	// /model picker. Returns nil for runtimes that don't expose model
+	// switching; see SupportsModelSwitching for a cheap pre-check.
+	AvailableModels(ctx context.Context) []ModelChoice
+
+	// SupportsModelSwitching reports whether SetAgentModel and
+	// AvailableModels are wired for this runtime. Use it to gate UI
+	// affordances (e.g. show /model in the menu) without paying the
+	// cost of AvailableModels.
+	SupportsModelSwitching() bool
+
+	// OnToolsChanged registers a handler invoked outside of any RunStream
+	// when a toolset reports a tool list change (e.g. after an MCP
+	// ToolListChanged notification). Runtimes that don't emit such events
+	// can implement this as a no-op.
+	OnToolsChanged(handler func(Event))
+
 	// TogglePause toggles whether the run loop is paused at iteration
 	// boundaries. Returns the new state (true if now paused). Returns
 	// [ErrUnsupported] for runtimes that don't expose pause control.
@@ -132,15 +158,6 @@ type CurrentAgentInfo struct {
 type ModelStore interface {
 	GetModel(ctx context.Context, modelID string) (*modelsdev.Model, error)
 	GetDatabase(ctx context.Context) (*modelsdev.Database, error)
-}
-
-// ToolsChangeSubscriber is implemented by runtimes that can notify when
-// toolsets report a change in their tool list (e.g. after an MCP
-// ToolListChanged notification). The provided callback is invoked
-// outside of any RunStream, so the UI can update the tool count
-// immediately.
-type ToolsChangeSubscriber interface {
-	OnToolsChanged(handler func(Event))
 }
 
 // LocalRuntime manages the execution of agents

@@ -4,21 +4,29 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/teamloader"
 	"github.com/docker/docker-agent/pkg/tui"
 )
 
-// backend creates a runtime and a session, plus a cleanup closure that
-// callers must invoke when they're done. Both --remote and the local code
-// path are expressed as backends so runOrExec stops branching on
-// f.remoteAddress.
+// backend exposes the two-step protocol a future RPC server will mirror:
+//   - LoadTeam reads the team description (config sources, model overrides,
+//     prompt files) and resolves the team.
+//   - CreateSession turns that result into a live runtime and session.
+//
+// Both --remote and the local code path implement this so runOrExec stops
+// branching on f.remoteAddress.
 type backend interface {
-	CreateRuntimeAndSession(ctx context.Context) (runtime.Runtime, *session.Session, func(), error)
+	LoadTeamRequest() runtime.LoadTeamRequest
+	LoadTeam(ctx context.Context, req runtime.LoadTeamRequest) (*teamloader.LoadResult, error)
+
+	CreateSessionRequest(workingDir string) runtime.CreateSessionRequest
+	CreateSession(ctx context.Context, loaded *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, func(), error)
+
 	Spawner(rt runtime.Runtime) tui.SessionSpawner
 }
 
@@ -40,23 +48,29 @@ type localBackend struct {
 	agentSource config.Source
 }
 
-func (b *localBackend) CreateRuntimeAndSession(ctx context.Context) (runtime.Runtime, *session.Session, func(), error) {
-	loadResult, err := b.flags.loadAgentFrom(ctx, b.flags.loadTeamRequest(b.agentSource))
-	if err != nil {
-		return nil, nil, nil, err
-	}
+func (b *localBackend) LoadTeamRequest() runtime.LoadTeamRequest {
+	return b.flags.loadTeamRequest(b.agentSource)
+}
 
-	wd, _ := os.Getwd()
-	rt, sess, err := b.flags.createLocalRuntimeAndSession(ctx, loadResult, b.flags.createSessionRequest(wd))
+func (b *localBackend) LoadTeam(ctx context.Context, req runtime.LoadTeamRequest) (*teamloader.LoadResult, error) {
+	return b.flags.loadAgentFrom(ctx, req)
+}
+
+func (b *localBackend) CreateSessionRequest(workingDir string) runtime.CreateSessionRequest {
+	return b.flags.createSessionRequest(workingDir)
+}
+
+func (b *localBackend) CreateSession(ctx context.Context, loaded *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, func(), error) {
+	rt, sess, err := b.flags.createLocalRuntimeAndSession(ctx, loaded, req)
 	if err != nil {
-		stopToolSets(loadResult.Team)
+		stopToolSets(loaded.Team)
 		return nil, nil, nil, err
 	}
 
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
-			stopToolSets(loadResult.Team)
+			stopToolSets(loaded.Team)
 			if err := rt.Close(); err != nil {
 				slog.ErrorContext(ctx, "Failed to close runtime", "error", err)
 			}
@@ -75,14 +89,31 @@ type remoteBackend struct {
 	agentFileName string
 }
 
-func (b *remoteBackend) CreateRuntimeAndSession(ctx context.Context) (runtime.Runtime, *session.Session, func(), error) {
+func (b *remoteBackend) LoadTeamRequest() runtime.LoadTeamRequest {
+	// The server resolves its own source; ours is intentionally nil. The
+	// request still carries the user-level overrides so a future server
+	// can apply them server-side.
+	return b.flags.loadTeamRequest(nil)
+}
+
+func (b *remoteBackend) LoadTeam(context.Context, runtime.LoadTeamRequest) (*teamloader.LoadResult, error) {
+	// The server owns the team; no client-side load. Returning a nil
+	// LoadResult signals 'no client-side cleanup needed' to runOrExec.
+	return nil, nil
+}
+
+func (b *remoteBackend) CreateSessionRequest(workingDir string) runtime.CreateSessionRequest {
+	return b.flags.createSessionRequest(workingDir)
+}
+
+func (b *remoteBackend) CreateSession(ctx context.Context, _ *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, func(), error) {
 	client, err := runtime.NewClient(b.flags.remoteAddress)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create remote client: %w", err)
 	}
 
 	sessTemplate := session.New(
-		session.WithToolsApproved(b.flags.autoApprove),
+		session.WithToolsApproved(req.ToolsApproved),
 	)
 
 	sess, err := client.CreateSession(ctx, sessTemplate)
@@ -91,14 +122,14 @@ func (b *remoteBackend) CreateRuntimeAndSession(ctx context.Context) (runtime.Ru
 	}
 
 	rt, err := runtime.NewRemoteRuntime(client,
-		runtime.WithRemoteCurrentAgent(b.flags.agentName),
+		runtime.WithRemoteCurrentAgent(req.AgentName),
 		runtime.WithRemoteAgentFilename(b.agentFileName),
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create remote runtime: %w", err)
 	}
 
-	slog.DebugContext(ctx, "Using remote runtime", "address", b.flags.remoteAddress, "agent", b.flags.agentName)
+	slog.DebugContext(ctx, "Using remote runtime", "address", b.flags.remoteAddress, "agent", req.AgentName)
 
 	cleanup := func() {
 		if err := rt.Close(); err != nil {

@@ -111,17 +111,38 @@ func (r *RemoteRuntime) CurrentAgentInfo(ctx context.Context) CurrentAgentInfo {
 	}
 }
 
-// SetCurrentAgent sets the currently active agent for subsequent user messages
+// SetCurrentAgent sets the currently active agent for subsequent user messages.
+// It validates the name against the remote team config; an unknown agent is
+// rejected so callers see the same behaviour as LocalRuntime. A failure to
+// fetch the team config (network error, auth failure, missing remote) is
+// propagated rather than silently accepted — the whole point of this check
+// is closing that silent-breakage gap.
 func (r *RemoteRuntime) SetCurrentAgent(agentName string) error {
+	cfg, err := r.client.GetAgent(context.Background(), r.agentFilename)
+	if err != nil {
+		return fmt.Errorf("validate agent %q against remote team: %w", agentName, err)
+	}
+	found := false
+	for _, a := range cfg.Agents {
+		if a.Name == agentName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("agent %q not found in remote team", agentName)
+	}
 	r.currentAgent = agentName
 	slog.Debug("Switched current agent (remote)", "agent", agentName)
 	return nil
 }
 
-// CurrentAgentTools returns the tools for the current agent.
-// For remote runtime, this returns nil as tools are managed server-side.
+// CurrentAgentTools is not exposed by the remote wire protocol today.
+// The server has the real list; the client cannot enumerate it. Return
+// ErrUnsupported so callers (TUI tools dialog, programmatic introspection)
+// can show an explanatory message instead of a silently-empty list.
 func (r *RemoteRuntime) CurrentAgentTools(_ context.Context) ([]tools.Tool, error) {
-	return nil, nil
+	return nil, fmt.Errorf("list tools: %w", ErrUnsupported)
 }
 
 // CurrentAgentToolsetStatuses is not implemented for remote runtimes; the
@@ -292,10 +313,13 @@ func (r *RemoteRuntime) Resume(ctx context.Context, req ResumeRequest) {
 	}
 }
 
-// Summarize generates a summary for the session
-func (r *RemoteRuntime) Summarize(_ context.Context, sess *session.Session, _ string, events chan Event) {
+// Summarize is not yet supported on remote runtimes. Emit an Error
+// event so the TUI surfaces a clear failure instead of persisting a
+// bogus "not yet implemented" SessionSummary into the session store
+// (the persistence observer writes every SessionSummaryEvent unchanged).
+func (r *RemoteRuntime) Summarize(_ context.Context, _ *session.Session, _ string, events chan Event) {
 	slog.Debug("Summarize not yet implemented for remote runtime", "session_id", r.sessionID)
-	events <- SessionSummary(sess.ID, "Summary generation not yet implemented for remote runtime", r.currentAgent, 0)
+	events <- Error(fmt.Sprintf("summarize: %s", ErrUnsupported))
 }
 
 func (r *RemoteRuntime) convertSessionMessages(sess *session.Session) []api.Message {
@@ -536,6 +560,28 @@ func (r *RemoteRuntime) TitleGenerator() *sessiontitle.Generator {
 func (r *RemoteRuntime) TogglePause(context.Context) (bool, error) {
 	return false, fmt.Errorf("pause: %w", ErrUnsupported)
 }
+
+// SetAgentModel is not yet supported on remote runtimes; the server owns
+// the model selection.
+func (r *RemoteRuntime) SetAgentModel(context.Context, string, string) error {
+	return fmt.Errorf("set agent model: %w", ErrUnsupported)
+}
+
+// AvailableModels is not yet supported on remote runtimes; the wire
+// protocol cannot enumerate the models the server has access to.
+func (r *RemoteRuntime) AvailableModels(context.Context) []ModelChoice {
+	return nil
+}
+
+// SupportsModelSwitching is false for remote runtimes.
+func (r *RemoteRuntime) SupportsModelSwitching() bool {
+	return false
+}
+
+// OnToolsChanged is a no-op for remote runtimes; tool-list changes are
+// observed server-side and surface through the run-stream events rather
+// than via an out-of-band callback.
+func (r *RemoteRuntime) OnToolsChanged(func(Event)) {}
 
 // Close is a no-op for remote runtimes.
 func (r *RemoteRuntime) Close() error {

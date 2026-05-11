@@ -263,12 +263,21 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 		return err
 	}
 
+	loadResult, err := b.LoadTeam(ctx, b.LoadTeamRequest())
+	if err != nil {
+		return err
+	}
+
 	if f.dryRun {
+		if loadResult != nil {
+			stopToolSets(loadResult.Team)
+		}
 		out.Println("Dry run mode enabled. Agent initialized but will not execute.")
 		return nil
 	}
 
-	rt, sess, cleanup, err := b.CreateRuntimeAndSession(ctx)
+	wd, _ := os.Getwd()
+	rt, sess, cleanup, err := b.CreateSession(ctx, loadResult, b.CreateSessionRequest(wd))
 	if err != nil {
 		return err
 	}
@@ -303,7 +312,7 @@ func (f *runExecFlags) runOrExec(ctx context.Context, out *cli.Printer, args []s
 	return runTUI(ctx, rt, sess, b.Spawner(rt), cleanup, f.tuiOpts(), opts...)
 }
 
-func (f *runExecFlags) loadAgentFrom(ctx context.Context, req LoadTeamRequest) (*teamloader.LoadResult, error) {
+func (f *runExecFlags) loadAgentFrom(ctx context.Context, req runtime.LoadTeamRequest) (*teamloader.LoadResult, error) {
 	opts := []teamloader.Opt{
 		teamloader.WithModelOverrides(req.ModelOverrides),
 	}
@@ -360,7 +369,7 @@ func (f *runExecFlags) snapshotRuntimeOpts() ([]runtime.Opt, builtins.SnapshotCo
 	}, ctrl, nil
 }
 
-func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req CreateSessionRequest) (runtime.Runtime, *session.Session, error) {
+func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, error) {
 	t := loadResult.Team
 
 	// Merge user-level global permissions into the team's checker so the
@@ -413,12 +422,10 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		sess.HideToolResults = req.HideToolResults
 
 		// Apply any stored model overrides from the session
-		if len(sess.AgentModelOverrides) > 0 {
-			if modelSwitcher := runtime.ModelSwitcherOf(localRt); modelSwitcher != nil {
-				for agentName, modelRef := range sess.AgentModelOverrides {
-					if err := modelSwitcher.SetAgentModel(ctx, agentName, modelRef); err != nil {
-						slog.WarnContext(ctx, "Failed to apply stored model override", "agent", agentName, "model", modelRef, "error", err)
-					}
+		if len(sess.AgentModelOverrides) > 0 && localRt.SupportsModelSwitching() {
+			for agentName, modelRef := range sess.AgentModelOverrides {
+				if err := localRt.SetAgentModel(ctx, agentName, modelRef); err != nil {
+					slog.WarnContext(ctx, "Failed to apply stored model override", "agent", agentName, "model", modelRef, "error", err)
 				}
 			}
 		}
@@ -513,7 +520,7 @@ func (f *runExecFlags) buildAppOpts(args []string) ([]app.Opt, error) {
 // buildSessionOpts returns the canonical set of session options derived from
 // CLI flags and agent configuration. Both the initial session and spawned
 // sessions use this method so their options never drift apart.
-func (f *runExecFlags) buildSessionOpts(agt *agent.Agent, req CreateSessionRequest) []session.Opt {
+func (f *runExecFlags) buildSessionOpts(agt *agent.Agent, req runtime.CreateSessionRequest) []session.Opt {
 	return []session.Opt{
 		session.WithMaxIterations(agt.MaxIterations()),
 		session.WithMaxConsecutiveToolCalls(agt.MaxConsecutiveToolCalls()),
@@ -531,8 +538,11 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 		runConfigCopy := f.runConfig.Clone()
 		runConfigCopy.WorkingDir = workingDir
 
-		// Load team with the new working directory
-		loadResult, err := teamloader.LoadWithConfig(spawnCtx, agentSource, runConfigCopy, teamloader.WithModelOverrides(f.modelOverrides))
+		// Load team with the new working directory, honouring every flag the
+		// initial load already honours (model overrides AND prompt files).
+		loadReq := f.loadTeamRequest(agentSource)
+		loadReq.RunConfig = runConfigCopy
+		loadResult, err := f.loadAgentFrom(spawnCtx, loadReq)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -559,8 +569,7 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 		}
 
 		// Create a new session
-		wd := workingDir
-		spawnReq := f.createSessionRequest(wd)
+		spawnReq := f.createSessionRequest(workingDir)
 		spawnReq.AgentName = agt.Name()
 		newSess := session.New(f.buildSessionOpts(agt, spawnReq)...)
 

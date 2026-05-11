@@ -139,14 +139,12 @@ func New(ctx context.Context, rt runtime.Runtime, sess *session.Session, opts ..
 
 	// Subscribe to tool list changes so the sidebar updates immediately
 	// when an MCP server adds or removes tools (outside of a RunStream).
-	if tcs := runtime.ToolsChangeSubscriberOf(rt); tcs != nil {
-		tcs.OnToolsChanged(func(event runtime.Event) {
-			select {
-			case app.events <- event:
-			case <-ctx.Done():
-			}
-		})
-	}
+	rt.OnToolsChanged(func(event runtime.Event) {
+		select {
+		case app.events <- event:
+		case <-ctx.Done():
+		}
+	})
 
 	return app
 }
@@ -747,15 +745,13 @@ func (a *App) SwitchAgent(agentName string) error {
 // supported by the runtime (e.g., remote runtimes).
 // Pass an empty modelRef to clear the override and use the agent's default model.
 func (a *App) SetCurrentAgentModel(ctx context.Context, modelRef string) error {
-	modelSwitcher := runtime.ModelSwitcherOf(a.runtime)
-	if modelSwitcher == nil {
-		return errors.New("model switching not supported by this runtime")
-	}
-
 	agentName := a.runtime.CurrentAgentName()
 
 	// Set the model override on the runtime (empty modelRef clears the override)
-	if err := modelSwitcher.SetAgentModel(ctx, agentName, modelRef); err != nil {
+	if err := a.runtime.SetAgentModel(ctx, agentName, modelRef); err != nil {
+		if errors.Is(err, runtime.ErrUnsupported) {
+			return errors.New("model switching not supported by this runtime")
+		}
 		return err
 	}
 
@@ -795,11 +791,10 @@ func (a *App) SetCurrentAgentModel(ctx context.Context, modelRef string) error {
 // AvailableModels returns the list of models available for selection.
 // Returns nil if model switching is not supported.
 func (a *App) AvailableModels(ctx context.Context) []runtime.ModelChoice {
-	modelSwitcher := runtime.ModelSwitcherOf(a.runtime)
-	if modelSwitcher == nil {
+	if !a.runtime.SupportsModelSwitching() {
 		return nil
 	}
-	models := modelSwitcher.AvailableModels(ctx)
+	models := a.runtime.AvailableModels(ctx)
 
 	// Determine the currently active model for this agent
 	agentName := a.runtime.CurrentAgentName()
@@ -888,7 +883,7 @@ func (a *App) trackCustomModel(modelRef string) {
 
 // SupportsModelSwitching returns true if the runtime supports model switching.
 func (a *App) SupportsModelSwitching() bool {
-	return runtime.ModelSwitcherOf(a.runtime) != nil
+	return a.runtime.SupportsModelSwitching()
 }
 
 // ShouldExitAfterFirstResponse returns true if the app is configured to exit
@@ -957,15 +952,14 @@ func (a *App) applySessionModelOverrides(ctx context.Context, sess *session.Sess
 	}
 
 	// Check if runtime supports model switching
-	modelSwitcher := runtime.ModelSwitcherOf(a.runtime)
-	if modelSwitcher == nil {
+	if !a.runtime.SupportsModelSwitching() {
 		slog.DebugContext(ctx, "Runtime does not support model switching, skipping overrides")
 		return
 	}
 
 	slog.DebugContext(ctx, "Applying model overrides from session", "session_id", sess.ID, "overrides", sess.AgentModelOverrides)
 	for agentName, modelRef := range sess.AgentModelOverrides {
-		if err := modelSwitcher.SetAgentModel(ctx, agentName, modelRef); err != nil {
+		if err := a.runtime.SetAgentModel(ctx, agentName, modelRef); err != nil {
 			// Log but don't fail - the session can still be used with default models
 			slog.WarnContext(ctx, "Failed to apply model override from session", "agent", agentName, "model", modelRef, "error", err)
 			a.events <- runtime.Warning(fmt.Sprintf("Failed to apply model override for agent %q: %v", agentName, err), agentName)

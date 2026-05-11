@@ -82,6 +82,12 @@ func (m *mockRuntime) Stop()                                     {}
 func (m *mockRuntime) Steer(_ runtime.QueuedMessage) error       { return nil }
 func (m *mockRuntime) FollowUp(_ runtime.QueuedMessage) error    { return nil }
 func (m *mockRuntime) TogglePause(context.Context) (bool, error) { return false, nil }
+func (m *mockRuntime) SetAgentModel(context.Context, string, string) error {
+	return nil
+}
+func (m *mockRuntime) AvailableModels(context.Context) []runtime.ModelChoice { return nil }
+func (m *mockRuntime) SupportsModelSwitching() bool                          { return false }
+func (m *mockRuntime) OnToolsChanged(func(runtime.Event))                    {}
 
 // Verify mockRuntime implements runtime.Runtime
 var _ runtime.Runtime = (*mockRuntime)(nil)
