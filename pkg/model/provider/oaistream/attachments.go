@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/attachment"
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // convertDocument converts a chat.Document to zero or more
@@ -25,7 +26,17 @@ import (
 //   - text MIMEs with InlineText → text part with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
 func convertDocument(ctx context.Context, doc chat.Document, modelID string) ([]openai.ChatCompletionContentPartUnionParam, error) {
-	mc, _ := modelcaps.Load(modelID)
+	store, err := modelsdev.NewStore()
+	if err != nil {
+		return convertDocumentWithCaps(ctx, doc, modelcaps.ModelCapabilities{})
+	}
+	return convertDocumentFromStore(ctx, doc, modelID, store)
+}
+
+// convertDocumentFromStore is the store-injectable variant of convertDocument,
+// used by tests to inject a fake in-memory modelsdev.Store.
+func convertDocumentFromStore(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]openai.ChatCompletionContentPartUnionParam, error) {
+	mc := modelcaps.LoadFromStore(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

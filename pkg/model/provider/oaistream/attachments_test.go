@@ -56,7 +56,11 @@ func TestConvertDocument_StrategyB64_ImageDropped(t *testing.T) {
 
 // TestConvertDocument_QualifiedIDRequired is the regression test for the bug
 // where callers passed a bare model name instead of a "provider/model" ID,
-// causing modelcaps.Load to miss every model and silently drop image/PDF.
+// causing modelcaps to miss the model and silently drop image/PDF attachments.
+//
+// It calls convertDocumentFromStore directly with an injected fake store so
+// the test exercises the full modelID → LoadFromStore → caps → parts path
+// without hitting the network.
 func TestConvertDocument_QualifiedIDRequired(t *testing.T) {
 	store := modelsdev.NewDatabaseStore(&modelsdev.Database{
 		Providers: map[string]modelsdev.Provider{
@@ -78,15 +82,15 @@ func TestConvertDocument_QualifiedIDRequired(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	// Bare model name (the original bug): image must be dropped.
-	capsBare := modelcaps.LoadFromStore(store, "gpt-4o")
-	partsBare, err := convertDocumentWithCaps(t.Context(), doc, capsBare)
+	// Bare model name (the original bug): LoadFromStore misses the model,
+	// capabilities fall back to text-only, image must be dropped.
+	partsBare, err := convertDocumentFromStore(t.Context(), doc, "gpt-4o", store)
 	require.NoError(t, err)
 	assert.Nil(t, partsBare, "bare model name must not resolve caps: image should be dropped")
 
-	// Qualified ID (the fix): image must be preserved.
-	capsQualified := modelcaps.LoadFromStore(store, "openai/gpt-4o")
-	partsQualified, err := convertDocumentWithCaps(t.Context(), doc, capsQualified)
+	// Qualified ID (the fix): LoadFromStore finds the model, vision caps
+	// are set, image must be preserved as a data-URI image part.
+	partsQualified, err := convertDocumentFromStore(t.Context(), doc, "openai/gpt-4o", store)
 	require.NoError(t, err)
 	require.Len(t, partsQualified, 1, "qualified ID must resolve caps: image should be present")
 	assert.NotNil(t, partsQualified[0].OfImageURL, "expected image URL part for qualified model ID")

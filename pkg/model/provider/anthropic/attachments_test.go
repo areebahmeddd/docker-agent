@@ -54,12 +54,12 @@ func TestConvertDocumentAnthropic_StrategyB64_PDF(t *testing.T) {
 
 // TestConvertDocumentAnthropic_QualifiedIDRequired is the regression test for
 // the bug where callers passed a bare model name to convertDocument instead of
-// a "provider/model" qualified identifier, causing all image/PDF attachments
-// to be silently dropped because modelcaps.Load never found the model.
+// a "provider/model" qualified identifier, causing modelcaps to miss the model
+// and silently drop all image/PDF attachments.
 //
-// It uses LoadFromStore (fake in-memory store) to avoid network calls, and
-// feeds the resulting caps into convertDocumentWithCaps so we can verify the
-// full chain: qualified ID -> vision caps -> image block produced.
+// It calls convertDocumentFromStore directly with an injected fake store so
+// the test exercises the full modelID → LoadFromStore → caps → blocks path
+// without hitting the network.
 func TestConvertDocumentAnthropic_QualifiedIDRequired(t *testing.T) {
 	store := modelsdev.NewDatabaseStore(&modelsdev.Database{
 		Providers: map[string]modelsdev.Provider{
@@ -81,15 +81,15 @@ func TestConvertDocumentAnthropic_QualifiedIDRequired(t *testing.T) {
 		Source:   chat.DocumentSource{InlineData: minJPEG},
 	}
 
-	// Bare model name (the original bug): caps lookup misses, image must be dropped.
-	capsBare := modelcaps.LoadFromStore(store, "claude-sonnet-4-6")
-	blocksBare, err := convertDocumentWithCaps(t.Context(), doc, capsBare)
+	// Bare model name (the original bug): LoadFromStore misses the model,
+	// capabilities fall back to text-only, image must be dropped.
+	blocksBare, err := convertDocumentFromStore(t.Context(), doc, "claude-sonnet-4-6", store)
 	require.NoError(t, err)
 	assert.Nil(t, blocksBare, "bare model name must not resolve caps: image should be dropped")
 
-	// Qualified ID (the fix): caps lookup succeeds, image must be preserved.
-	capsQualified := modelcaps.LoadFromStore(store, "anthropic/claude-sonnet-4-6")
-	blocksQualified, err := convertDocumentWithCaps(t.Context(), doc, capsQualified)
+	// Qualified ID (the fix): LoadFromStore finds the model, vision caps
+	// are set, image must be preserved as a native image block.
+	blocksQualified, err := convertDocumentFromStore(t.Context(), doc, "anthropic/claude-sonnet-4-6", store)
 	require.NoError(t, err)
 	require.Len(t, blocksQualified, 1, "qualified ID must resolve caps: image should be present")
 	assert.NotNil(t, blocksQualified[0].OfImage, "expected native image block for qualified model ID")
