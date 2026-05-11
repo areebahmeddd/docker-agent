@@ -1,0 +1,59 @@
+name: Docs Preview
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: docs-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@e5517072e87f198d9533967ae13d97c11b604005 # v1.99.0
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: docs
+
+      - name: Build Jekyll site
+        run: |
+          cd docs
+          bundle exec jekyll build --baseurl "/docker-agent/pr-${{ github.event.pull_request.number }}"
+        env:
+          JEKYLL_ENV: production
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: docs/_site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+      - name: Comment preview URL
+        if: success()
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
+        with:
+          header: docs-preview
+          message: |
+            📖 **Docs preview**: ${{ steps.deploy.outputs.page_url }}
