@@ -13,6 +13,51 @@ func buildStore(providers map[string]modelsdev.Provider) *modelsdev.Store {
 	return modelsdev.NewDatabaseStore(db)
 }
 
+// TestLoadFromStore_QualifiedIDRequired is the regression test for the bug
+// fixed by pass-fully-qualified-provider-model-ID: modelcaps.Load (and
+// LoadFromStore) requires a "provider/model" key to find a model in the
+// models.dev database.  A bare model name without the provider prefix must
+// NOT resolve to vision capabilities — it falls back to text-only.
+//
+// Before the fix, callers passed c.ModelConfig.Model (e.g. "claude-sonnet-4-6")
+// instead of c.ModelConfig.Provider+"/"+c.ModelConfig.Model; the lookup always
+// missed and all image / PDF attachments were silently dropped.
+func TestLoadFromStore_QualifiedIDRequired(t *testing.T) {
+	store := buildStore(map[string]modelsdev.Provider{
+		"anthropic": {
+			Models: map[string]modelsdev.Model{
+				"claude-sonnet-4-6": {
+					Name: "Claude Sonnet 4.6",
+					Modalities: modelsdev.Modalities{
+						Input:  []string{"text", "image", "pdf"},
+						Output: []string{"text"},
+					},
+				},
+			},
+		},
+	})
+
+	// Bare model name (the original bug): must fall back to conservative text-only caps.
+	bareID := "claude-sonnet-4-6"
+	mcBare := modelcaps.LoadFromStore(store, bareID)
+	if mcBare.Supports("image/jpeg") {
+		t.Errorf("bare model name %q must NOT resolve to vision caps: image/jpeg should be dropped", bareID)
+	}
+	if mcBare.Supports("application/pdf") {
+		t.Errorf("bare model name %q must NOT resolve to vision caps: application/pdf should be dropped", bareID)
+	}
+
+	// Fully-qualified ID (the fix): must resolve to vision+pdf caps.
+	qualifiedID := "anthropic/claude-sonnet-4-6"
+	mcQualified := modelcaps.LoadFromStore(store, qualifiedID)
+	if !mcQualified.Supports("image/jpeg") {
+		t.Errorf("qualified ID %q must resolve to vision caps: image/jpeg should be passed through", qualifiedID)
+	}
+	if !mcQualified.Supports("application/pdf") {
+		t.Errorf("qualified ID %q must resolve to vision caps: application/pdf should be passed through", qualifiedID)
+	}
+}
+
 func TestLoadFromStore_VisionModel(t *testing.T) {
 	store := buildStore(map[string]modelsdev.Provider{
 		"anthropic": {

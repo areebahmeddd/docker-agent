@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // minJPEG is a minimal JPEG magic-byte header for use in tests.
@@ -51,6 +52,44 @@ func TestConvertDocument_StrategyB64_ImageDropped(t *testing.T) {
 	parts, err := convertDocumentWithCaps(t.Context(), doc, textOnlyCaps)
 	require.NoError(t, err)
 	assert.Nil(t, parts, "image should be dropped for text-only model")
+}
+
+// TestConvertDocument_QualifiedIDRequired is the regression test for the bug
+// where callers passed a bare model name instead of a "provider/model" ID,
+// causing modelcaps.Load to miss every model and silently drop image/PDF.
+func TestConvertDocument_QualifiedIDRequired(t *testing.T) {
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{
+		Providers: map[string]modelsdev.Provider{
+			"openai": {
+				Models: map[string]modelsdev.Model{
+					"gpt-4o": {
+						Modalities: modelsdev.Modalities{
+							Input: []string{"text", "image"},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	doc := chat.Document{
+		Name:     "photo.jpg",
+		MimeType: "image/jpeg",
+		Source:   chat.DocumentSource{InlineData: minJPEG},
+	}
+
+	// Bare model name (the original bug): image must be dropped.
+	capsBare := modelcaps.LoadFromStore(store, "gpt-4o")
+	partsBare, err := convertDocumentWithCaps(t.Context(), doc, capsBare)
+	require.NoError(t, err)
+	assert.Nil(t, partsBare, "bare model name must not resolve caps: image should be dropped")
+
+	// Qualified ID (the fix): image must be preserved.
+	capsQualified := modelcaps.LoadFromStore(store, "openai/gpt-4o")
+	partsQualified, err := convertDocumentWithCaps(t.Context(), doc, capsQualified)
+	require.NoError(t, err)
+	require.Len(t, partsQualified, 1, "qualified ID must resolve caps: image should be present")
+	assert.NotNil(t, partsQualified[0].OfImageURL, "expected image URL part for qualified model ID")
 }
 
 func TestConvertDocument_StrategyTXT(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // minJPEG is a minimal JPEG magic-byte header for use in tests.
@@ -49,6 +50,49 @@ func TestConvertDocumentAnthropic_StrategyB64_PDF(t *testing.T) {
 	require.Len(t, blocks, 1, "expected exactly one block")
 	require.NotNil(t, blocks[0].OfDocument, "expected document block for PDF")
 	assert.Nil(t, blocks[0].OfText, "expected no text block for PDF")
+}
+
+// TestConvertDocumentAnthropic_QualifiedIDRequired is the regression test for
+// the bug where callers passed a bare model name to convertDocument instead of
+// a "provider/model" qualified identifier, causing all image/PDF attachments
+// to be silently dropped because modelcaps.Load never found the model.
+//
+// It uses LoadFromStore (fake in-memory store) to avoid network calls, and
+// feeds the resulting caps into convertDocumentWithCaps so we can verify the
+// full chain: qualified ID -> vision caps -> image block produced.
+func TestConvertDocumentAnthropic_QualifiedIDRequired(t *testing.T) {
+	store := modelsdev.NewDatabaseStore(&modelsdev.Database{
+		Providers: map[string]modelsdev.Provider{
+			"anthropic": {
+				Models: map[string]modelsdev.Model{
+					"claude-sonnet-4-6": {
+						Modalities: modelsdev.Modalities{
+							Input: []string{"text", "image", "pdf"},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	doc := chat.Document{
+		Name:     "photo.jpg",
+		MimeType: "image/jpeg",
+		Source:   chat.DocumentSource{InlineData: minJPEG},
+	}
+
+	// Bare model name (the original bug): caps lookup misses, image must be dropped.
+	capsBare := modelcaps.LoadFromStore(store, "claude-sonnet-4-6")
+	blocksBare, err := convertDocumentWithCaps(t.Context(), doc, capsBare)
+	require.NoError(t, err)
+	assert.Nil(t, blocksBare, "bare model name must not resolve caps: image should be dropped")
+
+	// Qualified ID (the fix): caps lookup succeeds, image must be preserved.
+	capsQualified := modelcaps.LoadFromStore(store, "anthropic/claude-sonnet-4-6")
+	blocksQualified, err := convertDocumentWithCaps(t.Context(), doc, capsQualified)
+	require.NoError(t, err)
+	require.Len(t, blocksQualified, 1, "qualified ID must resolve caps: image should be present")
+	assert.NotNil(t, blocksQualified[0].OfImage, "expected native image block for qualified model ID")
 }
 
 func TestConvertDocumentAnthropic_StrategyTXT(t *testing.T) {
