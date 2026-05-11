@@ -23,7 +23,7 @@ func TestNewDockerAgentAdapter(t *testing.T) {
 		require.NoError(t, team.StopToolSets(t.Context()))
 	}()
 
-	adapter, err := newDockerAgentAdapter(team, "root")
+	adapter, err := newDockerAgentAdapter(team, "root", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "root", adapter.Name())
@@ -42,7 +42,7 @@ func TestNewCAgentAdapter_NonExistent(t *testing.T) {
 		require.NoError(t, team.StopToolSets(t.Context()))
 	}()
 
-	_, err = newDockerAgentAdapter(team, "nonexistent")
+	_, err = newDockerAgentAdapter(team, "nonexistent", nil)
 
 	assert.Contains(t, err.Error(), "failed to get agent")
 }

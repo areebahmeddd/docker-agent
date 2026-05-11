@@ -16,9 +16,11 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/server/adka2a"
-	"google.golang.org/adk/session"
+	adksession "google.golang.org/adk/session"
 
 	"github.com/docker/docker-agent/pkg/config"
+	pathx "github.com/docker/docker-agent/pkg/path"
+	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/teamloader"
 	"github.com/docker/docker-agent/pkg/version"
 )
@@ -36,7 +38,7 @@ func routableAddr(addr string) string {
 	return addr
 }
 
-func Run(ctx context.Context, agentFilename, agentName string, runConfig *config.RuntimeConfig, ln net.Listener) error {
+func Run(ctx context.Context, agentFilename, agentName, sessionDB string, runConfig *config.RuntimeConfig, ln net.Listener) error {
 	slog.DebugContext(ctx, "Starting A2A server", "source", agentFilename, "agent", agentName, "addr", ln.Addr().String())
 
 	agentSource, err := config.Resolve(agentFilename, nil)
@@ -54,7 +56,16 @@ func Run(ctx context.Context, agentFilename, agentName string, runConfig *config
 		}
 	}()
 
-	adkAgent, err := newDockerAgentAdapter(t, agentName)
+	expandedSessionDB, err := pathx.ExpandHomeDir(sessionDB)
+	if err != nil {
+		return fmt.Errorf("failed to expand session db path: %w", err)
+	}
+	sessStore, err := session.NewSQLiteSessionStore(expandedSessionDB)
+	if err != nil {
+		return fmt.Errorf("failed to open session store: %w", err)
+	}
+
+	adkAgent, err := newDockerAgentAdapter(t, agentName, sessStore)
 	if err != nil {
 		return fmt.Errorf("failed to create ADK agent adapter: %w", err)
 	}
@@ -87,7 +98,7 @@ func Run(ctx context.Context, agentFilename, agentName string, runConfig *config
 		RunnerConfig: runner.Config{
 			AppName:        name,
 			Agent:          adkAgent,
-			SessionService: session.InMemoryService(),
+			SessionService: adksession.InMemoryService(),
 		},
 	})
 
