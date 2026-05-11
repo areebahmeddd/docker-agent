@@ -2,6 +2,7 @@ package messages
 
 import (
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -106,6 +107,7 @@ type model struct {
 	renderedLines     []string               // Cached rendered content as lines (avoids split/join per frame)
 	renderedItems     map[int]renderedItem   // Cache of rendered items with positions
 	urlSpans          *urlSpanCache          // Cached URL spans per rendered line
+	lineOffsets       []int                  // Prefix-sum: lineOffsets[i] = starting global line of view i
 	totalHeight       int                    // Total height of all content in lines
 	renderDirty       bool                   // True when rendered content needs rebuild
 
@@ -342,24 +344,26 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) (layout.Model, tea.Cmd) 
 func (m *model) globalLineToMessageLine(globalLine int) (msgIdx, localLine int) {
 	m.ensureAllItemsRendered()
 
-	currentLine := 0
-	for i, view := range m.views {
-		item := m.renderItem(i, view)
-		if item.height == 0 {
-			continue
-		}
-
-		endLine := currentLine + item.height
-		if globalLine >= currentLine && globalLine < endLine {
-			return i, globalLine - currentLine
-		}
-
-		currentLine = endLine
-		if m.needsSeparator(i) {
-			currentLine++ // Account for separator line
-		}
+	if len(m.lineOffsets) == 0 || globalLine < 0 || globalLine >= m.totalHeight {
+		return -1, -1
 	}
 
+	// Binary search: find the last view whose offset <= globalLine
+	i := sort.Search(len(m.lineOffsets), func(i int) bool {
+		return m.lineOffsets[i] > globalLine
+	}) - 1
+
+	if i < 0 || i >= len(m.views) {
+		return -1, -1
+	}
+
+	item := m.renderItem(i, m.views[i])
+	local := globalLine - m.lineOffsets[i]
+	if local < item.height {
+		return i, local
+	}
+
+	// globalLine falls in a separator gap between messages
 	return -1, -1
 }
 
@@ -953,20 +957,14 @@ func (m *model) scrollToSelectedMessage() {
 		return
 	}
 
-	// Ensure all items are rendered so totalHeight is accurate
+	// Ensure all items are rendered so lineOffsets and totalHeight are accurate
 	m.ensureAllItemsRendered()
 
-	// Calculate the line range for the selected message
-	startLine := 0
-	for i := range m.selectedMessageIndex {
-		if i < len(m.views) {
-			item := m.renderItem(i, m.views[i])
-			startLine += item.height
-			if m.needsSeparator(i) {
-				startLine++
-			}
-		}
+	if m.selectedMessageIndex >= len(m.lineOffsets) {
+		return
 	}
+
+	startLine := m.lineOffsets[m.selectedMessageIndex]
 
 	var selectedHeight int
 	if m.selectedMessageIndex < len(m.views) {
@@ -1124,8 +1122,10 @@ func (m *model) ensureAllItemsRendered() {
 	}
 
 	var allLines []string
+	offsets := make([]int, len(m.views))
 
 	for i, view := range m.views {
+		offsets[i] = len(allLines)
 		item := m.renderItem(i, view)
 		if len(item.lines) == 0 {
 			continue
@@ -1140,6 +1140,7 @@ func (m *model) ensureAllItemsRendered() {
 
 	// Store lines directly - avoid join/split on every View() call
 	m.renderedLines = allLines
+	m.lineOffsets = offsets
 	m.totalHeight = len(allLines)
 	m.urlSpans.clear()
 	m.renderDirty = false
@@ -1155,6 +1156,7 @@ func (m *model) invalidateItem(index int) {
 func (m *model) invalidateAllItems() {
 	m.renderedItems = make(map[int]renderedItem)
 	m.renderedLines = nil
+	m.lineOffsets = nil
 	m.totalHeight = 0
 	m.urlSpans.clear()
 	m.renderDirty = true
