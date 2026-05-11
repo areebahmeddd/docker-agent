@@ -756,6 +756,7 @@ func (c *Client) StreamSessionEventsWithRetry(ctx context.Context, sessionID str
 				if backoff > maxBackoff {
 					backoff = maxBackoff
 				}
+				select {
 				case <-time.After(backoff):
 					continue
 				case <-ctx.Done():
