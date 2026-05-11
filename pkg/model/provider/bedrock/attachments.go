@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/attachment"
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // imageFormatFromMIME maps a MIME type to a Bedrock ImageFormat.
@@ -32,15 +33,16 @@ func imageFormatFromMIME(mimeType string) (types.ImageFormat, bool) {
 	}
 }
 
-// convertDocument converts a chat.Document to zero or more Bedrock ContentBlocks.
+// convertDocumentFromStore converts a chat.Document to zero or more Bedrock ContentBlocks
+// using the provided modelsdev.Store for capability lookup.
 //
 // Routing:
 //   - image/* with InlineData → ContentBlockMemberImage
 //   - application/pdf with InlineData → ContentBlockMemberDocument (PDF)
 //   - text/* with InlineText → ContentBlockMemberText with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocument(ctx context.Context, doc chat.Document, modelID string) ([]types.ContentBlock, error) {
-	mc, _ := modelcaps.Load(modelID)
+func convertDocumentFromStore(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]types.ContentBlock, error) {
+	mc := modelcaps.LoadFromStore(store, modelID)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

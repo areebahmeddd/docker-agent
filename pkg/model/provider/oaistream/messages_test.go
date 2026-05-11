@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -62,7 +63,7 @@ func TestConvertMultiContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result := ConvertMultiContent(t.Context(), tt.multiContent, "")
+			result := ConvertMultiContentFromStore(t.Context(), tt.multiContent, "", modelsdev.NewDatabaseStore(&modelsdev.Database{}))
 			assert.Len(t, result, tt.wantCount)
 		})
 	}
@@ -137,7 +138,7 @@ func TestConvertMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result := ConvertMessages(t.Context(), tt.messages, "")
+			result := ConvertMessagesFromStore(t.Context(), tt.messages, "", modelsdev.NewDatabaseStore(&modelsdev.Database{}))
 			assert.Len(t, result, tt.want)
 		})
 	}

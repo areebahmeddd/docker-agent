@@ -26,18 +26,16 @@ func (j JSONSchema) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]any(j))
 }
 
-// ConvertMultiContent converts chat.MessagePart slices to OpenAI content parts.
-// ctx is forwarded to convertDocument for logging and future cancellation support.
-// modelID is used for attachment capability lookups; pass an empty string to
-// skip capability checks (all documents are attempted).
-func ConvertMultiContent(ctx context.Context, multiContent []chat.MessagePart, modelID string) []openai.ChatCompletionContentPartUnionParam {
-	return convertMultiContentWithStore(ctx, multiContent, modelID, nil)
-}
-
-// ConvertMultiContentFromStore is the store-injectable variant of ConvertMultiContent,
-// used by tests to inject a fake in-memory modelsdev.Store.
+// ConvertMultiContentFromStore converts chat.MessagePart slices to OpenAI content
+// parts using the provided modelsdev.Store for capability lookups.
 func ConvertMultiContentFromStore(ctx context.Context, multiContent []chat.MessagePart, modelID string, store *modelsdev.Store) []openai.ChatCompletionContentPartUnionParam {
 	return convertMultiContentWithStore(ctx, multiContent, modelID, store)
+}
+
+// ConvertMessagesFromStore converts chat.Message slices to OpenAI message params
+// using the provided modelsdev.Store for capability lookups.
+func ConvertMessagesFromStore(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {
+	return convertMessagesWithStore(ctx, messages, modelID, store)
 }
 
 func convertMultiContentWithStore(ctx context.Context, multiContent []chat.MessagePart, modelID string, store *modelsdev.Store) []openai.ChatCompletionContentPartUnionParam {
@@ -56,13 +54,7 @@ func convertMultiContentWithStore(ctx context.Context, multiContent []chat.Messa
 			}
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				var docParts []openai.ChatCompletionContentPartUnionParam
-				var err error
-				if store != nil {
-					docParts, err = convertDocumentFromStore(ctx, *part.Document, modelID, store)
-				} else {
-					docParts, err = convertDocument(ctx, *part.Document, modelID)
-				}
+				docParts, err := convertDocumentFromStore(ctx, *part.Document, modelID, store)
 				if err != nil {
 					slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 					continue
@@ -72,20 +64,6 @@ func convertMultiContentWithStore(ctx context.Context, multiContent []chat.Messa
 		}
 	}
 	return parts
-}
-
-// ConvertMessages converts chat.Message slices to OpenAI message params.
-// ctx is forwarded to convertDocument for logging and cancellation support.
-// modelID is forwarded to convertDocument for attachment capability lookups.
-// This is the base conversion without any provider-specific post-processing.
-func ConvertMessages(ctx context.Context, messages []chat.Message, modelID string) []openai.ChatCompletionMessageParamUnion {
-	return convertMessagesWithStore(ctx, messages, modelID, nil)
-}
-
-// ConvertMessagesFromStore is the store-injectable variant of ConvertMessages,
-// used by tests to inject a fake in-memory modelsdev.Store.
-func ConvertMessagesFromStore(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {
-	return convertMessagesWithStore(ctx, messages, modelID, store)
 }
 
 func convertMessagesWithStore(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {

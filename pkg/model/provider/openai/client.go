@@ -43,7 +43,7 @@ type Client struct {
 	// It maintains a persistent WebSocket connection across requests.
 	wsPool *wsPool
 
-	modelsStore *modelsdev.Store // nil in production (uses modelsdev.NewStore()); set in tests
+	modelsStore *modelsdev.Store // initialised in NewClient
 }
 
 // NewClient creates a new OpenAI client from the provided configuration
@@ -153,13 +153,20 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 	slog.DebugContext(ctx, "OpenAI client created successfully", "model", cfg.Model)
 
+	store, err := modelsdev.NewStore()
+	if err != nil {
+		slog.WarnContext(ctx, "openai: failed to load models.dev store, attachments will use conservative caps", "error", err)
+		store = modelsdev.NewDatabaseStore(&modelsdev.Database{})
+	}
+
 	client := &Client{
 		Config: base.Config{
 			ModelConfig:  *cfg,
 			ModelOptions: globalOptions,
 			Env:          env,
 		},
-		clientFn: clientFn,
+		clientFn:    clientFn,
+		modelsStore: store,
 	}
 
 	// Pre-create the WebSocket pool when the transport is configured.
@@ -184,10 +191,7 @@ func (c *Client) Close() {
 // convertMessages converts chat.Message to openai.ChatCompletionMessageParamUnion
 // using the shared oaistream implementation.
 func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) []openai.ChatCompletionMessageParamUnion {
-	if c.modelsStore != nil {
-		return oaistream.ConvertMessagesFromStore(ctx, messages, c.ID(), c.modelsStore)
-	}
-	return oaistream.ConvertMessages(ctx, messages, c.ID())
+	return oaistream.ConvertMessagesFromStore(ctx, messages, c.ID(), c.modelsStore)
 }
 
 // CreateChatCompletionStream creates a streaming chat completion request
@@ -619,7 +623,7 @@ func (c *Client) convertMessagesToResponseInput(ctx context.Context, messages []
 						}
 					case chat.MessagePartTypeDocument:
 						if part.Document != nil {
-							docParts, err := convertDocumentToResponseInput(ctx, *part.Document, c.ID())
+							docParts, err := convertDocumentToResponseInputFromStore(ctx, *part.Document, c.ID(), c.modelsStore)
 							if err != nil {
 								slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 								continue

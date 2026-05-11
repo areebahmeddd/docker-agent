@@ -113,7 +113,7 @@ func TestConvertDocumentAnthropic_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "## Specification"},
 	}
 
-	blocks, err := convertDocument(t.Context(), doc, "")
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	require.NotNil(t, blocks[0].OfText)
@@ -129,7 +129,7 @@ func TestConvertDocumentAnthropic_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "some notes"},
 	}
 
-	blocks, err := convertDocument(t.Context(), doc, "")
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	require.NotNil(t, blocks[0].OfText)
@@ -144,7 +144,7 @@ func TestConvertDocumentAnthropic_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	blocks, err := convertDocument(t.Context(), doc, "")
+	blocks, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, blocks, "should be dropped when no inline content")
 }

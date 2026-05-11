@@ -55,7 +55,7 @@ func TestConvertDocumentGemini_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "# Read Me"},
 	}
 
-	part, err := convertDocument(t.Context(), doc, "")
+	part, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.NotNil(t, part)
 	assert.Contains(t, part.Text, "readme-md")
@@ -70,7 +70,7 @@ func TestConvertDocumentGemini_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "col1,col2"},
 	}
 
-	part, err := convertDocument(t.Context(), doc, "")
+	part, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.NotNil(t, part)
 	assert.True(t, strings.HasPrefix(part.Text, "<document"), "should be wrapped in envelope")
@@ -83,7 +83,7 @@ func TestConvertDocumentGemini_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	part, err := convertDocument(t.Context(), doc, "")
+	part, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, part, "should be nil when no inline content")
 }

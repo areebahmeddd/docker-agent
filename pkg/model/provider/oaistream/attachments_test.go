@@ -101,7 +101,7 @@ func TestConvertDocument_StrategyTXT(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "# Hello World"},
 	}
 
-	parts, err := convertDocument(t.Context(), doc, "")
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
@@ -117,7 +117,7 @@ func TestConvertDocument_StrategyTXT_Envelope(t *testing.T) {
 		Source:   chat.DocumentSource{InlineText: "a,b,c\n1,2,3"},
 	}
 
-	parts, err := convertDocument(t.Context(), doc, "")
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
 	require.NotNil(t, parts[0].OfText)
@@ -132,7 +132,7 @@ func TestConvertDocument_Drop_NoContent(t *testing.T) {
 		Source:   chat.DocumentSource{},
 	}
 
-	parts, err := convertDocument(t.Context(), doc, "")
+	parts, err := convertDocumentWithCaps(t.Context(), doc, modelcaps.ModelCapabilities{})
 	require.NoError(t, err)
 	assert.Nil(t, parts, "should be dropped when no inline content")
 }
