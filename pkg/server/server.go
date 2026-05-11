@@ -72,6 +72,7 @@ func (s *Server) registerRoutes() {
 	group.POST("/sessions/:id/messages", s.addMessage)
 	group.PATCH("/sessions/:id/messages/:msg_id", s.updateMessage)
 	group.POST("/sessions/:id/summaries", s.addSummary)
+	group.GET("/sessions/:id/recovery", s.getSessionRecoveryData)
 	group.POST("/sessions/batch/delete", s.batchDeleteSessions)
 	group.POST("/sessions/batch/export", s.batchExportSessions)
 
@@ -572,4 +573,14 @@ func (s *Server) ready(c echo.Context) error {
 		ToolsetHealth:  toolsetHealth,
 		LatestError:    latestError,
 	})
+}
+
+func (s *Server) getSessionRecoveryData(c echo.Context) error {
+	sessionID := c.Param("id")
+	data, err := s.sm.ExportSessionForRecovery(c.Request().Context(), sessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to export session: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, data)
 }

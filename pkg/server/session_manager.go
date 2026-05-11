@@ -672,3 +672,26 @@ func (sm *SessionManager) BatchExportSessions(ctx context.Context, sessionIDs []
 
 	return export, nil
 }
+
+// ExportSessionForRecovery exports a single session as JSON for recovery
+func (sm *SessionManager) ExportSessionForRecovery(ctx context.Context, sessionID string) (map[string]any, error) {
+	sm.mux.Lock()
+	defer sm.mux.Unlock()
+
+	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"id":             sess.ID,
+		"title":          sess.Title,
+		"created_at":     sess.CreatedAt,
+		"messages":       sess.GetAllMessages(),
+		"input_tokens":   sess.InputTokens,
+		"output_tokens":  sess.OutputTokens,
+		"working_dir":    sess.WorkingDir,
+		"tools_approved": sess.ToolsApproved,
+		"permissions":    sess.Permissions,
+	}, nil
+}

@@ -766,3 +766,27 @@ func (c *Client) StreamSessionEventsWithRetry(ctx context.Context, sessionID str
 
 	return output, nil
 }
+
+// GetSessionRecoveryData retrieves recovery data for a session in case of store failure
+func (c *Client) GetSessionRecoveryData(ctx context.Context, sessionID string) (map[string]any, error) {
+	var data map[string]any
+	endpoint := fmt.Sprintf("/api/sessions/%s/recovery", sessionID)
+	err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &data)
+	return data, err
+}
+
+// BatchDeleteSessions deletes multiple sessions in a single operation
+func (c *Client) BatchDeleteSessions(ctx context.Context, sessionIDs []string) (map[string]any, error) {
+	var resp map[string]any
+	req := api.BatchDeleteSessionsRequest{SessionIDs: sessionIDs}
+	err := c.doRequest(ctx, http.MethodPost, "/api/sessions/batch/delete", req, &resp)
+	return resp, err
+}
+
+// BatchExportSessions exports multiple sessions
+func (c *Client) BatchExportSessions(ctx context.Context, sessionIDs []string, format string) (map[string]any, error) {
+	var resp map[string]any
+	req := api.BatchExportSessionsRequest{SessionIDs: sessionIDs, Format: format}
+	err := c.doRequest(ctx, http.MethodPost, "/api/sessions/batch/export", req, &resp)
+	return resp, err
+}
