@@ -44,7 +44,7 @@ That's it. Your agent can now read and write files, run shell commands, and reas
 ## See It in Action
 
 <div class="demo-container">
-  <img src="demo.gif" alt="Docker Agent TUI demo showing an interactive agent session" loading="lazy">
+  <img src="{{ '/demo.gif' | relative_url }}" alt="Docker Agent TUI demo showing an interactive agent session" loading="lazy">
 </div>
 
 ## Why Docker Agent?

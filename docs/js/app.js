@@ -69,16 +69,30 @@ function buildTOC() {
 
 function setupScrollSpy(headings, aside) {
   let currentActive = null;
-  const observer = new IntersectionObserver((entries) => {
-    const intersecting = entries
-      .filter(e => e.isIntersecting)
-      .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+  const visibleIds = new Set();
+  const tocLinks = aside.querySelectorAll('.toc-link');
 
-    const topmost = intersecting[0];
-    if (topmost && topmost.target.id !== currentActive) {
-      currentActive = topmost.target.id;
-      aside.querySelectorAll('.toc-link').forEach(l => l.classList.remove('active'));
-      aside.querySelector(`.toc-link[data-id="${currentActive}"]`)?.classList.add('active');
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        visibleIds.add(entry.target.id);
+      } else {
+        visibleIds.delete(entry.target.id);
+      }
+    }
+
+    // Pick the first heading (in DOM order) that is currently visible
+    let nextActive = null;
+    for (const h of headings) {
+      if (visibleIds.has(h.id)) { nextActive = h.id; break; }
+    }
+
+    if (nextActive !== currentActive) {
+      currentActive = nextActive;
+      tocLinks.forEach(l => l.classList.remove('active'));
+      if (currentActive) {
+        aside.querySelector(`.toc-link[data-id="${currentActive}"]`)?.classList.add('active');
+      }
     }
   }, { rootMargin: '-80px 0px -70% 0px', threshold: 0 });
 
@@ -101,10 +115,14 @@ function addCopyButtons() {
     btn.textContent = 'Copy';
     btn.setAttribute('aria-label', 'Copy code to clipboard');
     btn.addEventListener('click', async () => {
-      const text = pre.querySelector('code')?.textContent ?? pre.textContent;
-      await navigator.clipboard.writeText(text);
-      btn.textContent = 'Copied!';
-      btn.classList.add('copied');
+      try {
+        const text = pre.querySelector('code')?.textContent ?? pre.textContent;
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+      } catch {
+        btn.textContent = 'Failed';
+      }
       setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
     });
     pre.style.position = 'relative';
