@@ -366,9 +366,6 @@ func (c *Client) runAgentWithAgentName(ctx context.Context, sessionID, agent, ag
 		req.Header.Set("Authorization", "Bearer "+c.authToken)
 	}
 
-	if c.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.authToken)
-	}
 
 	resp, err := c.httpClient.Do(req) //nolint:bodyclose // body is closed in the goroutine below
 	if err != nil {
@@ -488,16 +485,20 @@ func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-c
 
 	// Use long timeout for streaming
 	timeout := c.timeoutFor("streaming")
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	streamCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
+	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
+
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
 
 	resp, err := c.httpClient.Do(req) //nolint:bodyclose // body is closed in the goroutine below
 	if err != nil {
@@ -747,14 +748,14 @@ func (c *Client) StreamSessionEventsWithRetry(ctx context.Context, sessionID str
 					return
 				}
 
-				// Calculate backoff
-				backoff := initialBackoff * time.Duration(1<<uint(attempt-2))
-				//nolint:modernize // keep if statement for readability
+				// Calculate backoff: 100ms, 200ms, 400ms, 800ms, 1600ms (max)
+				backoff := initialBackoff
+				if attempt > 1 {
+					backoff = initialBackoff * time.Duration(1<<uint(attempt-2))
+				}
 				if backoff > maxBackoff {
 					backoff = maxBackoff
 				}
-
-				select {
 				case <-time.After(backoff):
 					continue
 				case <-ctx.Done():

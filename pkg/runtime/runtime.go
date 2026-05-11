@@ -1231,12 +1231,16 @@ func (r *LocalRuntime) FollowUp(msg QueuedMessage) error {
 }
 
 func (r *LocalRuntime) QueueStatus() QueueStatus {
-	return QueueStatus{
-		SteerDepth:       len(r.steerQueue.(*inMemoryMessageQueue).ch),
-		SteerCapacity:    cap(r.steerQueue.(*inMemoryMessageQueue).ch),
-		FollowupDepth:    len(r.followUpQueue.(*inMemoryMessageQueue).ch),
-		FollowupCapacity: cap(r.followUpQueue.(*inMemoryMessageQueue).ch),
+	status := QueueStatus{}
+	if steerQ, ok := r.steerQueue.(*inMemoryMessageQueue); ok {
+		status.SteerDepth = len(steerQ.ch)
+		status.SteerCapacity = cap(steerQ.ch)
 	}
+	if followupQ, ok := r.followUpQueue.(*inMemoryMessageQueue); ok {
+		status.FollowupDepth = len(followupQ.ch)
+		status.FollowupCapacity = cap(followupQ.ch)
+	}
+	return status
 }
 
 // Run starts the agent's interaction loop

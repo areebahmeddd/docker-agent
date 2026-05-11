@@ -3,6 +3,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -546,7 +547,7 @@ func (s *Server) health(c echo.Context) error {
 
 func (s *Server) ready(c echo.Context) error {
 	// Check if session store is accessible (quick connectivity check)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 100*time.Millisecond)
 	defer cancel()
 
 	sessions, err := s.sm.GetSessions(ctx)
@@ -642,7 +643,7 @@ func BearerTokenMiddleware(expectedToken string) echo.MiddlewareFunc {
 			}
 
 			token := auth[len(prefix):]
-			if token != expectedToken {
+			if subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) != 1 {
 				return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
 			}
 
