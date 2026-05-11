@@ -12,26 +12,27 @@ const $searchResults = document.getElementById('search-results');
 
 // ---------- Theme ----------
 function initTheme() {
-  const saved = localStorage.getItem('cagent-docs-theme');
-  const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : null);
-  if (theme) document.documentElement.setAttribute('data-theme', theme);
+  const saved = localStorage.getItem('docker-agent-docs-theme');
+  if (saved === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  } else if (!saved && window.matchMedia?.('(prefers-color-scheme: light)').matches) {
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+  // Dark is the default — no attribute needed (CSS :root is dark)
 }
 
 function toggleTheme() {
-  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('cagent-docs-theme', next);
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('docker-agent-docs-theme', 'dark');
+  } else {
+    document.documentElement.setAttribute('data-theme', 'light');
+    localStorage.setItem('docker-agent-docs-theme', 'light');
+  }
 }
 
 // ---------- Table of Contents ----------
-function slugify(text) {
-  return text.toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
-
 function buildTOC() {
   if (!$content) return;
 
@@ -67,12 +68,17 @@ function buildTOC() {
 }
 
 function setupScrollSpy(headings, aside) {
+  let currentActive = null;
   const observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (entry.isIntersecting) {
-        aside.querySelectorAll('.toc-link').forEach(l => l.classList.remove('active'));
-        aside.querySelector(`.toc-link[data-id="${entry.target.id}"]`)?.classList.add('active');
-      }
+    const intersecting = entries
+      .filter(e => e.isIntersecting)
+      .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+
+    const topmost = intersecting[0];
+    if (topmost && topmost.target.id !== currentActive) {
+      currentActive = topmost.target.id;
+      aside.querySelectorAll('.toc-link').forEach(l => l.classList.remove('active'));
+      aside.querySelector(`.toc-link[data-id="${currentActive}"]`)?.classList.add('active');
     }
   }, { rootMargin: '-80px 0px -70% 0px', threshold: 0 });
 
@@ -82,17 +88,21 @@ function setupScrollSpy(headings, aside) {
 // ---------- Copy buttons ----------
 function addCopyButtons() {
   if (!$content) return;
-  // Target both direct <pre> and Rouge-generated pre.highlight
+  const seen = new WeakSet();
   $content.querySelectorAll('pre, pre.highlight').forEach(pre => {
+    if (seen.has(pre)) return;
     if (pre.querySelector('.copy-btn')) return;
-    // Skip if this pre is inside a .highlight div that already has a button
-    if (pre.closest('.highlight')?.querySelector('.copy-btn')) return;
+    const parent = pre.parentElement;
+    if (parent?.classList.contains('highlight') && parent.querySelector('.copy-btn')) return;
+    seen.add(pre);
+
     const btn = document.createElement('button');
     btn.className = 'copy-btn';
     btn.textContent = 'Copy';
     btn.setAttribute('aria-label', 'Copy code to clipboard');
     btn.addEventListener('click', async () => {
-      await navigator.clipboard.writeText(pre.querySelector('code')?.textContent || pre.textContent);
+      const text = pre.querySelector('code')?.textContent ?? pre.textContent;
+      await navigator.clipboard.writeText(text);
       btn.textContent = 'Copied!';
       btn.classList.add('copied');
       setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
@@ -103,27 +113,27 @@ function addCopyButtons() {
 }
 
 // ---------- Search ----------
-// Build a search index from sidebar links and page content
 const searchIndex = [];
 
 function buildSearchIndex() {
-  // Index from sidebar navigation
-  document.querySelectorAll('.sidebar-link').forEach(link => {
+  const sidebarLinks = document.querySelectorAll('.sidebar-link');
+  sidebarLinks.forEach(link => {
+    const href = link.getAttribute('href');
+    if (!href) return;
     const section = link.closest('.sidebar-section')?.querySelector('.sidebar-heading')?.textContent || '';
     searchIndex.push({
       title: link.textContent.trim(),
-      url: link.getAttribute('href'),
+      url: href,
       section: section,
       searchText: `${link.textContent} ${section}`.toLowerCase(),
     });
   });
 
-  // Also index current page content for richer results
   if ($content) {
-    const currentEntry = searchIndex.find(e => {
-      const currentPath = window.location.pathname;
-      return currentPath.endsWith(e.url) || currentPath.endsWith(e.url.replace(/\/$/, ''));
-    });
+    const currentPath = window.location.pathname;
+    const currentEntry = searchIndex.find(e =>
+      currentPath.endsWith(e.url) || currentPath.endsWith(e.url.replace(/\/$/, ''))
+    );
     if (currentEntry) {
       currentEntry.searchText += ' ' + $content.textContent.replace(/\s+/g, ' ').toLowerCase();
     }
@@ -169,7 +179,6 @@ function renderSearchResults(query) {
     return;
   }
 
-  // Group results by section to avoid repeating section names
   let html = '';
   let lastSection = '';
   for (const r of results) {
@@ -212,11 +221,18 @@ function restoreSidebarScroll() {
     sidebar.scrollTop = parseInt(saved, 10);
   }
 
-  // Before navigating away, save the current scroll position
   sidebar.querySelectorAll('a').forEach(link => {
     link.addEventListener('click', () => {
       sessionStorage.setItem('sidebar-scroll', sidebar.scrollTop);
     });
+  });
+}
+
+// ---------- Bind buttons (no inline handlers) ----------
+function bindButtons() {
+  document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
+  document.querySelector('.sidebar-toggle')?.addEventListener('click', () => {
+    document.getElementById('sidebar')?.classList.toggle('open');
   });
 }
 
@@ -226,3 +242,4 @@ restoreSidebarScroll();
 buildSearchIndex();
 buildTOC();
 addCopyButtons();
+bindButtons();

@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% if page.title %}{{ page.title }} – Docker Agent docs{% else %}Docker Agent – Documentation{% endif %}</title>
+  <title>{% if page.title %}{{ page.title }} – Docker Agent Docs{% else %}Docker Agent – Documentation{% endif %}</title>
   <meta name="description" content="{{ page.description | default: site.description }}">
 
-  <meta property="og:title" content="{% if page.title %}{{ page.title }} – Docker Agent docs{% else %}Docker Agent – Documentation{% endif %}">
+  <meta property="og:title" content="{% if page.title %}{{ page.title }} – Docker Agent Docs{% else %}Docker Agent – Documentation{% endif %}">
   <meta property="og:description" content="{{ page.description | default: site.description }}">
   <meta property="og:type" content="{% if page.url == '/' %}website{% else %}article{% endif %}">
   <meta property="og:url" content="{{ page.url | absolute_url }}">
@@ -15,7 +15,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ '/css/style.css' | relative_url }}">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Crect x='15' y='35' width='70' height='45' rx='10' fill='%231a56db'/%3E%3Ccircle cx='37' cy='57' r='7' fill='white'/%3E%3Ccircle cx='63' cy='57' r='7' fill='white'/%3E%3Ccircle cx='37' cy='57' r='3' fill='%231a56db'/%3E%3Ccircle cx='63' cy='57' r='3' fill='%231a56db'/%3E%3Crect x='30' y='20' width='8' height='20' rx='4' fill='%231a56db'/%3E%3Crect x='62' y='20' width='8' height='20' rx='4' fill='%231a56db'/%3E%3C/svg%3E">
+  <!-- Docker whale favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 36' fill='none'%3E%3Cpath d='M48.3 16.5c-.3-.2-2.6-1.3-5.1-1.3-.5 0-1 0-1.5.1-.6-2.2-2.6-3.2-2.7-3.3l-.5-.3-.3.5c-.4.8-.7 1.7-.8 2.6-.3 1.8.1 3.5 1.2 4.9-1.8 1-4.7 1.3-5.3 1.3H1.2c-.7 0-1.2.5-1.2 1.2 0 4.4 1.8 8.8 5.2 12C8.5 37.2 13.2 39 19 39c12.5 0 21.7-7.3 26-20.4 1.7 0 3.3-.5 4.1-2.1l.2-.4-.3-.2zM5.3 19.8H9c.2 0 .3-.1.3-.3v-3.8c0-.2-.1-.3-.3-.3H5.3c-.2 0-.3.1-.3.3v3.8c0 .1.1.3.3.3zm5 0h3.8c.2 0 .3-.1.3-.3v-3.8c0-.2-.1-.3-.3-.3h-3.8c-.2 0-.3.1-.3.3v3.8c0 .1.1.3.3.3zm5.1 0h3.8c.2 0 .3-.1.3-.3v-3.8c0-.2-.1-.3-.3-.3h-3.8c-.2 0-.3.1-.3.3v3.8c0 .1.1.3.3.3zm5.1 0h3.8c.2 0 .3-.1.3-.3v-3.8c0-.2-.1-.3-.3-.3h-3.8c-.2 0-.3.1-.3.3v3.8c0 .1.1.3.3.3zm-10.2-5h3.8c.2 0 .3-.1.3-.3v-3.8c0-.2-.1-.3-.3-.3h-3.8c-.2 0-.3.1-.3.3v3.8c0 .2.1.3.3.3zm5.1 0h3.8c.2 0 .3-.1.3-.3v-3.8c0-.2-.1-.3-.3-.3h-3.8c-.2 0-.3.1-.3.3v3.8c0 .2.1.3.3.3zm5.1 0h3.8c.2 0 .3-.1.3-.3v-3.8c0-.2-.1-.3-.3-.3h-3.8c-.2 0-.3.1-.3.3v3.8c0 .2.1.3.3.3zm0-5h3.8c.2 0 .3-.1.3-.3V5.7c0-.2-.1-.3-.3-.3h-3.8c-.2 0-.3.1-.3.3v3.8c0 .2.1.3.3.3zm5.1 5h3.8c.2 0 .3-.1.3-.3v-3.8c0-.2-.1-.3-.3-.3h-3.8c-.2 0-.3.1-.3.3v3.8c0 .2.1.3.3.3z' fill='%231D63ED'/%3E%3C/svg%3E">
 </head>
 <body>
   <a href="#page-content" class="skip-link">Skip to content</a>
@@ -33,7 +34,7 @@
     {% endfor %}
   </nav>
 
-  <button class="sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')" aria-label="Toggle navigation menu">
+  <button class="sidebar-toggle" aria-label="Toggle navigation menu">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
   </button>
 
