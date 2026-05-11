@@ -137,12 +137,12 @@ func (r *RemoteRuntime) SetCurrentAgent(agentName string) error {
 	return nil
 }
 
-// CurrentAgentTools is not exposed by the remote wire protocol today.
-// The server has the real list; the client cannot enumerate it. Return
-// ErrUnsupported so callers (TUI tools dialog, programmatic introspection)
-// can show an explanatory message instead of a silently-empty list.
-func (r *RemoteRuntime) CurrentAgentTools(_ context.Context) ([]tools.Tool, error) {
-	return nil, fmt.Errorf("list tools: %w", ErrUnsupported)
+// CurrentAgentTools returns the tools for the current agent from the session.
+func (r *RemoteRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, error) {
+	if r.sessionID == "" {
+		return nil, nil
+	}
+	return r.client.GetSessionTools(ctx, r.sessionID)
 }
 
 // CurrentAgentToolsetStatuses is not implemented for remote runtimes; the

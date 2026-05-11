@@ -523,3 +523,11 @@ func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-c
 
 	return eventChan, nil
 }
+
+// GetSessionTools retrieves tools available in a session.
+func (c *Client) GetSessionTools(ctx context.Context, sessionID string) ([]tools.Tool, error) {
+	var toolList []tools.Tool
+	endpoint := fmt.Sprintf("/api/sessions/%s/tools", sessionID)
+	err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &toolList)
+	return toolList, err
+}

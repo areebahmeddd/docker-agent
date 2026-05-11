@@ -51,6 +51,9 @@ type RemoteClient interface {
 
 	// DeleteRemoteSession deletes a session from the remote store
 	DeleteRemoteSession(ctx context.Context, sessionID string) error
+
+	// GetSessionTools retrieves tools available in a session
+	GetSessionTools(ctx context.Context, sessionID string) ([]tools.Tool, error)
 }
 
 var _ RemoteClient = (*Client)(nil)
