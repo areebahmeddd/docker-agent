@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go/v3/packages/param"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // JSONSchema is a helper type that implements json.Marshaler for map[string]any.
@@ -30,6 +31,16 @@ func (j JSONSchema) MarshalJSON() ([]byte, error) {
 // modelID is used for attachment capability lookups; pass an empty string to
 // skip capability checks (all documents are attempted).
 func ConvertMultiContent(ctx context.Context, multiContent []chat.MessagePart, modelID string) []openai.ChatCompletionContentPartUnionParam {
+	return convertMultiContentWithStore(ctx, multiContent, modelID, nil)
+}
+
+// ConvertMultiContentFromStore is the store-injectable variant of ConvertMultiContent,
+// used by tests to inject a fake in-memory modelsdev.Store.
+func ConvertMultiContentFromStore(ctx context.Context, multiContent []chat.MessagePart, modelID string, store *modelsdev.Store) []openai.ChatCompletionContentPartUnionParam {
+	return convertMultiContentWithStore(ctx, multiContent, modelID, store)
+}
+
+func convertMultiContentWithStore(ctx context.Context, multiContent []chat.MessagePart, modelID string, store *modelsdev.Store) []openai.ChatCompletionContentPartUnionParam {
 	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(multiContent))
 	for _, part := range multiContent {
 		switch part.Type {
@@ -45,7 +56,13 @@ func ConvertMultiContent(ctx context.Context, multiContent []chat.MessagePart, m
 			}
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docParts, err := convertDocument(ctx, *part.Document, modelID)
+				var docParts []openai.ChatCompletionContentPartUnionParam
+				var err error
+				if store != nil {
+					docParts, err = convertDocumentFromStore(ctx, *part.Document, modelID, store)
+				} else {
+					docParts, err = convertDocument(ctx, *part.Document, modelID)
+				}
 				if err != nil {
 					slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 					continue
@@ -62,6 +79,16 @@ func ConvertMultiContent(ctx context.Context, multiContent []chat.MessagePart, m
 // modelID is forwarded to convertDocument for attachment capability lookups.
 // This is the base conversion without any provider-specific post-processing.
 func ConvertMessages(ctx context.Context, messages []chat.Message, modelID string) []openai.ChatCompletionMessageParamUnion {
+	return convertMessagesWithStore(ctx, messages, modelID, nil)
+}
+
+// ConvertMessagesFromStore is the store-injectable variant of ConvertMessages,
+// used by tests to inject a fake in-memory modelsdev.Store.
+func ConvertMessagesFromStore(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {
+	return convertMessagesWithStore(ctx, messages, modelID, store)
+}
+
+func convertMessagesWithStore(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {
 	openaiMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for i := range messages {
 		msg := &messages[i]
@@ -94,7 +121,7 @@ func ConvertMessages(ctx context.Context, messages []chat.Message, modelID strin
 			if len(msg.MultiContent) == 0 {
 				openaiMessage = openai.UserMessage(msg.Content)
 			} else {
-				openaiMessage = openai.UserMessage(ConvertMultiContent(ctx, msg.MultiContent, modelID))
+				openaiMessage = openai.UserMessage(convertMultiContentWithStore(ctx, msg.MultiContent, modelID, store))
 			}
 
 		case chat.MessageRoleAssistant:

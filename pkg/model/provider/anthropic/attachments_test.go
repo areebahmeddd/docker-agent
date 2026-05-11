@@ -9,6 +9,8 @@ import (
 
 	"github.com/docker/docker-agent/pkg/attachment/modelcaps"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
@@ -53,13 +55,15 @@ func TestConvertDocumentAnthropic_StrategyB64_PDF(t *testing.T) {
 }
 
 // TestConvertDocumentAnthropic_QualifiedIDRequired is the regression test for
-// the bug where callers passed a bare model name to convertDocument instead of
-// a "provider/model" qualified identifier, causing modelcaps to miss the model
-// and silently drop all image/PDF attachments.
+// the bug where convertUserMultiContent passed only c.ModelConfig.Model (bare
+// model name) to convertDocument instead of c.ModelConfig.Provider+"/"+c.ModelConfig.Model.
+// When the bare name was used, modelcaps.Load always missed the model and all
+// image/PDF attachments were silently dropped.
 //
-// It calls convertDocumentFromStore directly with an injected fake store so
-// the test exercises the full modelID → LoadFromStore → caps → blocks path
-// without hitting the network.
+// The test constructs a Client with Provider="anthropic" and Model="claude-sonnet-4-6",
+// injects a fake modelsdev.Store, and calls convertUserMultiContent directly.
+// The image block must be present in the output — which only happens if the
+// fully-qualified "anthropic/claude-sonnet-4-6" was used for the caps lookup.
 func TestConvertDocumentAnthropic_QualifiedIDRequired(t *testing.T) {
 	store := modelsdev.NewDatabaseStore(&modelsdev.Database{
 		Providers: map[string]modelsdev.Provider{
@@ -75,24 +79,31 @@ func TestConvertDocumentAnthropic_QualifiedIDRequired(t *testing.T) {
 		},
 	})
 
-	doc := chat.Document{
-		Name:     "photo.jpg",
-		MimeType: "image/jpeg",
-		Source:   chat.DocumentSource{InlineData: minJPEG},
+	c := &Client{
+		Config: base.Config{
+			ModelConfig: latest.ModelConfig{
+				Provider: "anthropic",
+				Model:    "claude-sonnet-4-6",
+			},
+		},
+		modelsStore: store,
 	}
 
-	// Bare model name (the original bug): LoadFromStore misses the model,
-	// capabilities fall back to text-only, image must be dropped.
-	blocksBare, err := convertDocumentFromStore(t.Context(), doc, "claude-sonnet-4-6", store)
-	require.NoError(t, err)
-	assert.Nil(t, blocksBare, "bare model name must not resolve caps: image should be dropped")
+	parts := []chat.MessagePart{
+		{
+			Type: chat.MessagePartTypeDocument,
+			Document: &chat.Document{
+				Name:     "photo.jpg",
+				MimeType: "image/jpeg",
+				Source:   chat.DocumentSource{InlineData: minJPEG},
+			},
+		},
+	}
 
-	// Qualified ID (the fix): LoadFromStore finds the model, vision caps
-	// are set, image must be preserved as a native image block.
-	blocksQualified, err := convertDocumentFromStore(t.Context(), doc, "anthropic/claude-sonnet-4-6", store)
+	blocks, err := c.convertUserMultiContent(t.Context(), parts)
 	require.NoError(t, err)
-	require.Len(t, blocksQualified, 1, "qualified ID must resolve caps: image should be present")
-	assert.NotNil(t, blocksQualified[0].OfImage, "expected native image block for qualified model ID")
+	require.Len(t, blocks, 1, "image must not be dropped when provider+model ID is used for caps lookup")
+	assert.NotNil(t, blocks[0].OfImage, "expected native image block")
 }
 
 func TestConvertDocumentAnthropic_StrategyTXT(t *testing.T) {

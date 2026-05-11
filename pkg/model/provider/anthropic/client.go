@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -33,6 +34,7 @@ type Client struct {
 
 	clientFn    func(context.Context) (anthropic.Client, error)
 	fileManager *FileManager
+	modelsStore *modelsdev.Store // nil in production (uses modelsdev.NewStore()); set in tests
 }
 
 // NewClient creates a new Anthropic client from the provided configuration
@@ -313,6 +315,15 @@ func (c *Client) CreateChatCompletionStream(
 	return ad, nil
 }
 
+// convertDoc converts a document attachment using the client's model ID and
+// the injected store (if set) or the real modelsdev store.
+func (c *Client) convertDoc(ctx context.Context, doc chat.Document) ([]anthropic.ContentBlockParamUnion, error) {
+	if c.modelsStore != nil {
+		return convertDocumentFromStore(ctx, doc, c.ID(), c.modelsStore)
+	}
+	return convertDocument(ctx, doc, c.ID())
+}
+
 func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) ([]anthropic.MessageParam, error) {
 	var anthropicMessages []anthropic.MessageParam
 	// Track whether the last appended assistant message included tool_use blocks
@@ -553,7 +564,7 @@ func (c *Client) convertUserMultiContent(ctx context.Context, parts []chat.Messa
 
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docBlocks, err := convertDocument(ctx, *part.Document, c.ModelConfig.Provider+"/"+c.ModelConfig.Model)
+				docBlocks, err := c.convertDoc(ctx, *part.Document)
 				if err != nil {
 					return nil, fmt.Errorf("failed to convert document attachment %q: %w", part.Document.Name, err)
 				}

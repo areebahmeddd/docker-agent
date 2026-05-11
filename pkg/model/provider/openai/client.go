@@ -26,6 +26,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/oaistream"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelinfo"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/rag/prompts"
 	"github.com/docker/docker-agent/pkg/rag/types"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -41,6 +42,8 @@ type Client struct {
 	// wsPool is initialized in NewClient when transport=websocket is configured.
 	// It maintains a persistent WebSocket connection across requests.
 	wsPool *wsPool
+
+	modelsStore *modelsdev.Store // nil in production (uses modelsdev.NewStore()); set in tests
 }
 
 // NewClient creates a new OpenAI client from the provided configuration
@@ -181,7 +184,10 @@ func (c *Client) Close() {
 // convertMessages converts chat.Message to openai.ChatCompletionMessageParamUnion
 // using the shared oaistream implementation.
 func (c *Client) convertMessages(ctx context.Context, messages []chat.Message) []openai.ChatCompletionMessageParamUnion {
-	return oaistream.ConvertMessages(ctx, messages, c.ModelConfig.Provider+"/"+c.ModelConfig.Model)
+	if c.modelsStore != nil {
+		return oaistream.ConvertMessagesFromStore(ctx, messages, c.ID(), c.modelsStore)
+	}
+	return oaistream.ConvertMessages(ctx, messages, c.ID())
 }
 
 // CreateChatCompletionStream creates a streaming chat completion request
@@ -613,7 +619,7 @@ func (c *Client) convertMessagesToResponseInput(ctx context.Context, messages []
 						}
 					case chat.MessagePartTypeDocument:
 						if part.Document != nil {
-							docParts, err := convertDocumentToResponseInput(ctx, *part.Document, c.ModelConfig.Provider+"/"+c.ModelConfig.Model)
+							docParts, err := convertDocumentToResponseInput(ctx, *part.Document, c.ID())
 							if err != nil {
 								slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 								continue

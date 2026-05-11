@@ -58,9 +58,8 @@ func TestConvertDocument_StrategyB64_ImageDropped(t *testing.T) {
 // where callers passed a bare model name instead of a "provider/model" ID,
 // causing modelcaps to miss the model and silently drop image/PDF attachments.
 //
-// It calls convertDocumentFromStore directly with an injected fake store so
-// the test exercises the full modelID → LoadFromStore → caps → parts path
-// without hitting the network.
+// It calls ConvertMultiContentFromStore with an injected fake store, exercising
+// the same path as the production client (which calls ConvertMessages with c.ID()).
 func TestConvertDocument_QualifiedIDRequired(t *testing.T) {
 	store := modelsdev.NewDatabaseStore(&modelsdev.Database{
 		Providers: map[string]modelsdev.Provider{
@@ -76,22 +75,21 @@ func TestConvertDocument_QualifiedIDRequired(t *testing.T) {
 		},
 	})
 
-	doc := chat.Document{
-		Name:     "photo.jpg",
-		MimeType: "image/jpeg",
-		Source:   chat.DocumentSource{InlineData: minJPEG},
-	}
+	msgParts := []chat.MessagePart{{
+		Type: chat.MessagePartTypeDocument,
+		Document: &chat.Document{
+			Name:     "photo.jpg",
+			MimeType: "image/jpeg",
+			Source:   chat.DocumentSource{InlineData: minJPEG},
+		},
+	}}
 
-	// Bare model name (the original bug): LoadFromStore misses the model,
-	// capabilities fall back to text-only, image must be dropped.
-	partsBare, err := convertDocumentFromStore(t.Context(), doc, "gpt-4o", store)
-	require.NoError(t, err)
-	assert.Nil(t, partsBare, "bare model name must not resolve caps: image should be dropped")
+	// Bare model name (the original bug): image must be dropped.
+	partsBare := ConvertMultiContentFromStore(t.Context(), msgParts, "gpt-4o", store)
+	assert.Empty(t, partsBare, "bare model name must not resolve caps: image should be dropped")
 
-	// Qualified ID (the fix): LoadFromStore finds the model, vision caps
-	// are set, image must be preserved as a data-URI image part.
-	partsQualified, err := convertDocumentFromStore(t.Context(), doc, "openai/gpt-4o", store)
-	require.NoError(t, err)
+	// Qualified ID (the fix, matching what c.ID() returns): image must be preserved.
+	partsQualified := ConvertMultiContentFromStore(t.Context(), msgParts, "openai/gpt-4o", store)
 	require.Len(t, partsQualified, 1, "qualified ID must resolve caps: image should be present")
 	assert.NotNil(t, partsQualified[0].OfImageURL, "expected image URL part for qualified model ID")
 }

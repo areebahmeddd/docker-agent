@@ -601,7 +601,7 @@ func (c *Client) CreateChatCompletionStream(
 		}
 	}
 
-	contents := convertMessagesToGemini(ctx, messages, c.ModelConfig.Provider+"/"+c.ModelConfig.Model)
+	contents := convertMessagesToGemini(ctx, messages, c.ID())
 
 	// Debug: Log the messages we're sending
 	slog.DebugContext(ctx, "Gemini messages", "count", len(contents))

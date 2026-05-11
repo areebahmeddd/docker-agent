@@ -236,7 +236,7 @@ func (c *Client) buildConverseStreamInput(ctx context.Context, messages []chat.M
 	enableCaching := c.promptCachingEnabled()
 
 	// Convert and set messages (excluding system)
-	input.Messages, input.System = convertMessages(ctx, messages, c.ModelConfig.Provider+"/"+c.ModelConfig.Model, enableCaching)
+	input.Messages, input.System = convertMessages(ctx, messages, c.ID(), enableCaching)
 
 	// Compute thinking fields first — its presence drives the inference config.
 	additionalFields := c.buildAdditionalModelRequestFields()
