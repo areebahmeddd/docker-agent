@@ -56,6 +56,8 @@ func (f *fakeRuntime) ResumeElicitation(_ context.Context, _ tools.ElicitationAc
 	return nil
 }
 
+func (f *fakeRuntime) CurrentAgentName() string { return "root" }
+
 func newTestSessionManager(t *testing.T, sess *session.Session, fake *fakeRuntime) *SessionManager {
 	t.Helper()
 

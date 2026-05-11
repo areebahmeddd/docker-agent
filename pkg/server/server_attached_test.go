@@ -158,3 +158,36 @@ func TestAttachedServer_DeleteSessionStopsEventStream(t *testing.T) {
 	defer resp2.Body.Close()
 	assert.Equal(t, http.StatusNotFound, resp2.StatusCode)
 }
+
+// TestAttachedServer_StatusEndpointReturnsCurrentState verifies that
+// GET /api/sessions/:id/status returns the current runtime state snapshot.
+func TestAttachedServer_StatusEndpointReturnsCurrentState(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	store := session.NewInMemorySessionStore()
+	sess := session.New()
+	sess.Title = "Test Session"
+	require.NoError(t, store.AddSession(ctx, sess))
+
+	sm := NewSessionManager(ctx, config.Sources{}, store, 0, &config.RuntimeConfig{})
+	fake := &fakeRuntime{}
+	sm.AttachRuntime(sess.ID, fake, sess)
+
+	srv := NewWithManager(sm)
+
+	ln, err := Listen(ctx, "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = srv.Serve(ctx, ln) }()
+
+	addr := "http://" + ln.Addr().String()
+	resp := httpDoTCP(t, ctx, http.MethodGet, addr+"/api/sessions/"+sess.ID+"/status", nil)
+
+	var status api.SessionStatusResponse
+	require.NoError(t, json.Unmarshal(resp, &status))
+
+	assert.Equal(t, sess.ID, status.ID)
+	assert.Equal(t, "Test Session", status.Title)
+	assert.False(t, status.Streaming)
+}

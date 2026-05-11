@@ -63,6 +63,7 @@ func (s *Server) registerRoutes() {
 
 	group.GET("/sessions", s.getSessions)
 	group.GET("/sessions/:id", s.getSession)
+	group.GET("/sessions/:id/status", s.getSessionStatus)
 	group.POST("/sessions/:id/resume", s.resumeSession)
 	group.POST("/sessions/:id/tools/toggle", s.toggleSessionYolo)
 	group.PATCH("/sessions/:id/permissions", s.updateSessionPermissions)
@@ -218,6 +219,14 @@ func (s *Server) getSession(c echo.Context) error {
 		WorkingDir:    sess.WorkingDir,
 		Permissions:   sess.Permissions,
 	})
+}
+
+func (s *Server) getSessionStatus(c echo.Context) error {
+	status, err := s.sm.GetSessionStatus(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("session not found: %v", err))
+	}
+	return c.JSON(http.StatusOK, status)
 }
 
 func (s *Server) resumeSession(c echo.Context) error {

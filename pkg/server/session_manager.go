@@ -140,6 +140,35 @@ func (sm *SessionManager) GetSession(ctx context.Context, id string) (*session.S
 	return sess, nil
 }
 
+// GetSessionStatus returns a lightweight snapshot of the session's current
+// runtime state. Designed for late-joining SSE consumers that need to know
+// the session's state without waiting for the next event transition.
+func (sm *SessionManager) GetSessionStatus(_ context.Context, id string) (*api.SessionStatusResponse, error) {
+	rs, ok := sm.runtimeSessions.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", id)
+	}
+
+	sess := rs.session
+
+	// Probe streaming state: TryLock succeeds only when no RunStream is
+	// in progress. Immediately unlock so we don't interfere.
+	streaming := !rs.streaming.TryLock()
+	if !streaming {
+		rs.streaming.Unlock()
+	}
+
+	return &api.SessionStatusResponse{
+		ID:           sess.ID,
+		Title:        sess.Title,
+		Streaming:    streaming,
+		Agent:        rs.runtime.CurrentAgentName(),
+		InputTokens:  sess.InputTokens,
+		OutputTokens: sess.OutputTokens,
+		NumMessages:  len(sess.GetAllMessages()),
+	}, nil
+}
+
 // CreateSession creates a new session from a template.
 func (sm *SessionManager) CreateSession(ctx context.Context, sessionTemplate *session.Session) (*session.Session, error) {
 	var opts []session.Opt

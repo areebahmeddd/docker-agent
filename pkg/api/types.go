@@ -258,3 +258,15 @@ type QueueDepthResponse struct {
 		Capacity int `json:"capacity"`
 	} `json:"followup"`
 }
+
+// SessionStatusResponse represents the current runtime state of a session.
+// Designed for late-joining SSE consumers that need a state snapshot on connect.
+type SessionStatusResponse struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Streaming    bool   `json:"streaming"`
+	Agent        string `json:"agent,omitempty"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	NumMessages  int    `json:"num_messages"`
+}
