@@ -105,6 +105,7 @@ type model struct {
 	slackAnimationSub animation.Subscription // Subscription to animation ticks while slack > 0
 	renderedLines     []string               // Cached rendered content as lines (avoids split/join per frame)
 	renderedItems     map[int]renderedItem   // Cache of rendered items with positions
+	urlSpans          *urlSpanCache          // Cached URL spans per rendered line
 	totalHeight       int                    // Total height of all content in lines
 	renderDirty       bool                   // True when rendered content needs rebuild
 
@@ -156,6 +157,7 @@ func newModel(width, height int, sessionState *service.SessionState) *model {
 		width:                width,
 		height:               height,
 		renderedItems:        make(map[int]renderedItem),
+		urlSpans:             newURLSpanCache(),
 		sessionState:         sessionState,
 		scrollview:           sv,
 		selectedMessageIndex: -1,
@@ -1139,6 +1141,7 @@ func (m *model) ensureAllItemsRendered() {
 	// Store lines directly - avoid join/split on every View() call
 	m.renderedLines = allLines
 	m.totalHeight = len(allLines)
+	m.urlSpans.clear()
 	m.renderDirty = false
 }
 
@@ -1153,6 +1156,7 @@ func (m *model) invalidateAllItems() {
 	m.renderedItems = make(map[int]renderedItem)
 	m.renderedLines = nil
 	m.totalHeight = 0
+	m.urlSpans.clear()
 	m.renderDirty = true
 }
 
