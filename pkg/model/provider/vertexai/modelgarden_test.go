@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 )
@@ -68,6 +71,163 @@ func TestIsModelGardenConfig(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("IsModelGardenConfig() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestWithModelsDevProvider(t *testing.T) {
+	tests := []struct {
+		name         string
+		cfg          *latest.ModelConfig
+		wantProvider string
+	}{
+		{
+			name: "anthropic publisher rewrites Provider to anthropic",
+			cfg: &latest.ModelConfig{
+				Provider:     "google",
+				Model:        "claude-sonnet-4-20250514",
+				ProviderOpts: map[string]any{"publisher": "anthropic"},
+			},
+			wantProvider: "anthropic",
+		},
+		{
+			name: "meta publisher rewrites Provider to google-vertex",
+			cfg: &latest.ModelConfig{
+				Provider:     "google",
+				Model:        "meta/llama-4-maverick-17b-128e-instruct-maas",
+				ProviderOpts: map[string]any{"publisher": "meta"},
+			},
+			wantProvider: "google-vertex",
+		},
+		{
+			name: "mistral publisher rewrites Provider to google-vertex",
+			cfg: &latest.ModelConfig{
+				Provider:     "google",
+				Model:        "mistral/mistral-large-2411",
+				ProviderOpts: map[string]any{"publisher": "mistral"},
+			},
+			wantProvider: "google-vertex",
+		},
+		{
+			name: "anthropic publisher is case-folded",
+			cfg: &latest.ModelConfig{
+				Provider:     "google",
+				Model:        "claude-sonnet-4-20250514",
+				ProviderOpts: map[string]any{"publisher": "Anthropic"},
+			},
+			wantProvider: "anthropic",
+		},
+		{
+			name: "publisher with surrounding whitespace is trimmed",
+			cfg: &latest.ModelConfig{
+				Provider:     "google",
+				Model:        "claude-sonnet-4-20250514",
+				ProviderOpts: map[string]any{"publisher": "  anthropic  "},
+			},
+			wantProvider: "anthropic",
+		},
+		{
+			name: "missing publisher leaves Provider untouched",
+			cfg: &latest.ModelConfig{
+				Provider: "google",
+				Model:    "gemini-2.5-flash",
+			},
+			wantProvider: "google",
+		},
+		{
+			name: "empty publisher leaves Provider untouched",
+			cfg: &latest.ModelConfig{
+				Provider:     "google",
+				Model:        "gemini-2.5-flash",
+				ProviderOpts: map[string]any{"publisher": ""},
+			},
+			wantProvider: "google",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalProvider := tt.cfg.Provider
+			originalPublisher, _ := tt.cfg.ProviderOpts["publisher"].(string)
+
+			got := withModelsDevProvider(tt.cfg)
+			require.NotNil(t, got)
+			require.NotSame(t, tt.cfg, got, "withModelsDevProvider must return a copy")
+			assert.Equal(t, tt.wantProvider, got.Provider)
+
+			// The original config must be unchanged so the wider runtime keeps its
+			// "google" provider view (used for routing, telemetry, ...).
+			assert.Equal(t, originalProvider, tt.cfg.Provider, "input cfg.Provider was mutated")
+			gotPublisher, _ := tt.cfg.ProviderOpts["publisher"].(string)
+			assert.Equal(t, originalPublisher, gotPublisher, "input cfg.ProviderOpts[publisher] was mutated")
+		})
+	}
+}
+
+// TestWithModelsDevProvider_CapabilityLookupIDs pins the bug fix for issue
+// #2740: the underlying provider client must compute its capability-lookup ID
+// in a form that exists in the models.dev database. Concretely:
+//
+//   - Anthropic Claude on Vertex AI: model name is bare (no prefix) and
+//     models.dev keys it under "anthropic/<model>".
+//   - Other publishers on Vertex AI: model name carries a "<publisher>/"
+//     prefix and models.dev keys it under "google-vertex/<publisher>/<model>".
+//
+// The test guards against the regression where rewriting Provider to the
+// publisher name (e.g. "meta") produced double-prefixed IDs like
+// "meta/meta/llama-..." that do not exist in models.dev.
+func TestWithModelsDevProvider_CapabilityLookupIDs(t *testing.T) {
+	tests := []struct {
+		name   string
+		cfg    *latest.ModelConfig
+		wantID string
+	}{
+		{
+			name: "anthropic claude",
+			cfg: &latest.ModelConfig{
+				Provider: "google",
+				Model:    "claude-sonnet-4-20250514",
+				ProviderOpts: map[string]any{
+					"project":   "my-project",
+					"location":  "us-east5",
+					"publisher": "anthropic",
+				},
+			},
+			wantID: "anthropic/claude-sonnet-4-20250514",
+		},
+		{
+			name: "meta llama keeps the meta/ prefix exactly once",
+			cfg: &latest.ModelConfig{
+				Provider: "google",
+				Model:    "meta/llama-4-maverick-17b-128e-instruct-maas",
+				ProviderOpts: map[string]any{
+					"project":   "my-project",
+					"location":  "us-central1",
+					"publisher": "meta",
+				},
+			},
+			wantID: "google-vertex/meta/llama-4-maverick-17b-128e-instruct-maas",
+		},
+		{
+			name: "mistral keeps its mistral/ prefix exactly once",
+			cfg: &latest.ModelConfig{
+				Provider: "google",
+				Model:    "mistral/mistral-large-2411",
+				ProviderOpts: map[string]any{
+					"project":   "my-project",
+					"location":  "us-central1",
+					"publisher": "mistral",
+				},
+			},
+			wantID: "google-vertex/mistral/mistral-large-2411",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rewritten := withModelsDevProvider(tt.cfg)
+			gotID := rewritten.Provider + "/" + rewritten.DisplayOrModel()
+			assert.Equal(t, tt.wantID, gotID)
 		})
 	}
 }

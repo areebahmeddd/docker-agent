@@ -77,15 +77,63 @@ func IsModelGardenConfig(cfg *latest.ModelConfig) bool {
 //
 //   - publisher: anthropic → Anthropic-native `:streamRawPredict` endpoint.
 //   - other publishers → Vertex AI's OpenAI-compatible `/chat/completions`.
+//
+// The underlying client is constructed with a Provider field rewritten so
+// that downstream capability lookups against models.dev resolve correctly.
+// Without this rewrite, attachments and other capability-gated features are
+// silently dropped because `<provider>/<model>` IDs like
+// `google/claude-sonnet-4-20250514` do not exist in the models.dev database.
+// See modelsDevProvider for the exact mapping.
 func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, opts ...options.Opt) (Client, error) {
 	project, location, err := resolveProjectLocation(ctx, cfg, env)
 	if err != nil {
 		return nil, err
 	}
+	rewritten := withModelsDevProvider(cfg)
 	if strings.EqualFold(publisher(cfg), "anthropic") {
-		return anthropic.NewVertexClient(ctx, cfg, env, project, location, opts...)
+		return anthropic.NewVertexClient(ctx, rewritten, env, project, location, opts...)
 	}
-	return newOpenAIClient(ctx, cfg, env, project, location, opts...)
+	return newOpenAIClient(ctx, rewritten, env, project, location, opts...)
+}
+
+// withModelsDevProvider returns a deep copy of cfg with its Provider field
+// rewritten so that `Provider + "/" + Model` becomes a valid models.dev key.
+// The original cfg is never mutated so callers — and the wider runtime —
+// keep their "google" provider view.
+func withModelsDevProvider(cfg *latest.ModelConfig) *latest.ModelConfig {
+	out := cfg.Clone()
+	if p := modelsDevProvider(cfg); p != "" {
+		out.Provider = p
+	}
+	return out
+}
+
+// modelsDevProvider returns the models.dev provider key that hosts the model
+// described by cfg, or "" if the publisher is unset.
+//
+// On Vertex AI Model Garden the model-name format depends on the publisher:
+//
+//   - Anthropic Claude is referenced by a bare model name (no prefix), e.g.
+//     `claude-sonnet-4-20250514`. models.dev keys these under the top-level
+//     `anthropic` provider.
+//   - Other publishers are referenced via Vertex AI's OpenAI-compatible API
+//     with a `<publisher>/<model>` prefix, e.g.
+//     `meta/llama-4-maverick-17b-128e-instruct-maas`. models.dev keys these
+//     under `google-vertex` with the publisher prefix kept in the model name.
+//
+// Returning the publisher name unchanged for non-Anthropic models would
+// produce double-prefixed IDs like `meta/meta/llama-4-...` that do not exist
+// in models.dev.
+func modelsDevProvider(cfg *latest.ModelConfig) string {
+	p := strings.ToLower(strings.TrimSpace(publisher(cfg)))
+	switch p {
+	case "":
+		return ""
+	case "anthropic":
+		return "anthropic"
+	default:
+		return "google-vertex"
+	}
 }
 
 // publisher returns the provider_opts.publisher string, or "" if unset.
