@@ -45,6 +45,9 @@ Output objects always carry a "type" field.`,
 	return cmd
 }
 
+// targetFlagUsage is the canonical help text for --to.
+const targetFlagUsage = "Target run pid, address (http://host:port), or session id (defaults to the most recent live run)"
+
 func (f *protoFlags) run(cmd *cobra.Command, args []string) (commandErr error) {
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
