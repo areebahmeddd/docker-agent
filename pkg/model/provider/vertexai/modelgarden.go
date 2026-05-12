@@ -44,6 +44,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/openai"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -59,7 +60,7 @@ var validGCPIdentifier = regexp.MustCompile(`^[a-z][a-z0-9-]{1,29}$`)
 // anthropic.Client and openai.Client satisfy it, so the caller can treat
 // the two Model Garden code paths uniformly.
 type Client interface {
-	ID() string
+	ID() modelsdev.ID
 	CreateChatCompletionStream(ctx context.Context, messages []chat.Message, tools []tools.Tool) (chat.MessageStream, error)
 	BaseConfig() base.Config
 }

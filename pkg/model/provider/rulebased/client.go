@@ -22,12 +22,13 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // Provider defines the minimal interface needed for model providers.
 type Provider interface {
-	ID() string
+	ID() modelsdev.ID
 	CreateChatCompletionStream(
 		ctx context.Context,
 		messages []chat.Message,
@@ -48,7 +49,7 @@ type Client struct {
 	fallback       Provider
 	index          bleve.Index
 	mu             sync.RWMutex
-	lastSelectedID string // ID of the provider selected by the most recent call
+	lastSelectedID modelsdev.ID // ID of the provider selected by the most recent call
 }
 
 // NewClient creates a new rule-based routing client.
@@ -173,8 +174,8 @@ func (c *Client) CreateChatCompletionStream(
 	c.lastSelectedID = selectedID
 	c.mu.Unlock()
 	slog.DebugContext(ctx, "Rule-based router selected model",
-		"router", c.ID(),
-		"selected_model", selectedID,
+		"router", c.ID().String(),
+		"selected_model", selectedID.String(),
 		"message_count", len(messages),
 	)
 
@@ -184,7 +185,7 @@ func (c *Client) CreateChatCompletionStream(
 // LastSelectedModelID returns the ID of the provider selected by the most
 // recent CreateChatCompletionStream call. This allows callers to display
 // the YAML-configured sub-model name for rule-based routing.
-func (c *Client) LastSelectedModelID() string {
+func (c *Client) LastSelectedModelID() modelsdev.ID {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.lastSelectedID
@@ -223,7 +224,7 @@ func (c *Client) selectProvider(messages []chat.Message) Provider {
 
 	selected := c.routes[routeIdx]
 	slog.Debug("Route matched",
-		"model", selected.ID(),
+		"model", selected.ID().String(),
 		"score", hit.Score,
 	)
 	return selected

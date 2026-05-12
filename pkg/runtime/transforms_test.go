@@ -29,7 +29,7 @@ type modalityModelStore struct {
 	err   error
 }
 
-func (m modalityModelStore) GetModel(_ context.Context, _ string) (*modelsdev.Model, error) {
+func (m modalityModelStore) GetModel(_ context.Context, _ modelsdev.ID) (*modelsdev.Model, error) {
 	return m.model, m.err
 }
 
@@ -43,8 +43,8 @@ type modalityByIDStore struct {
 	models map[string]*modelsdev.Model
 }
 
-func (m modalityByIDStore) GetModel(_ context.Context, id string) (*modelsdev.Model, error) {
-	return m.models[id], nil
+func (m modalityByIDStore) GetModel(_ context.Context, id modelsdev.ID) (*modelsdev.Model, error) {
+	return m.models[id.String()], nil
 }
 
 // recordingMsgProvider captures the messages each model call sees so

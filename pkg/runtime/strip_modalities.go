@@ -7,6 +7,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // BuiltinStripUnsupportedModalities is the name of the runtime-shipped
@@ -54,7 +55,13 @@ func (r *LocalRuntime) stripUnsupportedModalitiesTransform(
 		slog.DebugContext(ctx, "strip_unsupported_modalities: skipping, no ModelID on input")
 		return msgs, nil
 	}
-	m, err := r.modelsStore.GetModel(ctx, in.ModelID)
+	id, err := modelsdev.ParseID(in.ModelID)
+	if err != nil {
+		slog.DebugContext(ctx, "strip_unsupported_modalities: skipping, invalid ModelID",
+			"model_id", in.ModelID, "error", err)
+		return msgs, nil
+	}
+	m, err := r.modelsStore.GetModel(ctx, id)
 	if err != nil || m == nil {
 		// Unknown model: keep the previous (inline) behavior of
 		// passing messages through untouched. The model call will

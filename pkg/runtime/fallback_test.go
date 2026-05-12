@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelerrors"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -26,7 +27,7 @@ type failingProvider struct {
 	err error
 }
 
-func (p *failingProvider) ID() string { return p.id }
+func (p *failingProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(p.id) }
 func (p *failingProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
 	return nil, p.err
 }
@@ -42,7 +43,7 @@ type countingProvider struct {
 	stream    chat.MessageStream
 }
 
-func (p *countingProvider) ID() string { return p.id }
+func (p *countingProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(p.id) }
 func (p *countingProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
 	p.callCount++
 	if p.callCount <= p.failCount {
@@ -71,7 +72,7 @@ func TestBuildModelChain(t *testing.T) {
 		t.Parallel()
 		chain := buildModelChain(primary, nil)
 		require.Len(t, chain, 1)
-		assert.Equal(t, primary.ID(), chain[0].provider.ID())
+		assert.Equal(t, primary.ID().String(), chain[0].provider.ID().String())
 		assert.False(t, chain[0].isFallback)
 		assert.Equal(t, -1, chain[0].index)
 	})
@@ -81,14 +82,14 @@ func TestBuildModelChain(t *testing.T) {
 		chain := buildModelChain(primary, []provider.Provider{fallback1, fallback2})
 		require.Len(t, chain, 3)
 
-		assert.Equal(t, primary.ID(), chain[0].provider.ID())
+		assert.Equal(t, primary.ID().String(), chain[0].provider.ID().String())
 		assert.False(t, chain[0].isFallback)
 
-		assert.Equal(t, fallback1.ID(), chain[1].provider.ID())
+		assert.Equal(t, fallback1.ID().String(), chain[1].provider.ID().String())
 		assert.True(t, chain[1].isFallback)
 		assert.Equal(t, 0, chain[1].index)
 
-		assert.Equal(t, fallback2.ID(), chain[2].provider.ID())
+		assert.Equal(t, fallback2.ID().String(), chain[2].provider.ID().String())
 		assert.True(t, chain[2].isFallback)
 		assert.Equal(t, 1, chain[2].index)
 	})

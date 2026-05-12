@@ -195,7 +195,7 @@ func (a *Agent) SetModelOverride(models ...provider.Provider) ModelOverrideSnaps
 		a.modelOverrides.Store(ptr)
 		ids := make([]string, len(validModels))
 		for i, m := range validModels {
-			ids[i] = m.ID()
+			ids[i] = m.ID().String()
 		}
 		slog.Debug("Set model override", "agent", a.name, "models", ids)
 	}

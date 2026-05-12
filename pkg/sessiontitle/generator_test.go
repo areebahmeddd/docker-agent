@@ -11,17 +11,18 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 type mockProvider struct {
-	id        string
+	id        modelsdev.ID
 	calls     int
 	createFn  func() (chat.MessageStream, error)
 	baseCfgFn func() base.Config
 }
 
-func (p *mockProvider) ID() string { return p.id }
+func (p *mockProvider) ID() modelsdev.ID { return p.id }
 
 func (p *mockProvider) CreateChatCompletionStream(
 	_ context.Context,
@@ -78,13 +79,13 @@ func TestGenerator_Generate_FallsBackOnStreamCreateError(t *testing.T) {
 	t.Parallel()
 
 	primary := &mockProvider{
-		id: "primary/fail",
+		id: modelsdev.NewID("primary", "fail"),
 		createFn: func() (chat.MessageStream, error) {
 			return nil, errors.New("primary boom")
 		},
 	}
 	fallback := &mockProvider{
-		id: "fallback/success",
+		id: modelsdev.NewID("fallback", "success"),
 		createFn: func() (chat.MessageStream, error) {
 			return streamWithContent("My Title"), nil
 		},
@@ -114,13 +115,13 @@ func TestGenerator_Generate_FallsBackOnRecvError(t *testing.T) {
 	}
 
 	primary := &mockProvider{
-		id: "primary/recv-error",
+		id: modelsdev.NewID("primary", "recv-error"),
 		createFn: func() (chat.MessageStream, error) {
 			return primaryStream, nil
 		},
 	}
 	fallback := &mockProvider{
-		id: "fallback/success",
+		id: modelsdev.NewID("fallback", "success"),
 		createFn: func() (chat.MessageStream, error) {
 			return streamWithContent("Recovered Title"), nil
 		},
@@ -138,13 +139,13 @@ func TestGenerator_Generate_FallsBackOnEmptyOutput(t *testing.T) {
 	t.Parallel()
 
 	primary := &mockProvider{
-		id: "primary/empty",
+		id: modelsdev.NewID("primary", "empty"),
 		createFn: func() (chat.MessageStream, error) {
 			return streamWithContent("\n\n"), nil
 		},
 	}
 	fallback := &mockProvider{
-		id: "fallback/success",
+		id: modelsdev.NewID("fallback", "success"),
 		createFn: func() (chat.MessageStream, error) {
 			return streamWithContent("Good Title"), nil
 		},

@@ -194,7 +194,7 @@ func thoughtSignatureOrDefault(sig []byte) []byte {
 }
 
 // convertMessagesToGemini converts chat.Messages into Gemini Contents
-func convertMessagesToGemini(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []*genai.Content {
+func convertMessagesToGemini(ctx context.Context, messages []chat.Message, id modelsdev.ID, store *modelsdev.Store) []*genai.Content {
 	contents := make([]*genai.Content, 0, len(messages))
 	for i := range messages {
 		msg := &messages[i]
@@ -259,7 +259,7 @@ func convertMessagesToGemini(ctx context.Context, messages []chat.Message, model
 
 		// Handle regular messages
 		if len(msg.MultiContent) > 0 {
-			parts := convertMultiContent(ctx, msg.MultiContent, msg.ThoughtSignature, modelID, store)
+			parts := convertMultiContent(ctx, msg.MultiContent, msg.ThoughtSignature, id, store)
 			if len(parts) > 0 {
 				contents = append(contents, genai.NewContentFromParts(parts, role))
 			}
@@ -289,7 +289,7 @@ func newTextPartWithSignature(text string, signature []byte) *genai.Part {
 }
 
 // convertMultiContent converts multi-part content to Gemini parts
-func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, thoughtSignature []byte, modelID string, store *modelsdev.Store) []*genai.Part {
+func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, thoughtSignature []byte, id modelsdev.ID, store *modelsdev.Store) []*genai.Part {
 	parts := make([]*genai.Part, 0, len(multiContent))
 	for _, part := range multiContent {
 		switch part.Type {
@@ -302,7 +302,7 @@ func convertMultiContent(ctx context.Context, multiContent []chat.MessagePart, t
 			}
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docPart, err := convertDocument(ctx, *part.Document, modelID, store)
+				docPart, err := convertDocument(ctx, *part.Document, id, store)
 				if err != nil {
 					slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 					continue

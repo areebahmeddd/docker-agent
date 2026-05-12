@@ -92,7 +92,7 @@ func logFallbackAttempt(agentName string, model modelWithFallback, attempt, maxR
 	if model.isFallback {
 		slog.Warn("Fallback model attempt",
 			"agent", agentName,
-			"model", model.provider.ID(),
+			"model", model.provider.ID().String(),
 			"fallback_index", model.index,
 			"attempt", attempt+1,
 			"max_retries", maxRetries+1,
@@ -100,16 +100,16 @@ func logFallbackAttempt(agentName string, model modelWithFallback, attempt, maxR
 	} else {
 		slog.Warn("Primary model failed, trying fallbacks",
 			"agent", agentName,
-			"model", model.provider.ID(),
+			"model", model.provider.ID().String(),
 			"error", err)
 	}
 }
 
 // logRetryBackoff logs when we're backing off before a retry
-func logRetryBackoff(agentName, modelID string, attempt int, backoffDelay time.Duration) {
+func logRetryBackoff(agentName string, modelID modelsdev.ID, attempt int, backoffDelay time.Duration) {
 	slog.Debug("Backing off before retry",
 		"agent", agentName,
-		"model", modelID,
+		"model", modelID.String(),
 		"attempt", attempt+1,
 		"backoff", backoffDelay)
 }
@@ -274,8 +274,8 @@ func (e *fallbackExecutor) execute(
 				}
 				events.Emit(ModelFallback(
 					a.Name(),
-					prevModelID,
-					modelEntry.provider.ID(),
+					prevModelID.String(),
+					modelEntry.provider.ID().String(),
 					reason,
 					attempt+1,
 					maxAttempts,
@@ -284,7 +284,7 @@ func (e *fallbackExecutor) execute(
 
 			slog.DebugContext(ctx, "Creating chat completion stream",
 				"agent", a.Name(),
-				"model", modelEntry.provider.ID(),
+				"model", modelEntry.provider.ID().String(),
 				"is_fallback", modelEntry.isFallback,
 				"in_cooldown", startIndex > 0,
 				"attempt", attempt+1)
@@ -302,13 +302,15 @@ func (e *fallbackExecutor) execute(
 				continue
 			}
 
-			slog.DebugContext(ctx, "Processing stream", "agent", a.Name(), "model", modelEntry.provider.ID())
+			slog.DebugContext(ctx, "Processing stream", "agent", a.Name(), "model", modelEntry.provider.ID().String())
 
 			// If the provider is a rule-based router, notify the sidebar
 			// of the selected sub-model's YAML-configured name.
-			if rp, ok := modelEntry.provider.(interface{ LastSelectedModelID() string }); ok {
-				if selected := rp.LastSelectedModelID(); selected != "" {
-					events.Emit(AgentInfo(a.Name(), selected, a.Description(), a.WelcomeMessage()))
+			if rp, ok := modelEntry.provider.(interface {
+				LastSelectedModelID() modelsdev.ID
+			}); ok {
+				if selected := rp.LastSelectedModelID(); !selected.IsZero() {
+					events.Emit(AgentInfo(a.Name(), selected.String(), a.Description(), a.WelcomeMessage()))
 				}
 			}
 
@@ -384,7 +386,7 @@ func (e *fallbackExecutor) handleModelError(
 		if !e.retryOnRateLimit || hasFallbacks {
 			slog.WarnContext(ctx, "Rate limited, treating as non-retryable",
 				"agent", a.Name(),
-				"model", modelEntry.provider.ID(),
+				"model", modelEntry.provider.ID().String(),
 				"retry_on_rate_limit_enabled", e.retryOnRateLimit,
 				"has_fallbacks", hasFallbacks,
 				"error", err)
@@ -401,14 +403,14 @@ func (e *fallbackExecutor) handleModelError(
 		} else if waitDuration > backoff.MaxRetryAfterWait {
 			slog.WarnContext(ctx, "Retry-After exceeds maximum, capping",
 				"agent", a.Name(),
-				"model", modelEntry.provider.ID(),
+				"model", modelEntry.provider.ID().String(),
 				"retry_after", retryAfter,
 				"max", backoff.MaxRetryAfterWait)
 			waitDuration = backoff.MaxRetryAfterWait
 		}
 		slog.WarnContext(ctx, "Rate limited, retrying (opt-in enabled)",
 			"agent", a.Name(),
-			"model", modelEntry.provider.ID(),
+			"model", modelEntry.provider.ID().String(),
 			"attempt", attempt+1,
 			"wait", waitDuration,
 			"retry_after_from_header", retryAfter > 0,
@@ -422,7 +424,7 @@ func (e *fallbackExecutor) handleModelError(
 	if !retryable {
 		slog.ErrorContext(ctx, "Non-retryable error from model",
 			"agent", a.Name(),
-			"model", modelEntry.provider.ID(),
+			"model", modelEntry.provider.ID().String(),
 			"error", err)
 		if !modelEntry.isFallback {
 			*primaryFailedWithNonRetryable = true
@@ -432,7 +434,7 @@ func (e *fallbackExecutor) handleModelError(
 
 	slog.WarnContext(ctx, "Retryable error from model",
 		"agent", a.Name(),
-		"model", modelEntry.provider.ID(),
+		"model", modelEntry.provider.ID().String(),
 		"attempt", attempt+1,
 		"error", err)
 	return retryDecisionContinue

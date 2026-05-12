@@ -159,7 +159,7 @@ type mockProvider struct {
 	stream chat.MessageStream
 }
 
-func (m *mockProvider) ID() string { return m.id }
+func (m *mockProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(m.id) }
 
 func (m *mockProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
 	return m.stream, nil
@@ -173,7 +173,7 @@ type mockProviderWithError struct {
 	id string
 }
 
-func (m *mockProviderWithError) ID() string { return m.id }
+func (m *mockProviderWithError) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(m.id) }
 
 func (m *mockProviderWithError) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
 	return nil, errors.New("simulated error creating chat completion stream")
@@ -187,7 +187,7 @@ type mockModelStore struct {
 	ModelStore
 }
 
-func (m mockModelStore) GetModel(_ context.Context, _ string) (*modelsdev.Model, error) {
+func (m mockModelStore) GetModel(_ context.Context, _ modelsdev.ID) (*modelsdev.Model, error) {
 	return nil, nil
 }
 
@@ -645,7 +645,7 @@ type queueProvider struct {
 	streams []chat.MessageStream
 }
 
-func (p *queueProvider) ID() string { return p.id }
+func (p *queueProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(p.id) }
 
 func (p *queueProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
 	p.mu.Lock()
@@ -668,7 +668,7 @@ type mockModelStoreWithLimit struct {
 	limit int
 }
 
-func (m mockModelStoreWithLimit) GetModel(_ context.Context, _ string) (*modelsdev.Model, error) {
+func (m mockModelStoreWithLimit) GetModel(_ context.Context, _ modelsdev.ID) (*modelsdev.Model, error) {
 	return &modelsdev.Model{Limit: modelsdev.Limit{Context: m.limit}, Cost: &modelsdev.Cost{}}, nil
 }
 
@@ -724,7 +724,7 @@ type errorProvider struct {
 	err error
 }
 
-func (p *errorProvider) ID() string { return p.id }
+func (p *errorProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(p.id) }
 
 func (p *errorProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
 	return nil, p.err
@@ -2526,7 +2526,7 @@ type recordingProvider struct {
 	recordedCalls [][]tools.Tool // tools passed on each call
 }
 
-func (r *recordingProvider) ID() string { return r.id }
+func (r *recordingProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(r.id) }
 
 func (r *recordingProvider) CreateChatCompletionStream(_ context.Context, _ []chat.Message, toolList []tools.Tool) (chat.MessageStream, error) {
 	r.mu.Lock()
@@ -2732,7 +2732,7 @@ type messageRecordingProvider struct {
 	recordedMessages [][]chat.Message // messages passed on each call
 }
 
-func (p *messageRecordingProvider) ID() string { return p.id }
+func (p *messageRecordingProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(p.id) }
 
 func (p *messageRecordingProvider) CreateChatCompletionStream(_ context.Context, msgs []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
 	p.mu.Lock()
@@ -2988,7 +2988,7 @@ type steerInjectProvider struct {
 	mu      sync.Mutex
 }
 
-func (p *steerInjectProvider) ID() string { return p.id }
+func (p *steerInjectProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(p.id) }
 
 func (p *steerInjectProvider) CreateChatCompletionStream(_ context.Context, _ []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
 	p.mu.Lock()

@@ -13,13 +13,14 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/compaction"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-type fakeProvider struct{ id string }
+type fakeProvider struct{ id modelsdev.ID }
 
-func (p fakeProvider) ID() string { return p.id }
+func (p fakeProvider) ID() modelsdev.ID { return p.id }
 
 func (p fakeProvider) BaseConfig() base.Config { return base.Config{} }
 
@@ -350,7 +351,7 @@ func TestRunLLM_DoesNotDuplicateSystemPrompt(t *testing.T) {
 	sess := session.New(session.WithMessages([]session.Item{
 		session.NewMessageItem(&session.Message{Message: chat.Message{Role: chat.MessageRoleUser, Content: "please summarize"}}),
 	}))
-	a := agent.New("test", "parent prompt", agent.WithModel(fakeProvider{id: "fake/model"}))
+	a := agent.New("test", "parent prompt", agent.WithModel(fakeProvider{id: modelsdev.NewID("fake", "model")}))
 
 	var systemPromptCount int
 	result, err := RunLLM(t.Context(), LLMArgs{

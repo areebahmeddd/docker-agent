@@ -65,13 +65,9 @@ func (t *Team) AgentsInfo() []AgentInfo {
 			Commands:    a.Commands(),
 		}
 		if model := a.Model(context.TODO()); model != nil {
-			modelID := model.ID()
-			if prov, modelName, found := strings.Cut(modelID, "/"); found {
-				info.Provider = prov
-				info.Model = modelName
-			} else {
-				info.Model = modelID
-			}
+			id := model.ID()
+			info.Provider = id.Provider
+			info.Model = id.Model
 		}
 		infos = append(infos, info)
 	}

@@ -366,7 +366,7 @@ func TestConvertMessagesToGemini_ThoughtSignature(t *testing.T) {
 			contents := convertMessagesToGemini(t.Context(), []chat.Message{
 				{Role: chat.MessageRoleUser, Content: "go"},
 				tt.message,
-			}, "", modelsdev.NewDatabaseStore(&modelsdev.Database{}))
+			}, modelsdev.ID{}, modelsdev.NewDatabaseStore(&modelsdev.Database{}))
 
 			require.Len(t, contents, 2)
 			assistant := contents[1]

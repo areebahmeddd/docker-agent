@@ -120,33 +120,32 @@ func (s *Store) getProvider(ctx context.Context, providerID string) (*Provider, 
 	return &provider, nil
 }
 
-// GetModel returns a specific model by provider ID and model ID.
-func (s *Store) GetModel(ctx context.Context, id string) (*Model, error) {
-	parts := strings.SplitN(id, "/", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid model ID: %q", id)
+// GetModel returns a specific model by ID. The ID must carry both a
+// provider and a model component; pass the result of [NewID], [ParseID],
+// or a provider's [ID] method.
+func (s *Store) GetModel(ctx context.Context, id ID) (*Model, error) {
+	if !id.IsValid() {
+		return nil, fmt.Errorf("invalid model ID: %q", id.String())
 	}
-	providerID := parts[0]
-	modelID := parts[1]
 
-	provider, err := s.getProvider(ctx, providerID)
+	provider, err := s.getProvider(ctx, id.Provider)
 	if err != nil {
 		return nil, err
 	}
 
-	model, exists := provider.Models[modelID]
+	model, exists := provider.Models[id.Model]
 
 	// For amazon-bedrock, try stripping region/inference profile prefixes.
 	// Bedrock uses prefixes for cross-region inference profiles,
 	// but models.dev stores models without these prefixes.
-	if !exists && providerID == "amazon-bedrock" {
-		if prefix, after, ok := strings.Cut(modelID, "."); ok && bedrockRegionPrefixes[prefix] {
+	if !exists && id.Provider == "amazon-bedrock" {
+		if prefix, after, ok := strings.Cut(id.Model, "."); ok && bedrockRegionPrefixes[prefix] {
 			model, exists = provider.Models[after]
 		}
 	}
 
 	if !exists {
-		return nil, fmt.Errorf("model %q not found in provider %q", modelID, providerID)
+		return nil, fmt.Errorf("model %q not found in provider %q", id.Model, id.Provider)
 	}
 
 	return &model, nil

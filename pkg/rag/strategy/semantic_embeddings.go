@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/js"
 	"github.com/docker/docker-agent/pkg/model/provider"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/rag/chunk"
 	"github.com/docker/docker-agent/pkg/rag/types"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -94,8 +95,8 @@ func NewSemanticEmbeddingsFromConfig(ctx context.Context, cfg latest.RAGStrategy
 	}
 
 	chatModelID := chatProvider.ID()
-	if chatModelID == "" && chatModelCfg.Provider != "" && chatModelCfg.Model != "" {
-		chatModelID = fmt.Sprintf("%s/%s", chatModelCfg.Provider, chatModelCfg.Model)
+	if chatModelID.IsZero() && chatModelCfg.Provider != "" && chatModelCfg.Model != "" {
+		chatModelID = modelsdev.NewID(chatModelCfg.Provider, chatModelCfg.Model)
 	}
 
 	// Get optional parameters with defaults
@@ -500,15 +501,15 @@ func humanizeMetadataKey(key string) string {
 }
 
 // calculateSemanticUsageCost calculates cost for semantic LLM usage.
-func calculateSemanticUsageCost(modelsStore modelStore, modelID string, usage *chat.Usage) float64 {
-	if usage == nil || modelsStore == nil || modelID == "" || strings.HasPrefix(modelID, "dmr/") {
+func calculateSemanticUsageCost(modelsStore modelStore, id modelsdev.ID, usage *chat.Usage) float64 {
+	if usage == nil || modelsStore == nil || !id.IsValid() || id.Provider == "dmr" {
 		return 0
 	}
 
-	model, err := modelsStore.GetModel(context.Background(), modelID)
+	model, err := modelsStore.GetModel(context.Background(), id)
 	if err != nil {
 		slog.Debug("Failed to get semantic model pricing from models.dev, cost will be 0",
-			"model_id", modelID,
+			"model_id", id.String(),
 			"error", err)
 		return 0
 	}

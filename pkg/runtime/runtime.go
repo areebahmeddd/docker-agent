@@ -159,7 +159,7 @@ type CurrentAgentInfo struct {
 }
 
 type ModelStore interface {
-	GetModel(ctx context.Context, modelID string) (*modelsdev.Model, error)
+	GetModel(ctx context.Context, id modelsdev.ID) (*modelsdev.Model, error)
 	GetDatabase(ctx context.Context) (*modelsdev.Database, error)
 }
 
@@ -852,18 +852,19 @@ func (r *LocalRuntime) TitleGenerator() *sessiontitle.Generator {
 	return sessiontitle.New(model, a.FallbackModels()...)
 }
 
-// getAgentModelID returns the model ID for an agent, or empty string if no model is set.
-func getAgentModelID(a *agent.Agent) string {
+// getAgentModelID returns the model ID for an agent. The zero ID is
+// returned when no model is configured.
+func getAgentModelID(a *agent.Agent) modelsdev.ID {
 	if model := a.Model(context.TODO()); model != nil {
 		return model.ID()
 	}
-	return ""
+	return modelsdev.ID{}
 }
 
 // getEffectiveModelID returns the currently active model ID for an agent, accounting
 // for any active fallback cooldown. During a cooldown period, this returns the fallback
 // model ID instead of the configured primary model, so the UI reflects the actual model in use.
-func (r *LocalRuntime) getEffectiveModelID(a *agent.Agent) string {
+func (r *LocalRuntime) getEffectiveModelID(a *agent.Agent) modelsdev.ID {
 	cooldownState := r.fallback.cooldowns.Get(a.Name())
 	if cooldownState != nil {
 		fallbacks := a.FallbackModels()
@@ -891,15 +892,9 @@ func (r *LocalRuntime) agentDetailsFromTeam() []AgentDetails {
 			if a, err := r.team.Agent(info.Name); err == nil && a != nil {
 				fallbacks := a.FallbackModels()
 				if cooldownState.fallbackIndex >= 0 && cooldownState.fallbackIndex < len(fallbacks) {
-					fb := fallbacks[cooldownState.fallbackIndex]
-					// Parse provider/model from the fallback model ID
-					modelID := fb.ID()
-					if p, m, found := strings.Cut(modelID, "/"); found {
-						providerName = p
-						modelName = m
-					} else {
-						modelName = modelID
-					}
+					fb := fallbacks[cooldownState.fallbackIndex].ID()
+					providerName = fb.Provider
+					modelName = fb.Model
 				}
 			}
 		}
@@ -1018,7 +1013,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 	// Emit agent and team information immediately for fast sidebar display
 	// Use getEffectiveModelID to account for active fallback cooldowns
 	modelID := r.getEffectiveModelID(a)
-	if !send(AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage())) {
+	if !send(AgentInfo(a.Name(), modelID.String(), a.Description(), a.WelcomeMessage())) {
 		return
 	}
 	if !send(TeamInfo(r.agentDetailsFromTeam(), r.CurrentAgentName())) {

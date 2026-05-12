@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 // TestResolveRoutedModel_NamedReference verifies that a model name in the
@@ -20,7 +21,7 @@ func TestResolveRoutedModel_NamedReference(t *testing.T) {
 	withFactories(t, map[string]providerFactory{
 		"openai": func(_ context.Context, cfg *latest.ModelConfig, _ environment.Provider, _ ...options.Opt) (Provider, error) {
 			capturedCfg = cfg
-			return &fakeProvider{id: "captured"}, nil
+			return &fakeProvider{id: modelsdev.NewID("openai", "captured")}, nil
 		},
 	})
 
@@ -44,7 +45,7 @@ func TestResolveRoutedModel_InlineSpec(t *testing.T) {
 	withFactories(t, map[string]providerFactory{
 		"openai": func(_ context.Context, cfg *latest.ModelConfig, _ environment.Provider, _ ...options.Opt) (Provider, error) {
 			capturedCfg = cfg
-			return &fakeProvider{id: "captured"}, nil
+			return &fakeProvider{id: modelsdev.NewID("openai", "captured")}, nil
 		},
 	})
 
@@ -131,7 +132,7 @@ func TestResolveRoutedModel_OptionsForwarded(t *testing.T) {
 	withFactories(t, map[string]providerFactory{
 		"openai": func(_ context.Context, _ *latest.ModelConfig, _ environment.Provider, opts ...options.Opt) (Provider, error) {
 			capturedOpts = opts
-			return &fakeProvider{id: "ok"}, nil
+			return &fakeProvider{id: modelsdev.NewID("openai", "ok")}, nil
 		},
 	})
 

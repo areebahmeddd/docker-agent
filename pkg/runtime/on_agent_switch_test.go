@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -128,7 +129,7 @@ type endpointProvider struct {
 	cfg base.Config
 }
 
-func (p *endpointProvider) ID() string { return p.cfg.ID() }
+func (p *endpointProvider) ID() modelsdev.ID { return p.cfg.ID() }
 
 func (p *endpointProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
 	return &mockStream{}, nil

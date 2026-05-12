@@ -25,14 +25,19 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/rag/types"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // Provider defines the interface for model providers.
 type Provider interface {
-	// ID returns the model provider ID
-	ID() string
+	// ID returns the provider-qualified model identity. Returning a
+	// [modelsdev.ID] (rather than a bare string) prevents callers from
+	// silently forgetting to namespace the model when it crosses an API
+	// boundary; use [modelsdev.ID.String] when a textual representation
+	// is required.
+	ID() modelsdev.ID
 	// CreateChatCompletionStream creates a streaming chat completion request.
 	// It returns a stream that can be iterated over to get completion chunks.
 	CreateChatCompletionStream(

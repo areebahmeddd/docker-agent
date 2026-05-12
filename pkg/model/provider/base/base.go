@@ -4,6 +4,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 const NoDesktopTokenErrorMessage = "failed to get Docker Desktop token for Gateway. Is Docker Desktop running and are you signed in?"
@@ -30,11 +31,13 @@ type Config struct {
 	BaseURL string
 }
 
-// ID returns the provider and model ID in the format "provider/model".
-// Uses DisplayModel (the original user-configured name) when available,
+// ID returns the provider and model identity as a [modelsdev.ID] so
+// callers cannot accidentally pass a bare model string where a
+// provider-qualified identity is required. The model component uses
+// DisplayModel (the original user-configured name) when available,
 // falling back to Model (the resolved/pinned name).
-func (c *Config) ID() string {
-	return c.ModelConfig.Provider + "/" + c.ModelConfig.DisplayOrModel()
+func (c *Config) ID() modelsdev.ID {
+	return modelsdev.NewID(c.ModelConfig.Provider, c.ModelConfig.DisplayOrModel())
 }
 
 func (c *Config) BaseConfig() Config {

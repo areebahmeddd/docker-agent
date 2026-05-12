@@ -158,27 +158,27 @@ func IsBedrockClaudeID(modelID string) bool {
 //
 // Pass a nil store to skip the models.dev lookup entirely (the name-pattern
 // fallback still works, which is fine for the common case).
-func IsClaude(ctx context.Context, store *modelsdev.Store, providerID, modelID string) bool {
-	if family := LookupFamily(ctx, store, providerID, modelID); family != "" {
+func IsClaude(ctx context.Context, store *modelsdev.Store, id modelsdev.ID) bool {
+	if family := LookupFamily(ctx, store, id); family != "" {
 		return IsClaudeFamily(family)
 	}
-	if IsBedrockClaudeID(modelID) {
+	if IsBedrockClaudeID(id.Model) {
 		return true
 	}
-	return strings.HasPrefix(normalize(modelID), "claude-")
+	return strings.HasPrefix(normalize(id.Model), "claude-")
 }
 
 // LookupFamily returns the canonical model family identifier from models.dev
 // (e.g. "claude-opus", "claude-sonnet", "gemini-pro", "o", "o-mini", "gpt").
 //
-// Returns "" when the store is nil, the providerID/modelID is empty, or the
+// Returns "" when the store is nil, the id is incomplete, or the
 // model is not registered in the database. Callers that want a non-empty
 // answer for unknown models should fall back to a name-pattern heuristic.
-func LookupFamily(ctx context.Context, store *modelsdev.Store, providerID, modelID string) string {
-	if store == nil || providerID == "" || modelID == "" {
+func LookupFamily(ctx context.Context, store *modelsdev.Store, id modelsdev.ID) string {
+	if store == nil || !id.IsValid() {
 		return ""
 	}
-	m, err := store.GetModel(ctx, providerID+"/"+modelID)
+	m, err := store.GetModel(ctx, id)
 	if err != nil || m == nil {
 		return ""
 	}
@@ -244,13 +244,11 @@ func (mc ModelCapabilities) Supports(mimeType string) bool {
 const loadCapsTimeout = 10 * time.Second
 
 // LoadCaps fetches (or returns from cache) the capability record for the given
-// model ID using the provided store. The model ID should be in
-// "provider/model" format as used by models.dev
-// (e.g. "anthropic/claude-3-5-sonnet-20241022").
+// model ID using the provided store.
 //
 // When the store is nil or the model is not found, LoadCaps returns a
 // conservative capability set that only allows text MIME types.
-func LoadCaps(store *modelsdev.Store, modelID string) ModelCapabilities {
+func LoadCaps(store *modelsdev.Store, id modelsdev.ID) ModelCapabilities {
 	if store == nil {
 		return ModelCapabilities{}
 	}
@@ -258,11 +256,11 @@ func LoadCaps(store *modelsdev.Store, modelID string) ModelCapabilities {
 	ctx, cancel := context.WithTimeout(context.Background(), loadCapsTimeout)
 	defer cancel()
 
-	model, err := store.GetModel(ctx, modelID)
+	model, err := store.GetModel(ctx, id)
 	if err != nil {
 		if ctx.Err() != nil {
 			slog.WarnContext(ctx, "modelinfo: models.dev lookup timed out, using conservative caps",
-				"model", modelID, "timeout", loadCapsTimeout)
+				"model", id.String(), "timeout", loadCapsTimeout)
 		}
 		return ModelCapabilities{}
 	}

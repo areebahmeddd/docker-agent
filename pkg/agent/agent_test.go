@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -127,10 +128,10 @@ func TestAgentTools(t *testing.T) {
 
 // mockProvider implements provider.Provider for testing
 type mockProvider struct {
-	id string
+	id modelsdev.ID
 }
 
-func (m *mockProvider) ID() string { return m.id }
+func (m *mockProvider) ID() modelsdev.ID { return m.id }
 func (m *mockProvider) CreateChatCompletionStream(_ context.Context, _ []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
 	return nil, nil
 }
@@ -139,29 +140,29 @@ func (m *mockProvider) BaseConfig() base.Config { return base.Config{} }
 func TestModelOverride(t *testing.T) {
 	t.Parallel()
 
-	defaultModel := &mockProvider{id: "openai/gpt-4o"}
-	overrideModel := &mockProvider{id: "anthropic/claude-sonnet-4-0"}
+	defaultModel := &mockProvider{id: modelsdev.NewID("openai", "gpt-4o")}
+	overrideModel := &mockProvider{id: modelsdev.NewID("anthropic", "claude-sonnet-4-0")}
 
 	a := New("root", "test", WithModel(defaultModel))
 
 	// Initially should return the default model
-	assert.Equal(t, "openai/gpt-4o", a.Model(t.Context()).ID())
+	assert.Equal(t, "openai/gpt-4o", a.Model(t.Context()).ID().String())
 	assert.False(t, a.HasModelOverride())
 
 	// Set an override
 	a.SetModelOverride(overrideModel)
 	assert.True(t, a.HasModelOverride())
-	assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model(t.Context()).ID())
+	assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model(t.Context()).ID().String())
 
 	// ConfiguredModels still reflects the originally configured models
 	configuredModels := a.ConfiguredModels()
 	require.Len(t, configuredModels, 1)
-	assert.Equal(t, "openai/gpt-4o", configuredModels[0].ID())
+	assert.Equal(t, "openai/gpt-4o", configuredModels[0].ID().String())
 
 	// Clear the override
 	a.SetModelOverride(nil)
 	assert.False(t, a.HasModelOverride())
-	assert.Equal(t, "openai/gpt-4o", a.Model(t.Context()).ID())
+	assert.Equal(t, "openai/gpt-4o", a.Model(t.Context()).ID().String())
 }
 
 func TestSetModelOverride_ReturnsSnapshotOfStoredValue(t *testing.T) {
@@ -174,9 +175,9 @@ func TestSetModelOverride_ReturnsSnapshotOfStoredValue(t *testing.T) {
 	// change wins) instead of incorrectly succeeding.
 	t.Parallel()
 
-	defaultModel := &mockProvider{id: "default"}
-	oursModel := &mockProvider{id: "ours"}
-	othersModel := &mockProvider{id: "others"}
+	defaultModel := &mockProvider{id: modelsdev.NewID("default", "x")}
+	oursModel := &mockProvider{id: modelsdev.NewID("ours", "x")}
+	othersModel := &mockProvider{id: modelsdev.NewID("others", "x")}
 
 	a := New("root", "test", WithModel(defaultModel))
 
@@ -187,19 +188,19 @@ func TestSetModelOverride_ReturnsSnapshotOfStoredValue(t *testing.T) {
 	// Simulate a concurrent caller storing a different override _after_ we
 	// stored ours but _before_ a hypothetical post-store SnapshotModelOverride.
 	a.SetModelOverride(othersModel)
-	require.Equal(t, "others", a.Model(t.Context()).ID())
+	require.Equal(t, "others/x", a.Model(t.Context()).ID().String())
 
 	// The deferred restore must be a no-op because oursSnap holds the
 	// pointer we stored, not the current pointer.
 	a.RestoreModelOverride(prev, oursSnap)
-	assert.Equal(t, "others", a.Model(t.Context()).ID(),
+	assert.Equal(t, "others/x", a.Model(t.Context()).ID().String(),
 		"concurrent override must be preserved; the snapshot returned by SetModelOverride captures the stored pointer")
 }
 
 func TestSetModelOverride_ClearReturnsZeroSnapshot(t *testing.T) {
 	t.Parallel()
 
-	a := New("root", "test", WithModel(&mockProvider{id: "default"}))
+	a := New("root", "test", WithModel(&mockProvider{id: modelsdev.NewID("default", "x")}))
 
 	// Calling SetModelOverride with no providers (or nil) clears the override.
 	// The returned snapshot should round-trip cleanly through RestoreModelOverride.
@@ -207,7 +208,7 @@ func TestSetModelOverride_ClearReturnsZeroSnapshot(t *testing.T) {
 	assert.False(t, a.HasModelOverride())
 
 	// Now set an override and restore using `cleared` as `prev`.
-	oursSnap := a.SetModelOverride(&mockProvider{id: "ours"})
+	oursSnap := a.SetModelOverride(&mockProvider{id: modelsdev.NewID("ours", "x")})
 	require.True(t, a.HasModelOverride())
 
 	a.RestoreModelOverride(cleared, oursSnap)
@@ -217,9 +218,9 @@ func TestSetModelOverride_ClearReturnsZeroSnapshot(t *testing.T) {
 func TestSnapshotAndRestoreModelOverride(t *testing.T) {
 	t.Parallel()
 
-	defaultModel := &mockProvider{id: "openai/gpt-4o"}
-	skillModel := &mockProvider{id: "openai/gpt-4o-mini"}
-	userModel := &mockProvider{id: "anthropic/claude-sonnet-4-0"}
+	defaultModel := &mockProvider{id: modelsdev.NewID("openai", "gpt-4o")}
+	skillModel := &mockProvider{id: modelsdev.NewID("openai", "gpt-4o-mini")}
+	userModel := &mockProvider{id: modelsdev.NewID("anthropic", "claude-sonnet-4-0")}
 
 	t.Run("restores when no concurrent change", func(t *testing.T) {
 		t.Parallel()
@@ -228,11 +229,11 @@ func TestSnapshotAndRestoreModelOverride(t *testing.T) {
 		prev := a.SnapshotModelOverride()
 		a.SetModelOverride(skillModel)
 		ours := a.SnapshotModelOverride()
-		assert.Equal(t, "openai/gpt-4o-mini", a.Model(t.Context()).ID())
+		assert.Equal(t, "openai/gpt-4o-mini", a.Model(t.Context()).ID().String())
 
 		a.RestoreModelOverride(prev, ours)
 		assert.False(t, a.HasModelOverride())
-		assert.Equal(t, "openai/gpt-4o", a.Model(t.Context()).ID())
+		assert.Equal(t, "openai/gpt-4o", a.Model(t.Context()).ID().String())
 	})
 
 	t.Run("restores back to a pre-existing override", func(t *testing.T) {
@@ -243,10 +244,10 @@ func TestSnapshotAndRestoreModelOverride(t *testing.T) {
 		prev := a.SnapshotModelOverride()
 		a.SetModelOverride(skillModel)
 		ours := a.SnapshotModelOverride()
-		assert.Equal(t, "openai/gpt-4o-mini", a.Model(t.Context()).ID())
+		assert.Equal(t, "openai/gpt-4o-mini", a.Model(t.Context()).ID().String())
 
 		a.RestoreModelOverride(prev, ours)
-		assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model(t.Context()).ID())
+		assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model(t.Context()).ID().String())
 	})
 
 	t.Run("keeps a concurrent change instead of restoring", func(t *testing.T) {
@@ -266,7 +267,7 @@ func TestSnapshotAndRestoreModelOverride(t *testing.T) {
 
 		a.RestoreModelOverride(prev, ours)
 		require.True(t, a.HasModelOverride(), "user's model choice must be preserved")
-		assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model(t.Context()).ID())
+		assert.Equal(t, "anthropic/claude-sonnet-4-0", a.Model(t.Context()).ID().String())
 	})
 
 	t.Run("keeps a concurrent clear instead of restoring", func(t *testing.T) {
@@ -297,8 +298,8 @@ func TestModel_LogsSelection(t *testing.T) {
 	slog.SetDefault(slog.New(handler))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	model1 := &mockProvider{id: "anthropic/claude-sonnet-4-0"}
-	model2 := &mockProvider{id: "openai/gpt-4o"}
+	model1 := &mockProvider{id: modelsdev.NewID("anthropic", "claude-sonnet-4-0")}
+	model2 := &mockProvider{id: modelsdev.NewID("openai", "gpt-4o")}
 
 	a := New("scanner", "test", WithModel(model1), WithModel(model2))
 
@@ -308,18 +309,18 @@ func TestModel_LogsSelection(t *testing.T) {
 
 	assert.Contains(t, logOutput, "Model selected")
 	assert.Contains(t, logOutput, "agent=scanner")
-	assert.Contains(t, logOutput, selected.ID())
+	assert.Contains(t, logOutput, selected.ID().String())
 	assert.Contains(t, logOutput, "pool_size=2")
 
 	// Verify override scenario logs correct pool_size
 	buf.Reset()
-	override := &mockProvider{id: "google/gemini-2.0-flash"}
+	override := &mockProvider{id: modelsdev.NewID("google", "gemini-2.0-flash")}
 	a.SetModelOverride(override)
 
 	selected = a.Model(t.Context())
 	logOutput = buf.String()
 
-	assert.Equal(t, "google/gemini-2.0-flash", selected.ID())
+	assert.Equal(t, "google/gemini-2.0-flash", selected.ID().String())
 	assert.Contains(t, logOutput, "google/gemini-2.0-flash")
 	assert.Contains(t, logOutput, "pool_size=1")
 }
@@ -327,8 +328,8 @@ func TestModel_LogsSelection(t *testing.T) {
 func TestModelOverride_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
-	defaultModel := &mockProvider{id: "default"}
-	overrideModel := &mockProvider{id: "override"}
+	defaultModel := &mockProvider{id: modelsdev.NewID("default", "x")}
+	overrideModel := &mockProvider{id: modelsdev.NewID("override", "x")}
 
 	a := New("root", "test", WithModel(defaultModel))
 

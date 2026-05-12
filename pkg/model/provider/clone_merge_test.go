@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
 func TestMergeCloneOptions_NoOverrides(t *testing.T) {
@@ -120,7 +121,7 @@ func TestMergeCloneOptions_LaterOverridesWin(t *testing.T) {
 func TestCloneWithOptions_FallbackOnError(t *testing.T) {
 	// fakeProvider returns a zero-valued base.Config, so its Provider type is
 	// empty; that always fails the factory-registry lookup in createDirectProvider.
-	original := &fakeProvider{id: "original"}
+	original := &fakeProvider{id: modelsdev.NewID("test", "original")}
 
 	got := CloneWithOptions(t.Context(), original, options.WithMaxTokens(int64(2048)))
 
