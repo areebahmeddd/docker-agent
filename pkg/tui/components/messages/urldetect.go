@@ -18,6 +18,31 @@ type hoveredURL struct {
 	endCol   int // display column where URL ends (exclusive)
 }
 
+// urlSpanCache caches parsed URL spans per rendered line index.
+// Cleared when renderedLines changes (renderDirty rebuild).
+type urlSpanCache struct {
+	spans map[int][]urlSpan
+}
+
+func newURLSpanCache() *urlSpanCache {
+	return &urlSpanCache{spans: make(map[int][]urlSpan)}
+}
+
+// get returns the cached URL spans for the given line, parsing on first access.
+func (c *urlSpanCache) get(line int, renderedLine string) []urlSpan {
+	if spans, ok := c.spans[line]; ok {
+		return spans
+	}
+	spans := findAllURLSpans(renderedLine)
+	c.spans[line] = spans
+	return spans
+}
+
+// clear resets the cache (called when rendered lines change).
+func (c *urlSpanCache) clear() {
+	c.spans = make(map[int][]urlSpan)
+}
+
 // urlAtPosition extracts a URL from the rendered line at the given display column.
 // Returns the URL string if found, or empty string if the click position is not on a URL.
 func urlAtPosition(renderedLine string, col int) string {
@@ -310,7 +335,12 @@ func (m *model) urlAt(line, col int) string {
 	if line < 0 || line >= len(m.renderedLines) {
 		return ""
 	}
-	return urlAtPosition(m.renderedLines[line], col)
+	for _, span := range m.urlSpans.get(line, m.renderedLines[line]) {
+		if col >= span.startCol && col < span.endCol {
+			return span.url
+		}
+	}
+	return ""
 }
 
 // updateHoveredURL updates the hovered URL state based on mouse position.
@@ -318,7 +348,7 @@ func (m *model) updateHoveredURL(line, col int) {
 	m.ensureAllItemsRendered()
 
 	if line >= 0 && line < len(m.renderedLines) {
-		for _, span := range findAllURLSpans(m.renderedLines[line]) {
+		for _, span := range m.urlSpans.get(line, m.renderedLines[line]) {
 			if col >= span.startCol && col < span.endCol {
 				newHover := &hoveredURL{line: line, startCol: span.startCol, endCol: span.endCol}
 				if m.hoveredURL == nil || *m.hoveredURL != *newHover {

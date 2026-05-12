@@ -2,6 +2,7 @@ package messages
 
 import (
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -11,7 +12,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/docker/docker-agent/pkg/chat"
@@ -80,8 +80,9 @@ type Model interface {
 
 // renderedItem represents a cached rendered message with position information
 type renderedItem struct {
-	view   string // Cached rendered content
-	height int    // Height in lines
+	view   string   // Cached rendered content
+	lines  []string // Pre-split lines (avoids re-splitting on every rebuild)
+	height int      // Height in lines
 }
 
 // blockIDCounter generates unique IDs for reasoning blocks.
@@ -105,6 +106,8 @@ type model struct {
 	slackAnimationSub animation.Subscription // Subscription to animation ticks while slack > 0
 	renderedLines     []string               // Cached rendered content as lines (avoids split/join per frame)
 	renderedItems     map[int]renderedItem   // Cache of rendered items with positions
+	urlSpans          *urlSpanCache          // Cached URL spans per rendered line
+	lineOffsets       []int                  // Prefix-sum: lineOffsets[i] = starting global line of view i
 	totalHeight       int                    // Total height of all content in lines
 	renderDirty       bool                   // True when rendered content needs rebuild
 
@@ -156,6 +159,7 @@ func newModel(width, height int, sessionState *service.SessionState) *model {
 		width:                width,
 		height:               height,
 		renderedItems:        make(map[int]renderedItem),
+		urlSpans:             newURLSpanCache(),
 		sessionState:         sessionState,
 		scrollview:           sv,
 		selectedMessageIndex: -1,
@@ -340,24 +344,26 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) (layout.Model, tea.Cmd) 
 func (m *model) globalLineToMessageLine(globalLine int) (msgIdx, localLine int) {
 	m.ensureAllItemsRendered()
 
-	currentLine := 0
-	for i, view := range m.views {
-		item := m.renderItem(i, view)
-		if item.height == 0 {
-			continue
-		}
-
-		endLine := currentLine + item.height
-		if globalLine >= currentLine && globalLine < endLine {
-			return i, globalLine - currentLine
-		}
-
-		currentLine = endLine
-		if m.needsSeparator(i) {
-			currentLine++ // Account for separator line
-		}
+	if len(m.lineOffsets) == 0 || globalLine < 0 || globalLine >= m.totalHeight {
+		return -1, -1
 	}
 
+	// Binary search: find the last view whose offset <= globalLine
+	i := sort.Search(len(m.lineOffsets), func(i int) bool {
+		return m.lineOffsets[i] > globalLine
+	}) - 1
+
+	if i < 0 || i >= len(m.views) {
+		return -1, -1
+	}
+
+	item := m.renderItem(i, m.views[i])
+	local := globalLine - m.lineOffsets[i]
+	if local < item.height {
+		return i, local
+	}
+
+	// globalLine falls in a separator gap between messages
 	return -1, -1
 }
 
@@ -666,18 +672,23 @@ func (m *model) Focus() tea.Cmd {
 		// Fall back to last selectable if no assistant messages
 		m.selectedMessageIndex = m.findLastSelectableMessage()
 	}
-	// Invalidate render cache so selection highlight is shown
-	m.invalidateAllItems()
+	// Only invalidate the newly selected message
+	if m.selectedMessageIndex >= 0 {
+		m.invalidateItem(m.selectedMessageIndex)
+	}
 	m.renderDirty = true
 	return nil
 }
 
 // Blur removes focus from the component
 func (m *model) Blur() tea.Cmd {
+	oldIndex := m.selectedMessageIndex
 	m.focused = false
 	m.selectedMessageIndex = -1
-	// Invalidate render cache so selection highlight is cleared
-	m.invalidateAllItems()
+	// Only invalidate the previously selected message
+	if oldIndex >= 0 {
+		m.invalidateItem(oldIndex)
+	}
 	m.renderDirty = true
 	return nil
 }
@@ -698,7 +709,13 @@ func (m *model) FocusAt(x, y int) tea.Cmd {
 		}
 	}
 
-	m.invalidateAllItems()
+	// Only invalidate the old and new selected messages
+	if oldIndex >= 0 {
+		m.invalidateItem(oldIndex)
+	}
+	if m.selectedMessageIndex >= 0 && m.selectedMessageIndex != oldIndex {
+		m.invalidateItem(m.selectedMessageIndex)
+	}
 	m.renderDirty = true
 
 	if m.messageTypeChanged(oldIndex, m.selectedMessageIndex) {
@@ -892,7 +909,11 @@ func (m *model) selectPreviousMessage() tea.Cmd {
 	if prevIndex := m.findPreviousSelectableMessage(m.selectedMessageIndex); prevIndex >= 0 {
 		oldIndex := m.selectedMessageIndex
 		m.selectedMessageIndex = prevIndex
-		m.invalidateAllItems()
+		if oldIndex >= 0 {
+			m.invalidateItem(oldIndex)
+		}
+		m.invalidateItem(prevIndex)
+		m.renderDirty = true
 		m.scrollToSelectedMessage()
 		if m.messageTypeChanged(oldIndex, prevIndex) {
 			return core.CmdHandler(messages.InvalidateStatusBarMsg{})
@@ -908,7 +929,11 @@ func (m *model) selectNextMessage() tea.Cmd {
 	if nextIndex := m.findNextSelectableMessage(m.selectedMessageIndex); nextIndex >= 0 {
 		oldIndex := m.selectedMessageIndex
 		m.selectedMessageIndex = nextIndex
-		m.invalidateAllItems()
+		if oldIndex >= 0 {
+			m.invalidateItem(oldIndex)
+		}
+		m.invalidateItem(nextIndex)
+		m.renderDirty = true
 		m.scrollToSelectedMessage()
 		if m.messageTypeChanged(oldIndex, nextIndex) {
 			return core.CmdHandler(messages.InvalidateStatusBarMsg{})
@@ -932,20 +957,14 @@ func (m *model) scrollToSelectedMessage() {
 		return
 	}
 
-	// Ensure all items are rendered so totalHeight is accurate
+	// Ensure all items are rendered so lineOffsets and totalHeight are accurate
 	m.ensureAllItemsRendered()
 
-	// Calculate the line range for the selected message
-	startLine := 0
-	for i := range m.selectedMessageIndex {
-		if i < len(m.views) {
-			item := m.renderItem(i, m.views[i])
-			startLine += item.height
-			if m.needsSeparator(i) {
-				startLine++
-			}
-		}
+	if m.selectedMessageIndex >= len(m.lineOffsets) {
+		return
 	}
+
+	startLine := m.lineOffsets[m.selectedMessageIndex]
 
 	var selectedHeight int
 	if m.selectedMessageIndex < len(m.views) {
@@ -992,8 +1011,11 @@ func (m *model) renderItem(index int, view layout.Model) renderedItem {
 	// If this message is being inline edited, render the textarea instead
 	if index == m.inlineEditMsgIndex {
 		rendered := m.renderInlineEditTextarea()
-		height := lipgloss.Height(rendered)
-		return renderedItem{view: rendered, height: height}
+		var lines []string
+		if rendered != "" {
+			lines = strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
+		}
+		return renderedItem{view: rendered, lines: lines, height: len(lines)}
 	}
 
 	isSelected := m.focused && index == m.selectedMessageIndex
@@ -1015,12 +1037,12 @@ func (m *model) renderItem(index int, view layout.Model) renderedItem {
 	}
 
 	rendered := view.View()
-	height := lipgloss.Height(rendered)
-	if rendered == "" {
-		height = 0
+	var lines []string
+	if rendered != "" {
+		lines = strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
 	}
 
-	item := renderedItem{view: rendered, height: height}
+	item := renderedItem{view: rendered, lines: lines, height: len(lines)}
 
 	if shouldCache {
 		m.renderedItems[index] = item
@@ -1100,16 +1122,16 @@ func (m *model) ensureAllItemsRendered() {
 	}
 
 	var allLines []string
+	offsets := make([]int, len(m.views))
 
 	for i, view := range m.views {
+		offsets[i] = len(allLines)
 		item := m.renderItem(i, view)
-		if item.view == "" {
+		if len(item.lines) == 0 {
 			continue
 		}
 
-		viewContent := strings.TrimSuffix(item.view, "\n")
-		lines := strings.Split(viewContent, "\n")
-		allLines = append(allLines, lines...)
+		allLines = append(allLines, item.lines...)
 
 		if m.needsSeparator(i) {
 			allLines = append(allLines, "")
@@ -1118,7 +1140,9 @@ func (m *model) ensureAllItemsRendered() {
 
 	// Store lines directly - avoid join/split on every View() call
 	m.renderedLines = allLines
+	m.lineOffsets = offsets
 	m.totalHeight = len(allLines)
+	m.urlSpans.clear()
 	m.renderDirty = false
 }
 
@@ -1132,7 +1156,9 @@ func (m *model) invalidateItem(index int) {
 func (m *model) invalidateAllItems() {
 	m.renderedItems = make(map[int]renderedItem)
 	m.renderedLines = nil
+	m.lineOffsets = nil
 	m.totalHeight = 0
+	m.urlSpans.clear()
 	m.renderDirty = true
 }
 
@@ -1683,12 +1709,11 @@ func (m *model) isEditLabelClick(msgIdx, localLine, col int) (bool, *types.Messa
 	}
 
 	item := m.renderItem(msgIdx, m.views[msgIdx])
-	lines := strings.Split(item.view, "\n")
-	if localLine < 0 || localLine >= len(lines) {
+	if localLine < 0 || localLine >= len(item.lines) {
 		return false, nil
 	}
 
-	plainLine := ansi.Strip(lines[localLine])
+	plainLine := ansi.Strip(item.lines[localLine])
 	before, _, ok := strings.Cut(plainLine, types.UserMessageEditLabel)
 	if !ok {
 		return false, nil
@@ -1721,12 +1746,11 @@ func (m *model) isCopyLabelClick(msgIdx, localLine, col int) bool {
 	}
 
 	item := m.renderItem(msgIdx, m.views[msgIdx])
-	lines := strings.Split(item.view, "\n")
-	if localLine < 0 || localLine >= len(lines) {
+	if localLine < 0 || localLine >= len(item.lines) {
 		return false
 	}
 
-	plainLine := ansi.Strip(lines[localLine])
+	plainLine := ansi.Strip(item.lines[localLine])
 	before, _, ok := strings.Cut(plainLine, types.AssistantMessageCopyLabel)
 	if !ok {
 		return false
