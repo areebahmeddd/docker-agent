@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"golang.org/x/sync/singleflight"
@@ -60,7 +61,7 @@ func resolve(ctx context.Context, command, version string) (string, error) {
 
 	// Use singleflight to deduplicate concurrent installs of the same command.
 	result, err, _ := installGroup.Do(command, func() (any, error) {
-		return doInstall(ctx, command, version)
+		return safeInstall(ctx, command, version)
 	})
 	if err != nil {
 		return "", err
@@ -68,6 +69,27 @@ func resolve(ctx context.Context, command, version string) (string, error) {
 
 	return result.(string), nil
 }
+
+// safeInstall wraps doInstall with panic recovery. Without this,
+// singleflight wraps any panic in *panicError and re-raises it via
+// `go panic(...)` (see golang.org/x/sync/singleflight), which is
+// unrecoverable by callers and crashes the process. Issue #2765.
+func safeInstall(ctx context.Context, command, version string) (path string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.ErrorContext(ctx, "Panic during tool auto-install",
+				"command", command, "panic", r, "stack", string(debug.Stack()))
+			path = ""
+			err = fmt.Errorf("auto-install for %q panicked: %v", command, r)
+		}
+	}()
+	return doInstallFn(ctx, command, version)
+}
+
+// doInstallFn is the install function safeInstall delegates to. Indirected
+// through a var so tests can swap in a panicking implementation to verify
+// the recover path. Production code never reassigns this.
+var doInstallFn = doInstall
 
 // doInstall performs the actual package resolution and installation.
 func doInstall(ctx context.Context, command, versionRef string) (string, error) {
