@@ -476,19 +476,24 @@ func (c *Client) GetAgentToolCount(ctx context.Context, agentFilename, agentName
 }
 
 // StreamSessionEvents streams events for a session as they occur via Server-Sent Events.
+// The returned channel is closed when ctx is cancelled, the stream's max
+// duration is reached, or the server closes the connection.
 func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-chan Event, error) {
 	endpoint := fmt.Sprintf("/api/sessions/%s/events", sessionID)
 
 	u := *c.baseURL
 	u.Path = path.Join(u.Path, endpoint)
 
-	// Use long timeout for streaming
+	// Bound the maximum lifetime of a single SSE connection. The cancel
+	// must be tied to the goroutine consuming the stream, not to this
+	// function's return: cancelling streamCtx kills the in-flight HTTP
+	// request, which would turn the stream into a one-shot read.
 	timeout := c.timeoutFor("streaming")
 	streamCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
@@ -501,10 +506,12 @@ func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-c
 
 	resp, err := c.httpClient.Do(req) //nolint:bodyclose // body is closed in the goroutine below
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("performing request: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
+		defer cancel()
 		defer resp.Body.Close()
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -521,6 +528,7 @@ func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-c
 	eventChan := make(chan Event, defaultEventChannelCapacity)
 
 	go func() {
+		defer cancel()
 		defer close(eventChan)
 		defer resp.Body.Close()
 
