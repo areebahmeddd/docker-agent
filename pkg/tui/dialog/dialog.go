@@ -47,6 +47,12 @@ type Manager interface {
 	// background dialog, or nil if the top dialog is not a background dialog
 	// or the dialog stack is empty.
 	TopBackgroundEvent() tea.Msg
+	// TopDialog returns the topmost dialog instance, or nil if the dialog
+	// stack is empty. Used by the app model to stash a background dialog's
+	// live state when the user navigates away from the tab that opened it,
+	// so the same instance (with any in-progress input) can be re-opened on
+	// return.
+	TopDialog() Dialog
 }
 
 // dialogEntry pairs a dialog with its drag offset so the two stay in sync.
@@ -321,6 +327,15 @@ func (d *manager) TopBackgroundEvent() tea.Msg {
 		return nil
 	}
 	return d.stack[len(d.stack)-1].originatingEvent
+}
+
+// TopDialog returns the topmost dialog instance, or nil if the dialog stack
+// is empty.
+func (d *manager) TopDialog() Dialog {
+	if len(d.stack) == 0 {
+		return nil
+	}
+	return d.stack[len(d.stack)-1].dialog
 }
 
 func (d *manager) SetSize(width, height int) tea.Cmd {

@@ -161,6 +161,17 @@ type appModel struct {
 	// restored tab (in handleSwitchTab) and then removed from the map.
 	pendingSidebarCollapsed map[string]bool
 
+	// stashedDialogs holds background dialog instances that were on screen
+	// when the user navigated away from a tab. The dialog instance preserves
+	// in-progress input (e.g. text typed into a user_prompt elicitation) so
+	// that returning to the tab restores the same dialog rather than
+	// rebuilding a fresh one from the originating runtime event.
+	//
+	// The stored event is matched against the supervisor's pending event on
+	// return: if they no longer match (because the agent superseded the
+	// prompt) the stashed dialog is discarded and a fresh one is built.
+	stashedDialogs map[string]stashedDialog
+
 	// pendingActiveTab is the tab ID to switch to on Init(). Set when the
 	// previously focused tab differs from the initial tab.
 	pendingActiveTab string
@@ -287,6 +298,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 		history:                 historyStore,
 		pendingRestores:         make(map[string]string),
 		pendingSidebarCollapsed: make(map[string]bool),
+		stashedDialogs:          make(map[string]stashedDialog),
 		notification:            notification.New(),
 		dialogMgr:               dialog.New(),
 		completions:             completion.New(),
@@ -1249,21 +1261,39 @@ func (m *appModel) openWorkingDirPicker() (tea.Model, tea.Cmd) {
 	})
 }
 
+// stashedDialog holds a background dialog instance that was on screen when
+// the user navigated away from a tab, paired with the runtime event that
+// caused it to open. The event is used as an identity check on return: if
+// the supervisor's pending event for the tab no longer matches, the agent
+// has superseded the prompt and we discard the stash in favour of building
+// a fresh dialog from the new event.
+type stashedDialog struct {
+	dialog dialog.Dialog
+	event  tea.Msg
+}
+
 // handleSwitchTab switches to a different session.
 // Existing chat pages and editors are preserved (not recreated) so that in-flight streaming
 // content and draft text are retained when switching back to a tab.
 func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	// If a background dialog (e.g. pending elicitation) is open on the
-	// outgoing tab, capture its originating event and the outgoing tab ID
-	// before the supervisor flips activeID. We only commit the re-stash
-	// after SwitchTo succeeds — otherwise a failed switch would leave the
-	// supervisor with a stale pending event and the dialog still on screen.
+	// outgoing tab, capture both its originating event and the live dialog
+	// instance before the supervisor flips activeID. We only commit the
+	// re-stash after SwitchTo succeeds — otherwise a failed switch would
+	// leave the supervisor with a stale pending event and the dialog still
+	// on screen.
+	//
+	// Stashing the dialog instance (rather than rebuilding it from the event
+	// on return) preserves any in-progress input the user typed — e.g. text
+	// already entered into a user_prompt elicitation. See issue #2770.
 	var (
-		backgroundEvent tea.Msg
-		outgoingTabID   string
+		backgroundEvent  tea.Msg
+		backgroundDialog dialog.Dialog
+		outgoingTabID    string
 	)
 	if m.dialogMgr.Open() && m.dialogMgr.TopIsBackground() {
 		backgroundEvent = m.dialogMgr.TopBackgroundEvent()
+		backgroundDialog = m.dialogMgr.TopDialog()
 		outgoingTabID = m.supervisor.ActiveID()
 	}
 
@@ -1276,6 +1306,12 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	var closeBackgroundDialogCmd tea.Cmd
 	if backgroundEvent != nil && outgoingTabID != "" && outgoingTabID != sessionID {
 		m.supervisor.SetPendingEvent(outgoingTabID, backgroundEvent)
+		if backgroundDialog != nil {
+			m.stashedDialogs[outgoingTabID] = stashedDialog{
+				dialog: backgroundDialog,
+				event:  backgroundEvent,
+			}
+		}
 		closeBackgroundDialogCmd = core.CmdHandler(dialog.CloseDialogMsg{})
 	}
 
@@ -1372,15 +1408,36 @@ func (m *appModel) applySidebarCollapsed(sessionID string) tea.Cmd {
 // max iterations, elicitation) that was received while the tab was inactive.
 // If found, it opens the appropriate dialog. The event was already processed by the chat page
 // (updating the message list), but the dialog command was discarded for inactive sessions.
+//
+// If a stashed dialog instance is available for this session and its
+// associated event still matches the pending one, the same instance is
+// re-opened so any in-progress input survives the round trip (issue #2770).
+// Otherwise the stash is discarded and a fresh dialog is built.
 func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
 	pendingEvent := m.supervisor.ConsumePendingEvent(sessionID)
 	if pendingEvent == nil {
+		// No pending event: any stash is stale (e.g. the agent finished).
+		delete(m.stashedDialogs, sessionID)
 		return nil
 	}
 
 	sessionState, ok := m.sessionStates[sessionID]
 	if !ok {
+		delete(m.stashedDialogs, sessionID)
 		return nil
+	}
+
+	// If we stashed the live dialog instance when leaving this tab and the
+	// pending event hasn't changed, re-open the same instance so the user's
+	// in-progress input is preserved.
+	if stash, ok := m.stashedDialogs[sessionID]; ok {
+		delete(m.stashedDialogs, sessionID)
+		if stash.event == pendingEvent && stash.dialog != nil {
+			return core.CmdHandler(dialog.OpenDialogMsg{
+				Model:            stash.dialog,
+				OriginatingEvent: pendingEvent,
+			})
+		}
 	}
 
 	switch ev := pendingEvent.(type) {
@@ -1475,6 +1532,7 @@ func (m *appModel) handleCloseTab(sessionID string) (tea.Model, tea.Cmd) {
 	delete(m.sessionStates, sessionID)
 	delete(m.pendingRestores, sessionID)
 	delete(m.pendingSidebarCollapsed, sessionID)
+	delete(m.stashedDialogs, sessionID)
 
 	var cmds []tea.Cmd
 	// Remove from persistent store using the persisted session-store ID.
