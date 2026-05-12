@@ -28,7 +28,7 @@ import (
 //
 // This implements the `context: fork` behaviour from the SKILL.md frontmatter,
 // following the same convention as Claude Code.
-func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts chan Event) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink) (*tools.ToolCallResult, error) {
 	var args skills.RunSkillArgs
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)

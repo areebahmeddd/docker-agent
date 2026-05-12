@@ -40,16 +40,16 @@ func (r *LocalRuntime) registerDefaultTools() {
 	r.toolMap[skills.ToolNameRunSkill] = r.handleRunSkill
 
 	r.bgAgents.RegisterHandlers(func(name string, fn func(context.Context, *session.Session, tools.ToolCall) (*tools.ToolCallResult, error)) {
-		r.toolMap[name] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, _ chan Event) (*tools.ToolCallResult, error) {
+		r.toolMap[name] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, _ EventSink) (*tools.ToolCallResult, error) {
 			return fn(ctx, sess, tc)
 		}
 	})
 }
 
 // appendSteerAndEmit adds a steer message to the session and emits the corresponding event.
-func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessage, events chan<- Event) {
+func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessage, events EventSink) {
 	sess.AddMessage(session.UserMessage(sm.Content, sm.MultiContent...))
-	events <- UserMessage(sm.Content, sess.ID, sm.MultiContent, len(sess.Messages)-1)
+	events.Emit(UserMessage(sm.Content, sess.ID, sm.MultiContent, len(sess.Messages)-1))
 }
 
 // drainAndEmitSteered drains all messages from the steer queue and injects
@@ -72,7 +72,7 @@ func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessag
 //
 // Returns (true, messageCountBefore) if any messages were drained and emitted;
 // (false, 0) otherwise.
-func (r *LocalRuntime) drainAndEmitSteered(ctx context.Context, sess *session.Session, events chan<- Event) (bool, int) {
+func (r *LocalRuntime) drainAndEmitSteered(ctx context.Context, sess *session.Session, events EventSink) (bool, int) {
 	steered := r.steerQueue.Drain(ctx)
 	if len(steered) == 0 {
 		return false, 0
@@ -119,7 +119,7 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 	a *agent.Agent,
 	sess *session.Session,
 	message string,
-	events chan Event,
+	events EventSink,
 ) {
 	if message == "" {
 		// aggregate() always populates Result.Message on a deny
@@ -127,7 +127,7 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 		// block without a reason.
 		message = "Agent terminated by a hook."
 	}
-	events <- ErrorWithCode(ErrorCodeHookBlocked, message)
+	events.Emit(ErrorWithCode(ErrorCodeHookBlocked, message))
 	r.notifyError(ctx, a, sess.ID, message)
 }
 
@@ -181,6 +181,8 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 // goroutine so it has a real name in stack traces and is easier to navigate
 // in editors.
 func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session, events chan Event) {
+	sink := &channelSink{ch: events}
+
 	// Seed the cagent session ID at the run-loop boundary so any
 	// gateway-bound HTTP call originating from this loop can correlate
 	// back to the originating session. Plumbing happens in
@@ -209,23 +211,23 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// stable.
 	ls := &loopState{
 		maxIterations:    sess.MaxIterations,
-		sessionStartMsgs: r.executeSessionStartHooks(ctx, sess, a, events),
+		sessionStartMsgs: r.executeSessionStartHooks(ctx, sess, a, sink),
 	}
 
 	// Emit team information
-	events <- TeamInfo(r.agentDetailsFromTeam(), a.Name())
+	sink.Emit(TeamInfo(r.agentDetailsFromTeam(), a.Name()))
 
-	r.emitAgentWarnings(a, chanSend(events))
-	r.configureToolsetHandlers(a, events)
+	r.emitAgentWarnings(a, sink)
+	r.configureToolsetHandlers(a, sink)
 
-	agentTools, err := r.getTools(ctx, a, sessionSpan, events, true)
+	agentTools, err := r.getTools(ctx, a, sessionSpan, sink, true)
 	if err != nil {
-		events <- ErrorWithCode(ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err))
+		sink.Emit(ErrorWithCode(ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err)))
 		return
 	}
 	agentTools = filterExcludedTools(agentTools, sess.ExcludedTools)
 
-	events <- ToolsetInfo(len(agentTools), false, a.Name())
+	sink.Emit(ToolsetInfo(len(agentTools), false, a.Name()))
 
 	messages := sess.GetMessages(a)
 
@@ -236,23 +238,23 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// signal here too: "a real user prompt is at the tail of the session".
 	if sess.SendUserMessage && len(messages) > 0 {
 		lastMsg := messages[len(messages)-1]
-		events <- UserMessage(lastMsg.Content, sess.ID, lastMsg.MultiContent, len(sess.Messages)-1)
+		sink.Emit(UserMessage(lastMsg.Content, sess.ID, lastMsg.MultiContent, len(sess.Messages)-1))
 
 		// user_prompt_submit fires once per real user message, after
 		// session_start and before the first model call.
 		if lastMsg.Role == chat.MessageRoleUser {
-			stop, msg, ctxMsgs := r.executeUserPromptSubmitHooks(ctx, sess, a, lastMsg.Content, events)
+			stop, msg, ctxMsgs := r.executeUserPromptSubmitHooks(ctx, sess, a, lastMsg.Content, sink)
 			if stop {
 				slog.WarnContext(ctx, "user_prompt_submit hook signalled run termination",
 					"agent", a.Name(), "session_id", sess.ID, "reason", msg)
-				r.emitHookDrivenShutdown(ctx, a, sess, msg, events)
+				r.emitHookDrivenShutdown(ctx, a, sess, msg, sink)
 				return
 			}
 			ls.userPromptMsgs = ctxMsgs
 		}
 	}
 
-	events <- StreamStarted(sess.ID, a.Name())
+	sink.Emit(StreamStarted(sess.ID, a.Name()))
 
 	// streamReason records the exit reason from the final turn so
 	// finalizeEventChannel can surface it in the StreamStoppedEvent.
@@ -266,7 +268,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// skip the model entirely. The matching storage half is
 	// implemented as the cache_response stop-hook builtin (see
 	// runtime/cache.go and getHooksExecutor).
-	if r.tryReplayCachedResponse(ctx, sess, a, events) {
+	if r.tryReplayCachedResponse(ctx, sess, a, sink) {
 		return
 	}
 
@@ -300,12 +302,12 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 			ls.prevAgentName = a.Name()
 		}
 
-		r.emitAgentWarnings(a, chanSend(events))
-		r.configureToolsetHandlers(a, events)
+		r.emitAgentWarnings(a, sink)
+		r.configureToolsetHandlers(a, sink)
 
-		agentTools, err := r.getTools(ctx, a, sessionSpan, events, true)
+		agentTools, err := r.getTools(ctx, a, sessionSpan, sink, true)
 		if err != nil {
-			events <- ErrorWithCode(ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err))
+			sink.Emit(ErrorWithCode(ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err)))
 			return
 		}
 		agentTools = filterExcludedTools(agentTools, sess.ExcludedTools)
@@ -313,10 +315,10 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// Emit updated tool count. After a ToolListChanged MCP notification
 		// the cache is invalidated, so getTools above re-fetches from the
 		// server and may return a different count.
-		events <- ToolsetInfo(len(agentTools), false, a.Name())
+		sink.Emit(ToolsetInfo(len(agentTools), false, a.Name()))
 
 		// Check iteration limit
-		newMax, decision := r.enforceMaxIterations(ctx, sess, a, ls.iteration, ls.maxIterations, events)
+		newMax, decision := r.enforceMaxIterations(ctx, sess, a, ls.iteration, ls.maxIterations, sink)
 		if decision == iterationStop {
 			return
 		}
@@ -352,7 +354,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// Notify sidebar of the model for this turn. For rule-based
 		// routing, the actual routed model is emitted from within the
 		// stream once the first chunk arrives.
-		events <- AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage())
+		sink.Emit(AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage()))
 
 		slog.DebugContext(ctx, "Using agent", "agent", a.Name(), "model", modelID)
 		slog.DebugContext(ctx, "Getting model definition", "model_id", modelID)
@@ -366,14 +368,14 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 			contextLimit = int64(m.Limit.Context)
 
 			if r.sessionCompaction && compaction.ShouldCompact(sess.InputTokens, sess.OutputTokens, 0, contextLimit) {
-				r.compactWithReason(ctx, sess, "", compactionReasonThreshold, events)
+				r.compactWithReason(ctx, sess, "", compactionReasonThreshold, sink)
 			}
 		}
 
 		// Drain steer messages queued while idle or before the first model call
 		// (covers idle-window and first-turn-miss races).
-		if drained, messageCountBeforeSteer := r.drainAndEmitSteered(ctx, sess, events); drained {
-			r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeSteer, events)
+		if drained, messageCountBeforeSteer := r.drainAndEmitSteered(ctx, sess, sink); drained {
+			r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeSteer, sink)
 		}
 
 		// Everything from turn_start onwards is wrapped in a closure so a
@@ -385,7 +387,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// AFTER the closure body has assigned both, so callers see the same
 		// reason the runtime took. ctrl drives the outer for-loop's
 		// continue-or-exit decision.
-		ctrl := r.runTurn(ctx, sess, a, m, model, modelID, contextLimit, sessionSpan, agentTools, ls, events)
+		ctrl := r.runTurn(ctx, sess, a, m, model, modelID, contextLimit, sessionSpan, agentTools, ls, sink)
 		streamReason = ls.exitReason
 		switch ctrl {
 		case turnContinue:
@@ -455,7 +457,7 @@ func (r *LocalRuntime) runTurn(
 	sessionSpan trace.Span,
 	agentTools []tools.Tool,
 	ls *loopState,
-	events chan Event,
+	events EventSink,
 ) turnControl {
 	streamCtx, streamSpan := r.startSpan(ctx, "runtime.stream", trace.WithAttributes(
 		attribute.String("agent", a.Name()),
@@ -563,7 +565,7 @@ func (r *LocalRuntime) runTurn(
 
 	if usedModel != nil && usedModel.ID() != model.ID() {
 		slog.InfoContext(ctx, "Used fallback model", "agent", a.Name(), "primary", model.ID(), "used", usedModel.ID())
-		events <- AgentInfo(a.Name(), usedModel.ID(), a.Description(), a.WelcomeMessage())
+		events.Emit(AgentInfo(a.Name(), usedModel.ID(), a.Description(), a.WelcomeMessage()))
 	}
 	streamSpan.SetAttributes(
 		attribute.Int("tool.calls", len(res.Calls)),
@@ -577,7 +579,7 @@ func (r *LocalRuntime) runTurn(
 
 	usage := SessionUsage(sess, contextLimit)
 	usage.LastMessage = msgUsage
-	events <- NewTokenUsageEvent(sess.ID, a.Name(), usage)
+	events.Emit(NewTokenUsageEvent(sess.ID, a.Name(), usage))
 
 	// Record the message count before tool calls so we can
 	// measure how much content was added by tool results.
@@ -613,7 +615,7 @@ func (r *LocalRuntime) runTurn(
 			"Agent terminated: detected %d consecutive identical calls to %s. "+
 				"This indicates a degenerate loop where the model is not making progress.",
 			consecutive, toolName)
-		events <- ErrorWithCode(ErrorCodeLoopDetected, errMsg)
+		events.Emit(ErrorWithCode(ErrorCodeLoopDetected, errMsg))
 		r.notifyError(ctx, a, sess.ID, errMsg)
 		ls.loopDetector.Reset()
 		endReason = turnEndReasonLoopDetected
@@ -663,7 +665,7 @@ func (r *LocalRuntime) runTurn(
 		if followUp, ok := r.followUpQueue.Dequeue(ctx); ok {
 			userMsg := session.UserMessage(followUp.Content, followUp.MultiContent...)
 			sess.AddMessage(userMsg)
-			events <- UserMessage(followUp.Content, sess.ID, followUp.MultiContent, len(sess.Messages)-1)
+			events.Emit(UserMessage(followUp.Content, sess.ID, followUp.MultiContent, len(sess.Messages)-1))
 			r.compactIfNeeded(ctx, sess, a, m, contextLimit, messageCountBeforeTools, events)
 			endReason = turnEndReasonContinue
 			return turnContinue // re-enter the loop for a new turn
@@ -701,7 +703,7 @@ func (r *LocalRuntime) recordAssistantMessage(
 	agentTools []tools.Tool,
 	modelID string,
 	m *modelsdev.Model,
-	events chan Event,
+	events EventSink,
 ) *MessageUsage {
 	if strings.TrimSpace(res.Content) == "" && len(res.Calls) == 0 {
 		slog.Debug("Skipping empty assistant message (no content and no tool calls)", "agent", a.Name())
@@ -775,7 +777,7 @@ func (r *LocalRuntime) compactIfNeeded(
 	m *modelsdev.Model,
 	contextLimit int64,
 	messageCountBefore int,
-	events chan Event,
+	events EventSink,
 ) {
 	if m == nil || !r.sessionCompaction || contextLimit <= 0 {
 		return
@@ -805,10 +807,10 @@ func (r *LocalRuntime) compactIfNeeded(
 // getTools executes tool retrieval with automatic OAuth handling.
 // emitLifecycleEvents controls whether MCPInitStarted/Finished are emitted;
 // pass false when calling from reprobe to avoid spurious TUI spinner flicker.
-func (r *LocalRuntime) getTools(ctx context.Context, a *agent.Agent, sessionSpan trace.Span, events chan Event, emitLifecycleEvents bool) ([]tools.Tool, error) {
+func (r *LocalRuntime) getTools(ctx context.Context, a *agent.Agent, sessionSpan trace.Span, events EventSink, emitLifecycleEvents bool) ([]tools.Tool, error) {
 	if emitLifecycleEvents && len(a.ToolSets()) > 0 {
-		events <- MCPInitStarted(a.Name())
-		defer func() { events <- MCPInitFinished(a.Name()) }()
+		events.Emit(MCPInitStarted(a.Name()))
+		defer func() { events.Emit(MCPInitFinished(a.Name())) }()
 	}
 
 	agentTools, err := a.Tools(ctx)
@@ -825,17 +827,22 @@ func (r *LocalRuntime) getTools(ctx context.Context, a *agent.Agent, sessionSpan
 }
 
 // configureToolsetHandlers sets up elicitation and OAuth handlers for all toolsets of an agent.
-func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent, events chan Event) {
+func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent, events EventSink) {
 	for _, toolset := range a.ToolSets() {
 		tools.ConfigureHandlers(toolset,
 			r.elicitationHandler,
-			func() { events <- Authorization(tools.ElicitationActionAccept, a.Name()) },
+			func() { events.Emit(Authorization(tools.ElicitationActionAccept, a.Name())) },
 			r.managedOAuth,
 		)
 
 		// Wire RAG event forwarding so the TUI shows indexing progress.
+		// Use a non-blocking sink because the RAG file watcher is a
+		// long-lived goroutine that may outlive the per-message events
+		// channel; a blocking send after the channel is closed would
+		// crash, and a blocking send when the consumer has gone away
+		// would deadlock.
 		if ragTool, ok := tools.As[*builtinrag.Tool](toolset); ok {
-			ragTool.SetEventCallback(ragEventForwarder(ragTool.Name(), r, chanSend(events)))
+			ragTool.SetEventCallback(ragEventForwarder(ragTool.Name(), r, nonBlocking(events).Emit))
 		}
 	}
 }
@@ -846,13 +853,13 @@ func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent, events chan Even
 // not emitted — "X is now available" reads as a spurious warning right
 // after the user completes an OAuth dance, and adds no signal for other
 // recoveries either.
-func (r *LocalRuntime) emitAgentWarnings(a *agent.Agent, send func(Event)) {
+func (r *LocalRuntime) emitAgentWarnings(a *agent.Agent, events EventSink) {
 	warnings := a.DrainWarnings()
 	if len(warnings) == 0 {
 		return
 	}
 	slog.Warn("Tool setup partially failed; continuing", "agent", a.Name(), "warnings", warnings)
-	send(Warning(formatToolWarning(a, warnings), a.Name()))
+	events.Emit(Warning(formatToolWarning(a, warnings), a.Name()))
 }
 
 func formatToolWarning(a *agent.Agent, warnings []string) string {
@@ -883,21 +890,6 @@ func filterExcludedTools(agentTools []tools.Tool, excluded []string) []tools.Too
 	return filtered
 }
 
-// chanSend wraps a channel as a func(Event) for use with emitAgentWarnings
-// and RAG event forwarding. The send is non-blocking: if the channel is full
-// or closed, the event is silently dropped. This prevents a panic when a
-// long-lived goroutine (e.g. RAG file watcher) tries to forward an event
-// after the per-message events channel has been closed.
-func chanSend(ch chan Event) func(Event) {
-	return func(e Event) {
-		defer func() { recover() }() //nolint:errcheck // swallow send-on-closed-channel panic
-		select {
-		case ch <- e:
-		default:
-		}
-	}
-}
-
 // reprobe re-runs ensureToolSetsAreStarted after a batch of tool calls.
 // If new tools became available (by name-set diff), it emits a ToolsetInfo
 // event to update the TUI immediately. The new tools will be picked up by
@@ -911,7 +903,7 @@ func (r *LocalRuntime) reprobe(
 	a *agent.Agent,
 	currentTools []tools.Tool,
 	sessionSpan trace.Span,
-	events chan Event,
+	events EventSink,
 ) {
 	updated, err := r.getTools(ctx, a, sessionSpan, events, false)
 	if err != nil {
@@ -921,7 +913,7 @@ func (r *LocalRuntime) reprobe(
 	updated = filterExcludedTools(updated, sess.ExcludedTools)
 
 	// Emit any pending warnings that getTools just generated.
-	r.emitAgentWarnings(a, chanSend(events))
+	r.emitAgentWarnings(a, events)
 
 	// Compute added tools by comparing name-sets (not just counts), so we
 	// correctly handle a toolset that replaced one tool with another.
@@ -944,5 +936,5 @@ func (r *LocalRuntime) reprobe(
 		"agent", a.Name(), "added", added)
 
 	// Emit updated tool count to the TUI immediately.
-	chanSend(events)(ToolsetInfo(len(updated), false, a.Name()))
+	events.Emit(ToolsetInfo(len(updated), false, a.Name()))
 }

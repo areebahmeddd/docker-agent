@@ -33,7 +33,7 @@ import (
 )
 
 // ToolHandlerFunc is a function type for handling tool calls
-type ToolHandlerFunc func(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, events chan Event) (*tools.ToolCallResult, error)
+type ToolHandlerFunc func(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, events EventSink) (*tools.ToolCallResult, error)
 
 // Runtime defines the contract for runtime execution
 type Runtime interface {
@@ -59,7 +59,7 @@ type Runtime interface {
 	// EmitStartupInfo emits initial agent, team, and toolset information for immediate display.
 	// When sess is non-nil and contains token data, a TokenUsageEvent is also emitted
 	// so the UI can display context usage percentage on session restore.
-	EmitStartupInfo(ctx context.Context, sess *session.Session, events chan Event)
+	EmitStartupInfo(ctx context.Context, sess *session.Session, events EventSink)
 	// ResetStartupInfo resets the startup info emission flag, allowing re-emission
 	ResetStartupInfo()
 	// RunStream starts the agent's interaction loop and returns a channel of events
@@ -76,7 +76,7 @@ type Runtime interface {
 	SessionStore() session.Store
 
 	// Summarize generates a summary for the session
-	Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan Event)
+	Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events EventSink)
 
 	// PermissionsInfo returns the team-level permission patterns (allow/ask/deny).
 	// Returns nil if no permissions are configured.
@@ -997,7 +997,7 @@ func (r *LocalRuntime) emitToolsChanged() {
 // EmitStartupInfo emits initial agent, team, and toolset information for immediate sidebar display.
 // When sess is non-nil and contains token data, a TokenUsageEvent is also emitted so that the
 // sidebar can display context usage percentage on session restore.
-func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events chan Event) {
+func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events EventSink) {
 	// Prevent duplicate emissions
 	if r.startupInfoEmitted {
 		return
@@ -1008,12 +1008,11 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 
 	// Helper to send events with context check
 	send := func(event Event) bool {
-		select {
-		case events <- event:
-			return true
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return false
 		}
+		events.Emit(event)
+		return true
 	}
 
 	// Emit agent and team information immediately for fast sidebar display
@@ -1086,7 +1085,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 	// persistent notice with the actual server-side explanation — otherwise
 	// the user only sees the toolset disappear from the sidebar with no clue
 	// as to why.
-	r.emitAgentWarnings(a, func(e Event) { send(e) })
+	r.emitAgentWarnings(a, events)
 }
 
 // emitToolsProgressively loads tools from each toolset and emits progress updates.
@@ -1261,7 +1260,7 @@ func (r *LocalRuntime) startSpan(ctx context.Context, name string, opts ...trace
 // and "manual" to PreCompact hooks.
 // Internal callers (proactive threshold, overflow recovery) use
 // [LocalRuntime.compactWithReason] directly to forward a more specific reason.
-func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan Event) {
+func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events EventSink) {
 	r.compactWithReason(ctx, sess, additionalPrompt, compactionReasonManual, events)
 }
 
@@ -1280,7 +1279,7 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 // compaction or contribute additional steering text. BeforeCompaction
 // hooks then fire inside [LocalRuntime.doCompact] with [Input.CompactionReason]
 // set to the canonical reason; they may veto or supply a custom summary.
-func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Session, additionalPrompt, reason string, events chan Event) {
+func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Session, additionalPrompt, reason string, events EventSink) {
 	// Stamp the session ID on ctx so the compaction LLM call carries
 	// `X-Cagent-Session-Id` to the gateway. Manual compaction
 	// (via `Summarize` from the App) bypasses `runStreamLoop`'s seed;
@@ -1295,7 +1294,7 @@ func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Sess
 		slog.WarnContext(ctx, "pre_compact hook signalled skip",
 			"agent", a.Name(), "session_id", sess.ID, "source", source, "reason", msg)
 		if msg != "" {
-			events <- Warning(msg, a.Name())
+			events.Emit(Warning(msg, a.Name()))
 		}
 		return
 	}
@@ -1311,7 +1310,7 @@ func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Sess
 	if m, err := r.modelsStore.GetModel(ctx, modelID); err == nil && m != nil {
 		contextLimit = int64(m.Limit.Context)
 	}
-	events <- NewTokenUsageEvent(sess.ID, a.Name(), SessionUsage(sess, contextLimit))
+	events.Emit(NewTokenUsageEvent(sess.ID, a.Name(), SessionUsage(sess, contextLimit)))
 }
 
 // preCompactSourceFor maps the canonical compaction reason

@@ -52,7 +52,7 @@ const (
 // into every model call (see [LocalRuntime.executeSessionStartHooks]), so
 // env / cwd / OS info is automatically present after a compaction without
 // any extra dispatch.
-func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *agent.Agent, additionalPrompt, reason string, events chan Event) {
+func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *agent.Agent, additionalPrompt, reason string, events EventSink) {
 	contextLimit := r.compactionContextLimit(ctx, a)
 
 	// before_compaction: hooks can veto or supply a custom summary.
@@ -66,9 +66,9 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	}
 
 	slog.DebugContext(ctx, "Generating summary for session", "session_id", sess.ID, "reason", reason)
-	events <- SessionCompaction(sess.ID, "started", a.Name())
+	events.Emit(SessionCompaction(sess.ID, "started", a.Name()))
 	defer func() {
-		events <- SessionCompaction(sess.ID, "completed", a.Name())
+		events.Emit(SessionCompaction(sess.ID, "completed", a.Name()))
 	}()
 
 	// Choose the strategy: a hook-supplied summary if before_compaction
@@ -78,7 +78,7 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 		if contextLimit <= 0 {
 			slog.ErrorContext(ctx, "Failed to generate session summary",
 				"error", "model definition unavailable")
-			events <- Error("Failed to get model definition")
+			events.Emit(Error("Failed to get model definition"))
 			return
 		}
 
@@ -92,7 +92,7 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 		})
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to generate session summary", "error", err)
-			events <- Error(err.Error())
+			events.Emit(Error(err.Error()))
 			return
 		}
 		if result == nil {
@@ -119,7 +119,7 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	_ = r.sessionStore.UpdateSession(ctx, sess)
 
 	slog.DebugContext(ctx, "Generated session summary", "session_id", sess.ID, "summary_length", len(result.Summary))
-	events <- SessionSummary(sess.ID, result.Summary, a.Name(), result.FirstKeptEntry)
+	events.Emit(SessionSummary(sess.ID, result.Summary, a.Name(), result.FirstKeptEntry))
 
 	// after_compaction: observational. Fired only when a summary was
 	// actually applied to the session. The hook receives the

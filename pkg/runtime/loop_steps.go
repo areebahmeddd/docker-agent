@@ -51,7 +51,7 @@ func (r *LocalRuntime) enforceMaxIterations(
 	a *agent.Agent,
 	iteration int,
 	runtimeMaxIterations int,
-	events chan Event,
+	events EventSink,
 ) (newMax int, decision iterationDecision) {
 	if runtimeMaxIterations <= 0 || iteration < runtimeMaxIterations {
 		return runtimeMaxIterations, iterationContinue
@@ -63,7 +63,7 @@ func (r *LocalRuntime) enforceMaxIterations(
 		"max", runtimeMaxIterations,
 	)
 
-	events <- MaxIterationsReached(runtimeMaxIterations)
+	events.Emit(MaxIterationsReached(runtimeMaxIterations))
 
 	maxIterMsg := fmt.Sprintf("Maximum iterations reached (%d)", runtimeMaxIterations)
 	r.notifyMaxIterations(ctx, a, sess.ID, maxIterMsg)
@@ -148,7 +148,7 @@ func (r *LocalRuntime) handleStreamError(
 	contextLimit int64,
 	overflowCompactions *int,
 	streamSpan trace.Span,
-	events chan Event,
+	events EventSink,
 ) streamErrorOutcome {
 	// Treat context cancellation as a graceful stop.
 	if errors.Is(err, context.Canceled) {
@@ -171,10 +171,10 @@ func (r *LocalRuntime) handleStreamError(
 			"context_limit", contextLimit,
 			"attempt", *overflowCompactions,
 		)
-		events <- Warning(
+		events.Emit(Warning(
 			"The conversation has exceeded the model's context window. Automatically compacting the conversation history...",
 			a.Name(),
-		)
+		))
 		r.compactWithReason(ctx, sess, "", compactionReasonOverflow, events)
 		return streamErrorRetry
 	}
@@ -184,7 +184,7 @@ func (r *LocalRuntime) handleStreamError(
 	slog.ErrorContext(ctx, "All models failed", "agent", a.Name(), "error", err)
 	r.telemetry.RecordError(ctx, err.Error())
 	errMsg := modelerrors.FormatError(err)
-	events <- ErrorWithCode(classifyErrorCode(err), errMsg)
+	events.Emit(ErrorWithCode(classifyErrorCode(err), errMsg))
 	r.notifyError(ctx, a, sess.ID, errMsg)
 	return streamErrorFatal
 }

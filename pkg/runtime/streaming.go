@@ -39,7 +39,7 @@ type streamResult struct {
 // It is intentionally a free function rather than a method on *LocalRuntime
 // so the dependency direction is explicit (the loop calls into the chunker,
 // never the reverse).
-func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, m *modelsdev.Model, tel Telemetry, events chan<- Event) (streamResult, error) {
+func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, m *modelsdev.Model, tel Telemetry, events EventSink) (streamResult, error) {
 	defer stream.Close()
 
 	var fullContent strings.Builder
@@ -81,7 +81,7 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 		fullContent.WriteString(textBefore)
 		for _, tc := range toolCalls {
 			toolDef := toolDefMap[tc.Function.Name]
-			events <- PartialToolCall(tc, toolDef, a.Name())
+			events.Emit(PartialToolCall(tc, toolDef, a.Name()))
 		}
 	}
 
@@ -203,7 +203,7 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 						if !emittedPartial[delta.ID] {
 							toolDef = toolDefMap[tc.Function.Name]
 						}
-						events <- PartialToolCall(partial, toolDef, a.Name())
+						events.Emit(PartialToolCall(partial, toolDef, a.Name()))
 						emittedPartial[delta.ID] = true
 					}
 				}
@@ -212,7 +212,7 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 		}
 
 		if choice.Delta.ReasoningContent != "" {
-			events <- AgentChoiceReasoning(a.Name(), sess.ID, choice.Delta.ReasoningContent)
+			events.Emit(AgentChoiceReasoning(a.Name(), sess.ID, choice.Delta.ReasoningContent))
 			fullReasoningContent.WriteString(choice.Delta.ReasoningContent)
 		}
 
@@ -225,11 +225,11 @@ func handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent
 			if !xmlToolCallGate {
 				tagIdx := strings.Index(choice.Delta.Content, "<tool_call>")
 				if tagIdx < 0 {
-					events <- AgentChoice(a.Name(), sess.ID, choice.Delta.Content)
+					events.Emit(AgentChoice(a.Name(), sess.ID, choice.Delta.Content))
 				} else {
 					xmlToolCallGate = true
 					if tagIdx > 0 {
-						events <- AgentChoice(a.Name(), sess.ID, choice.Delta.Content[:tagIdx])
+						events.Emit(AgentChoice(a.Name(), sess.ID, choice.Delta.Content[:tagIdx]))
 					}
 				}
 			}

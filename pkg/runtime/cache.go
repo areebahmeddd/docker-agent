@@ -53,7 +53,7 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 	ctx context.Context,
 	sess *session.Session,
 	a *agent.Agent,
-	events chan Event,
+	events EventSink,
 ) bool {
 	c := a.Cache()
 	if c == nil {
@@ -76,7 +76,7 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 	slog.DebugContext(ctx, "Response cache hit; replaying cached answer",
 		"agent", a.Name(), "session_id", sess.ID)
 	modelID := a.Model(ctx).ID()
-	events <- AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage())
+	events.Emit(AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage()))
 	addAgentMessage(sess, a, &chat.Message{
 		Role:      chat.MessageRoleAssistant,
 		Content:   cached,

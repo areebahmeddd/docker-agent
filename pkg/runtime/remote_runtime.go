@@ -161,15 +161,15 @@ func (r *RemoteRuntime) RestartToolset(ctx context.Context, toolsetName string) 
 }
 
 // EmitStartupInfo emits initial agent, team, and toolset information
-func (r *RemoteRuntime) EmitStartupInfo(ctx context.Context, _ *session.Session, events chan Event) {
+func (r *RemoteRuntime) EmitStartupInfo(ctx context.Context, _ *session.Session, events EventSink) {
 	agentName, cfg := r.resolvedAgent(ctx)
 
-	events <- AgentInfo(agentName, cfg.Model, cfg.Description, cfg.WelcomeMessage)
-	events <- TeamInfo(r.agentDetailsFromConfig(ctx), agentName)
+	events.Emit(AgentInfo(agentName, cfg.Model, cfg.Description, cfg.WelcomeMessage))
+	events.Emit(TeamInfo(r.agentDetailsFromConfig(ctx), agentName))
 
 	// Emit a loading indicator while we fetch the real tool count from the server.
 	if len(cfg.Toolsets) > 0 {
-		events <- ToolsetInfo(0, true, agentName)
+		events.Emit(ToolsetInfo(0, true, agentName))
 	}
 
 	toolCount, err := r.client.GetAgentToolCount(ctx, r.agentFilename, agentName)
@@ -178,7 +178,7 @@ func (r *RemoteRuntime) EmitStartupInfo(ctx context.Context, _ *session.Session,
 		return
 	}
 
-	events <- ToolsetInfo(toolCount, false, agentName)
+	events.Emit(ToolsetInfo(toolCount, false, agentName))
 }
 
 func (r *RemoteRuntime) agentDetailsFromConfig(ctx context.Context) []AgentDetails {
@@ -321,17 +321,17 @@ func (r *RemoteRuntime) Resume(ctx context.Context, req ResumeRequest) {
 }
 
 // Summarize generates a summary for the session by compacting it server-side.
-func (r *RemoteRuntime) Summarize(ctx context.Context, sess *session.Session, _ string, events chan Event) {
+func (r *RemoteRuntime) Summarize(ctx context.Context, sess *session.Session, _ string, sink EventSink) {
 	if r.sessionID == "" {
-		events <- SessionSummary(sess.ID, "No active session to summarize", r.currentAgent, 0)
+		sink.Emit(SessionSummary(sess.ID, "No active session to summarize", r.currentAgent, 0))
 		return
 	}
 	if err := r.client.CompactSession(ctx, r.sessionID); err != nil {
 		slog.WarnContext(ctx, "Failed to compact session", "error", err)
-		events <- SessionSummary(sess.ID, fmt.Sprintf("Compaction failed: %v", err), r.currentAgent, 0)
+		sink.Emit(SessionSummary(sess.ID, fmt.Sprintf("Compaction failed: %v", err), r.currentAgent, 0))
 		return
 	}
-	events <- SessionSummary(sess.ID, "Session compacted successfully", r.currentAgent, 0)
+	sink.Emit(SessionSummary(sess.ID, "Session compacted successfully", r.currentAgent, 0))
 }
 
 func (r *RemoteRuntime) convertSessionMessages(sess *session.Session) []api.Message {

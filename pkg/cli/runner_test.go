@@ -31,12 +31,12 @@ func (m *mockRuntime) CurrentAgentName() string { return "test" }
 func (m *mockRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
 	return runtime.CurrentAgentInfo{Name: "test"}
 }
-func (m *mockRuntime) SetCurrentAgent(string) error                                          { return nil }
-func (m *mockRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error)               { return nil, nil }
-func (m *mockRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus                    { return nil }
-func (m *mockRuntime) RestartToolset(context.Context, string) error                          { return nil }
-func (m *mockRuntime) EmitStartupInfo(context.Context, *session.Session, chan runtime.Event) {}
-func (m *mockRuntime) ResetStartupInfo()                                                     {}
+func (m *mockRuntime) SetCurrentAgent(string) error                                         { return nil }
+func (m *mockRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error)              { return nil, nil }
+func (m *mockRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus                   { return nil }
+func (m *mockRuntime) RestartToolset(context.Context, string) error                         { return nil }
+func (m *mockRuntime) EmitStartupInfo(context.Context, *session.Session, runtime.EventSink) {}
+func (m *mockRuntime) ResetStartupInfo()                                                    {}
 func (m *mockRuntime) Run(context.Context, *session.Session) ([]session.Message, error) {
 	return nil, nil
 }
@@ -48,10 +48,10 @@ func (m *mockRuntime) ResumeElicitation(_ context.Context, action tools.Elicitat
 	m.elicitationLastAction = action
 	return nil
 }
-func (m *mockRuntime) SessionStore() session.Store                                             { return nil }
-func (m *mockRuntime) Summarize(context.Context, *session.Session, string, chan runtime.Event) {}
-func (m *mockRuntime) PermissionsInfo() *runtime.PermissionsInfo                               { return nil }
-func (m *mockRuntime) CurrentAgentSkillsToolset() *skillstool.Toolset                          { return nil }
+func (m *mockRuntime) SessionStore() session.Store                                            { return nil }
+func (m *mockRuntime) Summarize(context.Context, *session.Session, string, runtime.EventSink) {}
+func (m *mockRuntime) PermissionsInfo() *runtime.PermissionsInfo                              { return nil }
+func (m *mockRuntime) CurrentAgentSkillsToolset() *skillstool.Toolset                         { return nil }
 func (m *mockRuntime) CurrentMCPPrompts(context.Context) map[string]mcptools.PromptInfo {
 	return nil
 }

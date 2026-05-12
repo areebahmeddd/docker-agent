@@ -50,7 +50,7 @@ func TestEnforceMaxIterations_BelowLimit_Continues(t *testing.T) {
 	sess := session.New()
 	events := make(chan Event, 8)
 
-	newMax, decision := rt.enforceMaxIterations(t.Context(), sess, a, 3, 10, events)
+	newMax, decision := rt.enforceMaxIterations(t.Context(), sess, a, 3, 10, NewChannelSink(events))
 
 	assert.Equal(t, iterationContinue, decision)
 	assert.Equal(t, 10, newMax, "limit must be unchanged when below the cap")
@@ -65,7 +65,7 @@ func TestEnforceMaxIterations_DisabledLimit_Continues(t *testing.T) {
 	events := make(chan Event, 8)
 
 	// runtimeMaxIterations <= 0 disables the cap entirely.
-	newMax, decision := rt.enforceMaxIterations(t.Context(), sess, a, 1_000_000, 0, events)
+	newMax, decision := rt.enforceMaxIterations(t.Context(), sess, a, 1_000_000, 0, NewChannelSink(events))
 
 	assert.Equal(t, iterationContinue, decision)
 	assert.Equal(t, 0, newMax)
@@ -80,7 +80,7 @@ func TestEnforceMaxIterations_NonInteractive_AutoStops(t *testing.T) {
 	sess.NonInteractive = true
 	events := make(chan Event, 8)
 
-	_, decision := rt.enforceMaxIterations(t.Context(), sess, a, 10, 10, events)
+	_, decision := rt.enforceMaxIterations(t.Context(), sess, a, 10, 10, NewChannelSink(events))
 
 	assert.Equal(t, iterationStop, decision, "non-interactive must auto-stop when at the cap")
 
@@ -113,7 +113,7 @@ func TestEnforceMaxIterations_Interactive_ApproveExtends(t *testing.T) {
 	// returns immediately instead of blocking on user input.
 	go func() { rt.resumeChan <- ResumeApprove() }()
 
-	newMax, decision := rt.enforceMaxIterations(t.Context(), sess, a, 10, 10, events)
+	newMax, decision := rt.enforceMaxIterations(t.Context(), sess, a, 10, 10, NewChannelSink(events))
 
 	assert.Equal(t, iterationContinue, decision)
 	assert.Equal(t, 20, newMax, "approve must extend by 10 iterations beyond the current iteration")
@@ -128,7 +128,7 @@ func TestEnforceMaxIterations_Interactive_RejectStops(t *testing.T) {
 
 	go func() { rt.resumeChan <- ResumeReject("no thanks") }()
 
-	_, decision := rt.enforceMaxIterations(t.Context(), sess, a, 10, 10, events)
+	_, decision := rt.enforceMaxIterations(t.Context(), sess, a, 10, 10, NewChannelSink(events))
 
 	assert.Equal(t, iterationStop, decision)
 
@@ -153,7 +153,7 @@ func TestEnforceMaxIterations_ContextCancelled_Stops(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, decision := rt.enforceMaxIterations(ctx, sess, a, 10, 10, events)
+	_, decision := rt.enforceMaxIterations(ctx, sess, a, 10, 10, NewChannelSink(events))
 	assert.Equal(t, iterationStop, decision)
 }
 
@@ -169,7 +169,7 @@ func TestHandleStreamError_ContextCanceled_Fatal(t *testing.T) {
 	_, sp := span(t.Context(), "x")
 
 	overflowCount := 0
-	outcome := rt.handleStreamError(t.Context(), sess, a, context.Canceled, 1000, &overflowCount, sp, events)
+	outcome := rt.handleStreamError(t.Context(), sess, a, context.Canceled, 1000, &overflowCount, sp, NewChannelSink(events))
 
 	assert.Equal(t, streamErrorFatal, outcome)
 	assert.Empty(t, drainEvents(events), "context cancel should not emit any events")
@@ -202,7 +202,7 @@ func TestHandleStreamError_OverflowWithCompactionEnabled_Retries(t *testing.T) {
 	overflow := modelerrors.NewContextOverflowError(errors.New("too long"))
 	overflowCount := 0
 
-	outcome := rt.handleStreamError(t.Context(), sess, root, overflow, 1000, &overflowCount, sp, events)
+	outcome := rt.handleStreamError(t.Context(), sess, root, overflow, 1000, &overflowCount, sp, NewChannelSink(events))
 
 	assert.Equal(t, streamErrorRetry, outcome)
 	assert.Equal(t, 1, overflowCount, "overflow counter should bump on retry")
@@ -230,7 +230,7 @@ func TestHandleStreamError_OverflowExhausted_Fatal(t *testing.T) {
 	// Counter is already at the cap, so we must NOT retry again.
 	overflowCount := rt.maxOverflowCompactions
 
-	outcome := rt.handleStreamError(t.Context(), sess, a, overflow, 1000, &overflowCount, sp, events)
+	outcome := rt.handleStreamError(t.Context(), sess, a, overflow, 1000, &overflowCount, sp, NewChannelSink(events))
 
 	assert.Equal(t, streamErrorFatal, outcome)
 	assert.Equal(t, rt.maxOverflowCompactions, overflowCount, "exhausted path must not bump counter further")
@@ -264,7 +264,7 @@ func TestHandleStreamError_OverflowWithCompactionDisabled_Fatal(t *testing.T) {
 	overflow := modelerrors.NewContextOverflowError(errors.New("too long"))
 	overflowCount := 0
 
-	outcome := rt.handleStreamError(t.Context(), sess, root, overflow, 1000, &overflowCount, sp, events)
+	outcome := rt.handleStreamError(t.Context(), sess, root, overflow, 1000, &overflowCount, sp, NewChannelSink(events))
 
 	assert.Equal(t, streamErrorFatal, outcome, "overflow must be fatal when session compaction is disabled")
 	assert.Equal(t, 0, overflowCount)
@@ -279,7 +279,7 @@ func TestHandleStreamError_GenericError_FatalAndEmitsError(t *testing.T) {
 	_, sp := noop.NewTracerProvider().Tracer("t").Start(t.Context(), "x")
 
 	overflowCount := 0
-	outcome := rt.handleStreamError(t.Context(), sess, a, errors.New("boom"), 1000, &overflowCount, sp, events)
+	outcome := rt.handleStreamError(t.Context(), sess, a, errors.New("boom"), 1000, &overflowCount, sp, NewChannelSink(events))
 
 	assert.Equal(t, streamErrorFatal, outcome)
 
