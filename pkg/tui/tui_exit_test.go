@@ -136,6 +136,7 @@ func newTestModel() (*appModel, *mockEditor) {
 		editors:                 map[string]editor.Editor{"test": ed},
 		pendingRestores:         map[string]string{},
 		pendingSidebarCollapsed: map[string]bool{},
+		stashedDialogs:          map[string]stashedDialog{},
 		chatPage:                page,
 		editor:                  ed,
 		transcriber:             &fakeTranscriber{},
