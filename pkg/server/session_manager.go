@@ -37,6 +37,7 @@ type activeRuntimes struct {
 // SessionManager manages sessions for HTTP and Connect-RPC servers.
 type SessionManager struct {
 	runtimeSessions *concurrent.Map[string, *activeRuntimes]
+	deletedSessions *concurrent.Map[string, *activeRuntimes]
 	eventSources    *concurrent.Map[string, EventSource]
 	sessionStore    session.Store
 	Sources         config.Sources
@@ -48,6 +49,11 @@ type SessionManager struct {
 	refreshInterval time.Duration
 
 	mux sync.Mutex
+
+	// sessionReady is closed once the first session is attached or created,
+	// signalling that the server is ready to accept session-scoped requests.
+	sessionReady     chan struct{}
+	sessionReadyOnce sync.Once
 }
 
 // EventSource pushes session events to send for the lifetime of ctx. The
@@ -64,14 +70,31 @@ func NewSessionManager(ctx context.Context, sources config.Sources, sessionStore
 
 	sm := &SessionManager{
 		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
 		eventSources:    concurrent.NewMap[string, EventSource](),
 		sessionStore:    sessionStore,
 		Sources:         loaders,
 		refreshInterval: refreshInterval,
 		runConfig:       runConfig,
+		sessionReady:    make(chan struct{}),
 	}
 
 	return sm
+}
+
+func (sm *SessionManager) markReady() {
+	sm.sessionReadyOnce.Do(func() { close(sm.sessionReady) })
+}
+
+// WaitReady blocks until at least one session has been attached or created,
+// or ctx is cancelled. Returns nil when ready, ctx.Err() on timeout.
+func (sm *SessionManager) WaitReady(ctx context.Context) error {
+	select {
+	case <-sm.sessionReady:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // RegisterEventSource attaches an event source for sessionID. It is used by
@@ -129,6 +152,7 @@ func (sm *SessionManager) AttachRuntime(sessionID string, rt runtime.Runtime, se
 		cancel:  cancel,
 		session: sess,
 	})
+	sm.markReady()
 }
 
 // GetSession retrieves a session by ID.
@@ -138,6 +162,35 @@ func (sm *SessionManager) GetSession(ctx context.Context, id string) (*session.S
 		return nil, err
 	}
 	return sess, nil
+}
+
+// GetSessionStatus returns a lightweight snapshot of the session's current
+// runtime state. Designed for late-joining SSE consumers that need to know
+// the session's state without waiting for the next event transition.
+func (sm *SessionManager) GetSessionStatus(_ context.Context, id string) (*api.SessionStatusResponse, error) {
+	rs, ok := sm.runtimeSessions.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", id)
+	}
+
+	sess := rs.session
+
+	// Probe streaming state: TryLock succeeds only when no RunStream is
+	// in progress. Immediately unlock so we don't interfere.
+	streaming := !rs.streaming.TryLock()
+	if !streaming {
+		rs.streaming.Unlock()
+	}
+
+	return &api.SessionStatusResponse{
+		ID:           sess.ID,
+		Title:        sess.Title,
+		Streaming:    streaming,
+		Agent:        rs.runtime.CurrentAgentName(),
+		InputTokens:  sess.InputTokens,
+		OutputTokens: sess.OutputTokens,
+		NumMessages:  len(sess.GetAllMessages()),
+	}, nil
 }
 
 // CreateSession creates a new session from a template.
@@ -182,7 +235,9 @@ func (sm *SessionManager) GetSessions(ctx context.Context) ([]*session.Session, 
 	return sessions, nil
 }
 
-// DeleteSession deletes a session by ID.
+// DeleteSession deletes a session by ID. It cancels the runtime context and
+// removes the session from all registries. Callers that need to wait for
+// the stream to fully stop should call WaitStopped afterwards.
 func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) error {
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
@@ -197,11 +252,66 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 
 	if sessionRuntime, ok := sm.runtimeSessions.Load(sess.ID); ok {
 		sessionRuntime.cancel()
+		// Keep the entry in deletedSessions so WaitStopped can probe the
+		// streaming mutex after the runtime is deregistered.
+		sm.deletedSessions.Store(sess.ID, sessionRuntime)
 		sm.runtimeSessions.Delete(sess.ID)
+
+		// Background cleanup: remove the deletedSessions entry once the
+		// stream goroutine has exited. This prevents a memory leak when
+		// the caller does not use ?wait=true.
+		go func() {
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			deadline := time.After(5 * time.Minute)
+			for {
+				if sessionRuntime.streaming.TryLock() {
+					sessionRuntime.streaming.Unlock()
+					sm.deletedSessions.Delete(sess.ID)
+					return
+				}
+				select {
+				case <-deadline:
+					sm.deletedSessions.Delete(sess.ID)
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
 	}
 	sm.eventSources.Delete(sess.ID)
 
 	return nil
+}
+
+// WaitStopped blocks until the session's runtime stream goroutine has fully
+// exited (streaming mutex released), the timeout fires, or ctx is cancelled
+// (e.g. client disconnect). It should be called after DeleteSession.
+// Returns nil when the stream has stopped.
+func (sm *SessionManager) WaitStopped(ctx context.Context, sessionID string, timeout time.Duration) error {
+	rs, ok := sm.deletedSessions.Load(sessionID)
+	if !ok {
+		return nil // already cleaned up
+	}
+
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if rs.streaming.TryLock() {
+			rs.streaming.Unlock()
+			sm.deletedSessions.Delete(sessionID)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			return fmt.Errorf("timeout waiting for session %s to stop", sessionID)
+		case <-ticker.C:
+		}
+	}
 }
 
 // ErrSessionBusy is returned when a session is already processing a request.
@@ -237,6 +347,7 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 			titleGen: titleGen,
 		}
 		sm.runtimeSessions.Store(sessionID, runtimeSession)
+		sm.markReady()
 	} else {
 		titleGen = runtimeSession.titleGen
 	}
@@ -271,8 +382,11 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 
 	streamChan := make(chan runtime.Event)
 
-	// Check if we need to generate a title
-	needsTitle := sess.Title == "" && len(userMessages) > 0 && titleGen != nil
+	// Snapshot the title under sm.mux before launching the goroutine to
+	// avoid a data race with UpdateSessionTitle, which takes sm.mux and
+	// writes to sess.Title concurrently with the goroutine's read.
+	titleToEmit := sess.Title
+	needsTitle := titleToEmit == "" && len(userMessages) > 0 && titleGen != nil
 
 	go func() {
 		// Defers run LIFO: close(streamChan) last, so by the time the
@@ -287,6 +401,10 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 		// Start title generation in parallel if needed
 		if needsTitle {
 			go sm.generateTitle(ctx, sess, titleGen, userMessages, streamChan)
+		} else if titleToEmit != "" {
+			// Re-emit the existing title so late-joining SSE consumers
+			// and boards can pick it up without an extra API call.
+			streamChan <- runtime.SessionTitle(sess.ID, titleToEmit)
 		}
 
 		stream := runtimeSession.runtime.RunStream(streamCtx, sess)
@@ -349,10 +467,14 @@ func (sm *SessionManager) SteerSession(_ context.Context, sessionID string, mess
 // FollowUpSession enqueues user messages for end-of-turn processing in a
 // running session. Each message is popped one at a time after the current
 // turn finishes, giving each follow-up a full undivided agent turn.
-func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, messages []api.Message) error {
+//
+// If no stream is currently running (agent is idle), the messages are still
+// enqueued but will not be consumed until the next RunSession starts a new
+// stream. The returned boolean indicates whether a stream is active.
+func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, messages []api.Message) (streaming bool, err error) {
 	rt, exists := sm.runtimeSessions.Load(sessionID)
 	if !exists {
-		return errors.New("session not found or not running")
+		return false, errors.New("session not found or not running")
 	}
 
 	for _, msg := range messages {
@@ -360,11 +482,18 @@ func (sm *SessionManager) FollowUpSession(_ context.Context, sessionID string, m
 			Content:      msg.Content,
 			MultiContent: msg.MultiContent,
 		}); err != nil {
-			return err
+			return false, err
 		}
 	}
 
-	return nil
+	// Probe streaming state so the caller knows whether the follow-up
+	// will be consumed by the current turn or sit idle until the next.
+	streaming = !rt.streaming.TryLock()
+	if !streaming {
+		rt.streaming.Unlock()
+	}
+
+	return streaming, nil
 }
 
 // ResumeElicitation resumes an elicitation request.

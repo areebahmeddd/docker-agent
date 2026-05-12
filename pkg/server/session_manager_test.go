@@ -56,6 +56,8 @@ func (f *fakeRuntime) ResumeElicitation(_ context.Context, _ tools.ElicitationAc
 	return nil
 }
 
+func (f *fakeRuntime) CurrentAgentName() string { return "root" }
+
 func newTestSessionManager(t *testing.T, sess *session.Session, fake *fakeRuntime) *SessionManager {
 	t.Helper()
 
@@ -65,9 +67,11 @@ func newTestSessionManager(t *testing.T, sess *session.Session, fake *fakeRuntim
 
 	sm := &SessionManager{
 		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
 		sessionStore:    store,
 		Sources:         config.Sources{},
 		runConfig:       &config.RuntimeConfig{},
+		sessionReady:    make(chan struct{}),
 	}
 
 	// Pre-register a runtime for this session so RunSession skips agent loading.
@@ -208,9 +212,11 @@ func TestRunSession_DifferentSessionsConcurrently(t *testing.T) {
 
 	sm := &SessionManager{
 		runtimeSessions: concurrent.NewMap[string, *activeRuntimes](),
+		deletedSessions: concurrent.NewMap[string, *activeRuntimes](),
 		sessionStore:    store,
 		Sources:         config.Sources{},
 		runConfig:       &config.RuntimeConfig{},
+		sessionReady:    make(chan struct{}),
 	}
 
 	sm.runtimeSessions.Store(sess1.ID, &activeRuntimes{

@@ -127,14 +127,20 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 		// block without a reason.
 		message = "Agent terminated by a hook."
 	}
-	events <- Error(message)
+	events <- ErrorWithCode(ErrorCodeHookBlocked, message)
 	r.notifyError(ctx, a, sess.ID, message)
 }
 
 // finalizeEventChannel performs cleanup at the end of a RunStream goroutine:
 // restores the previous elicitation channel, emits the StreamStopped event,
 // fires hooks, and closes the events channel.
-func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, prevElicitationCh, events chan Event) {
+//
+// reason is one of the turnEndReason* constants and classifies how the
+// stream ended (e.g. "normal", "error", "canceled"). It is surfaced in
+// the StreamStoppedEvent so external consumers (boards, dashboards) can
+// distinguish between successful completion, crashes, and user-initiated
+// stops without reverse-engineering reconnect failures.
+func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, reason string, prevElicitationCh, events chan Event) {
 	// Swap back the parent's elicitation channel before closing this
 	// stream's channel. This prevents a send-on-closed-channel panic
 	// and restores elicitation for the parent session.
@@ -148,7 +154,10 @@ func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.S
 	// cleanup hooks run even when the stream was interrupted (e.g. Ctrl+C).
 	r.executeSessionEndHooks(context.WithoutCancel(ctx), sess, a)
 
-	events <- StreamStopped(sess.ID, a.Name())
+	if ctx.Err() != nil && reason == "" {
+		reason = turnEndReasonCanceled
+	}
+	events <- StreamStopped(sess.ID, a.Name(), reason)
 
 	r.executeOnUserInputHooks(ctx, sess.ID, "stream stopped")
 
@@ -211,7 +220,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 	agentTools, err := r.getTools(ctx, a, sessionSpan, events, true)
 	if err != nil {
-		events <- Error(fmt.Sprintf("failed to get tools: %v", err))
+		events <- ErrorWithCode(ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err))
 		return
 	}
 	agentTools = filterExcludedTools(agentTools, sess.ExcludedTools)
@@ -245,7 +254,13 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 	events <- StreamStarted(sess.ID, a.Name())
 
-	defer r.finalizeEventChannel(ctx, sess, prevElicitationCh, events)
+	// streamReason records the exit reason from the final turn so
+	// finalizeEventChannel can surface it in the StreamStoppedEvent.
+	// It is updated by each turn via runTurn (passed by pointer).
+	var streamReason string
+	defer func() {
+		r.finalizeEventChannel(ctx, sess, streamReason, prevElicitationCh, events)
+	}()
 
 	// Response cache lookup. On a hit, replay the stored answer and
 	// skip the model entirely. The matching storage half is
@@ -290,7 +305,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 		agentTools, err := r.getTools(ctx, a, sessionSpan, events, true)
 		if err != nil {
-			events <- Error(fmt.Sprintf("failed to get tools: %v", err))
+			events <- ErrorWithCode(ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err))
 			return
 		}
 		agentTools = filterExcludedTools(agentTools, sess.ExcludedTools)
@@ -371,6 +386,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// reason the runtime took. ctrl drives the outer for-loop's
 		// continue-or-exit decision.
 		ctrl := r.runTurn(ctx, sess, a, m, model, modelID, contextLimit, sessionSpan, agentTools, ls, events)
+		streamReason = ls.exitReason
 		switch ctrl {
 		case turnContinue:
 			continue
@@ -411,6 +427,7 @@ type loopState struct {
 	loopDetector        *toolexec.LoopDetector
 	sessionStartMsgs    []chat.Message
 	userPromptMsgs      []chat.Message
+	exitReason          string
 }
 
 // runTurn performs one iteration of the run-stream loop, from
@@ -439,7 +456,7 @@ func (r *LocalRuntime) runTurn(
 	agentTools []tools.Tool,
 	ls *loopState,
 	events chan Event,
-) (ctrl turnControl) {
+) turnControl {
 	streamCtx, streamSpan := r.startSpan(ctx, "runtime.stream", trace.WithAttributes(
 		attribute.String("agent", a.Name()),
 		attribute.String("session.id", sess.ID),
@@ -476,6 +493,7 @@ func (r *LocalRuntime) runTurn(
 		// matching the same guarantee session_end has at the
 		// finalizeEventChannel level.
 		r.executeTurnEndHooks(context.WithoutCancel(ctx), sess, a, endReason, events)
+		ls.exitReason = endReason
 	}()
 
 	// Run turn_start hooks BEFORE building messages so their
@@ -595,7 +613,7 @@ func (r *LocalRuntime) runTurn(
 			"Agent terminated: detected %d consecutive identical calls to %s. "+
 				"This indicates a degenerate loop where the model is not making progress.",
 			consecutive, toolName)
-		events <- Error(errMsg)
+		events <- ErrorWithCode(ErrorCodeLoopDetected, errMsg)
 		r.notifyError(ctx, a, sess.ID, errMsg)
 		ls.loopDetector.Reset()
 		endReason = turnEndReasonLoopDetected

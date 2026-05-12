@@ -63,6 +63,7 @@ func (s *Server) registerRoutes() {
 
 	group.GET("/sessions", s.getSessions)
 	group.GET("/sessions/:id", s.getSession)
+	group.GET("/sessions/:id/status", s.getSessionStatus)
 	group.POST("/sessions/:id/resume", s.resumeSession)
 	group.POST("/sessions/:id/tools/toggle", s.toggleSessionYolo)
 	group.PATCH("/sessions/:id/permissions", s.updateSessionPermissions)
@@ -90,6 +91,7 @@ func (s *Server) registerRoutes() {
 	group.GET("/ping", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
+	group.GET("/ready", s.sessionsReady)
 }
 
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
@@ -104,6 +106,29 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	}
 
 	return nil
+}
+
+const maxAPITimeout = 5 * time.Minute
+
+// ready blocks until at least one session is registered. The caller
+// may supply a ?timeout=<duration> query parameter (default 30s, max 5m).
+func (s *Server) sessionsReady(c echo.Context) error {
+	timeout := 30 * time.Second
+	if v := c.QueryParam("timeout"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid timeout: %v", err))
+		}
+		timeout = min(d, maxAPITimeout)
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), timeout)
+	defer cancel()
+
+	if err := s.sm.WaitReady(ctx); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "no sessions registered within timeout")
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (s *Server) getAgents(c echo.Context) error {
@@ -220,6 +245,14 @@ func (s *Server) getSession(c echo.Context) error {
 	})
 }
 
+func (s *Server) getSessionStatus(c echo.Context) error {
+	status, err := s.sm.GetSessionStatus(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("session not found: %v", err))
+	}
+	return c.JSON(http.StatusOK, status)
+}
+
 func (s *Server) resumeSession(c echo.Context) error {
 	var req api.ResumeSessionRequest
 	if err := c.Bind(&req); err != nil {
@@ -283,8 +316,25 @@ func (s *Server) updateSessionTitle(c echo.Context) error {
 func (s *Server) deleteSession(c echo.Context) error {
 	sessionID := c.Param("id")
 
+	timeout := 10 * time.Second
+	if v := c.QueryParam("timeout"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid timeout: %v", err))
+		}
+		timeout = min(d, maxAPITimeout)
+	}
+
 	if err := s.sm.DeleteSession(c.Request().Context(), sessionID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to delete session: %v", err))
+	}
+
+	// When ?wait=true, block until the runtime's stream goroutine has
+	// fully exited (the streaming mutex is released) or the timeout fires.
+	if c.QueryParam("wait") == "true" {
+		if err := s.sm.WaitStopped(c.Request().Context(), sessionID, timeout); err != nil {
+			return c.JSON(http.StatusAccepted, map[string]string{"message": "session deleted, stop still in progress"})
+		}
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"message": "session deleted"})
@@ -408,7 +458,8 @@ func (s *Server) followUpSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one message is required")
 	}
 
-	if err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages); err != nil {
+	streaming, err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages)
+	if err != nil {
 		if strings.Contains(err.Error(), "queue full") {
 			c.Response().Header().Set("Retry-After", "1")
 			return echo.NewHTTPError(http.StatusTooManyRequests, "follow-up queue full")
@@ -416,7 +467,11 @@ func (s *Server) followUpSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf("failed to enqueue follow-up: %v", err))
 	}
 
-	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued"})
+	status := "queued_streaming"
+	if !streaming {
+		status = "queued_idle"
+	}
+	return c.JSON(http.StatusAccepted, map[string]string{"status": status})
 }
 
 func (s *Server) addMessage(c echo.Context) error {

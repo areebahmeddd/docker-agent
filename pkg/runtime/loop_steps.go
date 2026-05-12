@@ -184,7 +184,22 @@ func (r *LocalRuntime) handleStreamError(
 	slog.ErrorContext(ctx, "All models failed", "agent", a.Name(), "error", err)
 	r.telemetry.RecordError(ctx, err.Error())
 	errMsg := modelerrors.FormatError(err)
-	events <- Error(errMsg)
+	events <- ErrorWithCode(classifyErrorCode(err), errMsg)
 	r.notifyError(ctx, a, sess.ID, errMsg)
 	return streamErrorFatal
+}
+
+// classifyErrorCode maps a model error to an ErrorCode constant for
+// structured error events. The classification mirrors [modelerrors]
+// but reduces the granularity to a small set of codes that external
+// consumers can act on.
+func classifyErrorCode(err error) string {
+	if modelerrors.IsContextOverflowError(err) {
+		return ErrorCodeContextExceeded
+	}
+	_, rateLimited, _ := modelerrors.ClassifyModelError(err)
+	if rateLimited {
+		return ErrorCodeRateLimited
+	}
+	return ErrorCodeModelError
 }

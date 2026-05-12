@@ -302,7 +302,7 @@ func TestSimple(t *testing.T) {
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		StreamStopped(sess.ID, "root"),
+		StreamStopped(sess.ID, "root", "normal"),
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -346,7 +346,7 @@ func TestMultipleContentChunks(t *testing.T) {
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		StreamStopped(sess.ID, "root"),
+		StreamStopped(sess.ID, "root", "normal"),
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -386,7 +386,7 @@ func TestWithReasoning(t *testing.T) {
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		StreamStopped(sess.ID, "root"),
+		StreamStopped(sess.ID, "root", "normal"),
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -428,7 +428,7 @@ func TestMixedContentAndReasoning(t *testing.T) {
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		StreamStopped(sess.ID, "root"),
+		StreamStopped(sess.ID, "root", "normal"),
 	}
 
 	assertEventsEqual(t, expectedEvents, events)

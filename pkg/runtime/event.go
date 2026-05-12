@@ -198,17 +198,37 @@ func AgentChoiceReasoning(agentName, sessionID, content string) Event {
 	}
 }
 
+// ErrorCode constants classify errors so external consumers (boards,
+// dashboards) can react programmatically without parsing free-form messages.
+const (
+	ErrorCodeModelError      = "model_error"
+	ErrorCodeRateLimited     = "rate_limited"
+	ErrorCodeContextExceeded = "context_exceeded"
+	ErrorCodeToolFailed      = "tool_failed"
+	ErrorCodeHookBlocked     = "hook_blocked"
+	ErrorCodeLoopDetected    = "loop_detected"
+)
+
 type ErrorEvent struct {
 	AgentContext
 
 	Type  string `json:"type"`
 	Error string `json:"error"`
+	Code  string `json:"code,omitempty"`
 }
 
 func Error(msg string) Event {
 	return &ErrorEvent{
 		Type:  "error",
 		Error: msg,
+	}
+}
+
+func ErrorWithCode(code, msg string) Event {
+	return &ErrorEvent{
+		Type:  "error",
+		Error: msg,
+		Code:  code,
 	}
 }
 
@@ -387,13 +407,15 @@ type StreamStoppedEvent struct {
 
 	Type      string `json:"type"`
 	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
-func StreamStopped(sessionID, agentName string) Event {
+func StreamStopped(sessionID, agentName, reason string) Event {
 	return &StreamStoppedEvent{
 		Type:         "stream_stopped",
 		SessionID:    sessionID,
 		AgentContext: newAgentContext(agentName),
+		Reason:       reason,
 	}
 }
 
