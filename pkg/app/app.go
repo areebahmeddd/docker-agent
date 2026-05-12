@@ -1016,88 +1016,149 @@ func (a *App) shouldThrottle(msg tea.Msg) bool {
 	}
 }
 
-// mergeEvents merges consecutive similar events to reduce UI updates
+// mergeEvents merges consecutive similar events to reduce UI updates.
+//
+// Each merge group is built with a single strings.Builder so concatenating N
+// chunks costs O(N) instead of the O(N^2) the naive `merged.Content + next.Content`
+// pattern produces. This matters during fast LLM streams where dozens of
+// chunks land per throttle window.
 func (a *App) mergeEvents(events []tea.Msg) []tea.Msg {
 	if len(events) == 0 {
 		return events
 	}
 
-	var result []tea.Msg
+	result := make([]tea.Msg, 0, len(events))
 
-	// Group events by type and merge
 	for i := 0; i < len(events); i++ {
-		current := events[i]
-
-		switch ev := current.(type) {
+		switch ev := events[i].(type) {
 		case *runtime.AgentChoiceEvent:
-			// Merge consecutive AgentChoiceEvents with same agent
-			merged := ev
-			for i+1 < len(events) {
-				if next, ok := events[i+1].(*runtime.AgentChoiceEvent); ok && next.AgentName == ev.AgentName {
-					// Concatenate content
-					merged = &runtime.AgentChoiceEvent{
-						Type:         ev.Type,
-						Content:      merged.Content + next.Content,
-						AgentContext: ev.AgentContext,
-					}
-					i++
-				} else {
-					break
-				}
-			}
+			merged, consumed := mergeAgentChoiceRun(ev, events[i+1:])
 			result = append(result, merged)
+			i += consumed
 
 		case *runtime.AgentChoiceReasoningEvent:
-			// Merge consecutive AgentChoiceReasoningEvents with same agent
-			merged := ev
-			for i+1 < len(events) {
-				if next, ok := events[i+1].(*runtime.AgentChoiceReasoningEvent); ok && next.AgentName == ev.AgentName {
-					// Concatenate content
-					merged = &runtime.AgentChoiceReasoningEvent{
-						Type:         ev.Type,
-						Content:      merged.Content + next.Content,
-						AgentContext: ev.AgentContext,
-					}
-					i++
-				} else {
-					break
-				}
-			}
+			merged, consumed := mergeAgentChoiceReasoningRun(ev, events[i+1:])
 			result = append(result, merged)
+			i += consumed
 
 		case *runtime.PartialToolCallEvent:
-			// For PartialToolCallEvent, merge consecutive events with the same tool call ID
-			// by concatenating argument deltas
-			latest := ev
-			for i+1 < len(events) {
-				if next, ok := events[i+1].(*runtime.PartialToolCallEvent); ok && next.ToolCall.ID == ev.ToolCall.ID {
-					latest = &runtime.PartialToolCallEvent{
-						Type: ev.Type,
-						ToolCall: tools.ToolCall{
-							ID:   ev.ToolCall.ID,
-							Type: ev.ToolCall.Type,
-							Function: tools.FunctionCall{
-								Name:      cmp.Or(next.ToolCall.Function.Name, latest.ToolCall.Function.Name),
-								Arguments: latest.ToolCall.Function.Arguments + next.ToolCall.Function.Arguments,
-							},
-						},
-						ToolDefinition: cmp.Or(latest.ToolDefinition, next.ToolDefinition),
-						AgentContext:   ev.AgentContext,
-					}
-					i++
-				} else {
-					break
-				}
-			}
-			result = append(result, latest)
+			merged, consumed := mergePartialToolCallRun(ev, events[i+1:])
+			result = append(result, merged)
+			i += consumed
 
 		default:
-			// Pass through other events as-is
-			result = append(result, current)
+			result = append(result, events[i])
 		}
 	}
 
 	return result
+}
+
+// mergeAgentChoiceRun merges first with any directly-following AgentChoiceEvents
+// for the same agent. It returns the merged event and the number of follow-up
+// events that were consumed.
+func mergeAgentChoiceRun(first *runtime.AgentChoiceEvent, rest []tea.Msg) (*runtime.AgentChoiceEvent, int) {
+	n := 0
+	total := len(first.Content)
+	for _, msg := range rest {
+		next, ok := msg.(*runtime.AgentChoiceEvent)
+		if !ok || next.AgentName != first.AgentName {
+			break
+		}
+		total += len(next.Content)
+		n++
+	}
+	if n == 0 {
+		return first, 0
+	}
+
+	var b strings.Builder
+	b.Grow(total)
+	b.WriteString(first.Content)
+	for _, msg := range rest[:n] {
+		b.WriteString(msg.(*runtime.AgentChoiceEvent).Content)
+	}
+	return &runtime.AgentChoiceEvent{
+		Type:         first.Type,
+		Content:      b.String(),
+		AgentContext: first.AgentContext,
+	}, n
+}
+
+// mergeAgentChoiceReasoningRun is the AgentChoiceReasoningEvent counterpart of
+// mergeAgentChoiceRun.
+func mergeAgentChoiceReasoningRun(first *runtime.AgentChoiceReasoningEvent, rest []tea.Msg) (*runtime.AgentChoiceReasoningEvent, int) {
+	n := 0
+	total := len(first.Content)
+	for _, msg := range rest {
+		next, ok := msg.(*runtime.AgentChoiceReasoningEvent)
+		if !ok || next.AgentName != first.AgentName {
+			break
+		}
+		total += len(next.Content)
+		n++
+	}
+	if n == 0 {
+		return first, 0
+	}
+
+	var b strings.Builder
+	b.Grow(total)
+	b.WriteString(first.Content)
+	for _, msg := range rest[:n] {
+		b.WriteString(msg.(*runtime.AgentChoiceReasoningEvent).Content)
+	}
+	return &runtime.AgentChoiceReasoningEvent{
+		Type:         first.Type,
+		Content:      b.String(),
+		AgentContext: first.AgentContext,
+	}, n
+}
+
+// mergePartialToolCallRun merges argument deltas across consecutive
+// PartialToolCallEvents that share the same tool call ID.
+func mergePartialToolCallRun(first *runtime.PartialToolCallEvent, rest []tea.Msg) (*runtime.PartialToolCallEvent, int) {
+	n := 0
+	total := len(first.ToolCall.Function.Arguments)
+	for _, msg := range rest {
+		next, ok := msg.(*runtime.PartialToolCallEvent)
+		if !ok || next.ToolCall.ID != first.ToolCall.ID {
+			break
+		}
+		total += len(next.ToolCall.Function.Arguments)
+		n++
+	}
+	if n == 0 {
+		return first, 0
+	}
+
+	var b strings.Builder
+	b.Grow(total)
+	b.WriteString(first.ToolCall.Function.Arguments)
+
+	name := first.ToolCall.Function.Name
+	toolDef := first.ToolDefinition
+	for _, msg := range rest[:n] {
+		next := msg.(*runtime.PartialToolCallEvent)
+		b.WriteString(next.ToolCall.Function.Arguments)
+		// The function name is sometimes only present on later deltas; keep the
+		// first non-empty value we observe across the run.
+		name = cmp.Or(name, next.ToolCall.Function.Name)
+		toolDef = cmp.Or(toolDef, next.ToolDefinition)
+	}
+	return &runtime.PartialToolCallEvent{
+		Type: first.Type,
+		ToolCall: tools.ToolCall{
+			ID:   first.ToolCall.ID,
+			Type: first.ToolCall.Type,
+			Function: tools.FunctionCall{
+				Name:      name,
+				Arguments: b.String(),
+			},
+		},
+		ToolDefinition: toolDef,
+		AgentContext:   first.AgentContext,
+	}, n
 }
 
 // ExportHTML exports the current session as a standalone HTML file.

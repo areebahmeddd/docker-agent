@@ -34,6 +34,32 @@ type messageModel struct {
 	selected bool
 	hovered  bool
 	spinner  spinner.Spinner
+
+	// renderCache memoizes the output of Render(width) keyed by the inputs
+	// that affect its output. During streaming, View() and Height() are called
+	// in pairs for each new chunk, and the chat list also re-renders for hover
+	// tracking and scroll updates; without this cache each call would re-parse
+	// the entire accumulated markdown from scratch.
+	renderCache renderCache
+
+	// mdRenderer is reused across renders of an assistant message so that
+	// streamed-in chunks only re-render the trailing block instead of the whole
+	// accumulated markdown each time.
+	mdRenderer *markdown.IncrementalRenderer
+}
+
+// renderCache stores the most recent Render result keyed by the inputs that
+// can change its output. The key is small enough (a string and a few flags)
+// that comparing it is much cheaper than rendering markdown.
+type renderCache struct {
+	valid     bool
+	content   string
+	msgType   types.MessageType
+	width     int
+	selected  bool
+	hovered   bool
+	sameAgent bool
+	result    string
 }
 
 // New creates a new message view
@@ -59,15 +85,30 @@ func (mv *messageModel) Init() tea.Cmd {
 }
 
 func (mv *messageModel) SetMessage(msg *types.Message) {
+	// If the new content is not an extension of the previous one (different
+	// message, or the message was edited), drop the IncrementalRenderer's
+	// cached prefix so its memory is released immediately rather than on the
+	// next render. The renderer detects mismatches on its own and falls back
+	// to a full render either way, so this is purely an optimization.
+	if mv.mdRenderer != nil && mv.message != nil && msg != nil && !strings.HasPrefix(msg.Content, mv.message.Content) {
+		mv.mdRenderer.Reset()
+	}
 	mv.message = msg
+	mv.renderCache.valid = false
 }
 
 func (mv *messageModel) SetSelected(selected bool) {
-	mv.selected = selected
+	if mv.selected != selected {
+		mv.selected = selected
+		mv.renderCache.valid = false
+	}
 }
 
 func (mv *messageModel) SetHovered(hovered bool) {
-	mv.hovered = hovered
+	if mv.hovered != hovered {
+		mv.hovered = hovered
+		mv.renderCache.valid = false
+	}
 }
 
 // Update handles messages and updates the message view state
@@ -85,8 +126,61 @@ func (mv *messageModel) View() string {
 	return mv.Render(mv.width)
 }
 
-// Render renders the message view content
+// Render renders the message view content. Results are memoized so repeated
+// calls with the same inputs (very common during streaming, hover tracking,
+// and from Height()) skip the expensive markdown parse.
 func (mv *messageModel) Render(width int) string {
+	msg := mv.message
+
+	// Spinner-driven types (MessageTypeSpinner, MessageTypeLoading, and an empty
+	// MessageTypeAssistant placeholder) animate on every tick, so the result is
+	// not cacheable. Everything else is a pure function of the inputs tracked in
+	// renderCache below.
+	cacheable := !mv.isSpinnerDriven()
+	if cacheable {
+		c := &mv.renderCache
+		if c.valid &&
+			c.width == width &&
+			c.msgType == msg.Type &&
+			c.selected == mv.selected &&
+			c.hovered == mv.hovered &&
+			c.content == msg.Content &&
+			c.sameAgent == mv.sameAgentAsPrevious(msg) {
+			return c.result
+		}
+	}
+
+	result := mv.render(width)
+
+	if cacheable {
+		mv.renderCache = renderCache{
+			valid:     true,
+			content:   msg.Content,
+			msgType:   msg.Type,
+			width:     width,
+			selected:  mv.selected,
+			hovered:   mv.hovered,
+			sameAgent: mv.sameAgentAsPrevious(msg),
+			result:    result,
+		}
+	}
+	return result
+}
+
+// isSpinnerDriven reports whether the rendered output animates on every tick
+// and therefore cannot be cached across renders.
+func (mv *messageModel) isSpinnerDriven() bool {
+	switch mv.message.Type {
+	case types.MessageTypeSpinner, types.MessageTypeLoading:
+		return true
+	case types.MessageTypeAssistant:
+		return mv.message.Content == ""
+	}
+	return false
+}
+
+// render is the uncached rendering core. Render() wraps it with memoization.
+func (mv *messageModel) render(width int) string {
 	msg := mv.message
 	switch msg.Type {
 	case types.MessageTypeSpinner:
@@ -134,7 +228,8 @@ func (mv *messageModel) Render(width int) string {
 			messageStyle = styles.SelectedMessageStyle
 		}
 
-		rendered, err := markdown.NewRenderer(width - messageStyle.GetHorizontalFrameSize()).Render(msg.Content)
+		innerRenderWidth := width - messageStyle.GetHorizontalFrameSize()
+		rendered, err := mv.renderAssistantMarkdown(msg.Content, innerRenderWidth)
 		if err != nil {
 			rendered = msg.Content
 		}
@@ -192,6 +287,19 @@ func (mv *messageModel) Render(width int) string {
 	}
 }
 
+// renderAssistantMarkdown renders streamed assistant content using a per-message
+// IncrementalRenderer. The renderer remembers the last rendered stable prefix
+// so each new chunk only re-parses the trailing region. The first render at a
+// given width is equivalent to a fresh full render.
+func (mv *messageModel) renderAssistantMarkdown(content string, width int) (string, error) {
+	if mv.mdRenderer == nil {
+		mv.mdRenderer = markdown.NewIncrementalRenderer(width)
+	} else {
+		mv.mdRenderer.SetWidth(width)
+	}
+	return mv.mdRenderer.Render(content)
+}
+
 func (mv *messageModel) senderPrefix(sender string) string {
 	if sender == "" {
 		return ""
@@ -215,7 +323,9 @@ func (mv *messageModel) sameAgentAsPrevious(msg *types.Message) bool {
 	}
 }
 
-// Height calculates the height needed for this message view
+// Height calculates the height needed for this message view. Render() is
+// memoized, so calling it from here does not duplicate work when View() is
+// invoked for the same inputs.
 func (mv *messageModel) Height(width int) int {
 	content := mv.Render(width)
 	return strings.Count(content, "\n") + 1
@@ -238,6 +348,9 @@ func (mv *messageModel) StopAnimation() {
 
 // SetSize sets the dimensions of the message view
 func (mv *messageModel) SetSize(width, height int) tea.Cmd {
+	if mv.width != width {
+		mv.renderCache.valid = false
+	}
 	mv.width = width
 	mv.height = height
 	return nil
