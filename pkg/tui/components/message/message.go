@@ -41,6 +41,11 @@ type messageModel struct {
 	// tracking and scroll updates; without this cache each call would re-parse
 	// the entire accumulated markdown from scratch.
 	renderCache renderCache
+
+	// mdRenderer is reused across renders of an assistant message so that
+	// streamed-in chunks only re-render the trailing block instead of the whole
+	// accumulated markdown each time.
+	mdRenderer *markdown.IncrementalRenderer
 }
 
 // renderCache stores the most recent Render result keyed by the inputs that
@@ -80,6 +85,14 @@ func (mv *messageModel) Init() tea.Cmd {
 }
 
 func (mv *messageModel) SetMessage(msg *types.Message) {
+	// If the new content is not an extension of the previous one (different
+	// message, or the message was edited), drop the IncrementalRenderer's
+	// cached prefix so its memory is released immediately rather than on the
+	// next render. The renderer detects mismatches on its own and falls back
+	// to a full render either way, so this is purely an optimization.
+	if mv.mdRenderer != nil && mv.message != nil && msg != nil && !strings.HasPrefix(msg.Content, mv.message.Content) {
+		mv.mdRenderer.Reset()
+	}
 	mv.message = msg
 	mv.renderCache.valid = false
 }
@@ -215,7 +228,8 @@ func (mv *messageModel) render(width int) string {
 			messageStyle = styles.SelectedMessageStyle
 		}
 
-		rendered, err := markdown.NewRenderer(width - messageStyle.GetHorizontalFrameSize()).Render(msg.Content)
+		innerRenderWidth := width - messageStyle.GetHorizontalFrameSize()
+		rendered, err := mv.renderAssistantMarkdown(msg.Content, innerRenderWidth)
 		if err != nil {
 			rendered = msg.Content
 		}
@@ -271,6 +285,19 @@ func (mv *messageModel) render(width int) string {
 	default:
 		return msg.Content
 	}
+}
+
+// renderAssistantMarkdown renders streamed assistant content using a per-message
+// IncrementalRenderer. The renderer remembers the last rendered stable prefix
+// so each new chunk only re-parses the trailing region. The first render at a
+// given width is equivalent to a fresh full render.
+func (mv *messageModel) renderAssistantMarkdown(content string, width int) (string, error) {
+	if mv.mdRenderer == nil {
+		mv.mdRenderer = markdown.NewIncrementalRenderer(width)
+	} else {
+		mv.mdRenderer.SetWidth(width)
+	}
+	return mv.mdRenderer.Render(content)
 }
 
 func (mv *messageModel) senderPrefix(sender string) string {
