@@ -253,29 +253,29 @@ func TestLookupFamily(t *testing.T) {
 
 	t.Run("known", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "claude-sonnet", LookupFamily(t.Context(), store, "anthropic", "claude-sonnet-4-5"))
+		assert.Equal(t, "claude-sonnet", LookupFamily(t.Context(), store, modelsdev.NewID("anthropic", "claude-sonnet-4-5")))
 	})
 	t.Run("known on bedrock", func(t *testing.T) {
 		t.Parallel()
-		got := LookupFamily(t.Context(), store, "amazon-bedrock", "anthropic.claude-sonnet-4-5-20250929-v1:0")
+		got := LookupFamily(t.Context(), store, modelsdev.NewID("amazon-bedrock", "anthropic.claude-sonnet-4-5-20250929-v1:0"))
 		assert.Equal(t, "claude-sonnet", got)
 	})
 	t.Run("unknown model", func(t *testing.T) {
 		t.Parallel()
-		assert.Empty(t, LookupFamily(t.Context(), store, "anthropic", "claude-future"))
+		assert.Empty(t, LookupFamily(t.Context(), store, modelsdev.NewID("anthropic", "claude-future")))
 	})
 	t.Run("unknown provider", func(t *testing.T) {
 		t.Parallel()
-		assert.Empty(t, LookupFamily(t.Context(), store, "no-such-provider", "x"))
+		assert.Empty(t, LookupFamily(t.Context(), store, modelsdev.NewID("no-such-provider", "x")))
 	})
 	t.Run("nil store", func(t *testing.T) {
 		t.Parallel()
-		assert.Empty(t, LookupFamily(t.Context(), nil, "anthropic", "claude-sonnet-4-5"))
+		assert.Empty(t, LookupFamily(t.Context(), nil, modelsdev.NewID("anthropic", "claude-sonnet-4-5")))
 	})
 	t.Run("empty inputs", func(t *testing.T) {
 		t.Parallel()
-		assert.Empty(t, LookupFamily(t.Context(), store, "", "claude-sonnet-4-5"))
-		assert.Empty(t, LookupFamily(t.Context(), store, "anthropic", ""))
+		assert.Empty(t, LookupFamily(t.Context(), store, modelsdev.NewID("", "claude-sonnet-4-5")))
+		assert.Empty(t, LookupFamily(t.Context(), store, modelsdev.NewID("anthropic", "")))
 	})
 }
 
@@ -300,22 +300,22 @@ func TestIsClaude(t *testing.T) {
 	ctx := t.Context()
 
 	// Resolved via models.dev.
-	assert.True(t, IsClaude(ctx, store, "anthropic", "claude-sonnet-4-5"))
-	assert.True(t, IsClaude(ctx, store, "vertex-anthropic", "claude-opus-4-7"))
+	assert.True(t, IsClaude(ctx, store, modelsdev.NewID("anthropic", "claude-sonnet-4-5")))
+	assert.True(t, IsClaude(ctx, store, modelsdev.NewID("vertex-anthropic", "claude-opus-4-7")))
 
 	// Resolved via Bedrock-style name pattern even without store data.
-	assert.True(t, IsClaude(ctx, nil, "amazon-bedrock", "anthropic.claude-3-5-sonnet-20241022-v2:0"))
-	assert.True(t, IsClaude(ctx, nil, "amazon-bedrock", "global.anthropic.claude-opus-4-5-20251101-v1:0"))
+	assert.True(t, IsClaude(ctx, nil, modelsdev.NewID("amazon-bedrock", "anthropic.claude-3-5-sonnet-20241022-v2:0")))
+	assert.True(t, IsClaude(ctx, nil, modelsdev.NewID("amazon-bedrock", "global.anthropic.claude-opus-4-5-20251101-v1:0")))
 
 	// Resolved via bare-name fallback.
-	assert.True(t, IsClaude(ctx, nil, "anthropic", "claude-future"))
+	assert.True(t, IsClaude(ctx, nil, modelsdev.NewID("anthropic", "claude-future")))
 
 	// Definitively not Claude.
-	assert.False(t, IsClaude(ctx, store, "openai", "gpt-4o"))
-	assert.False(t, IsClaude(ctx, nil, "openai", "gpt-4o"))
-	assert.False(t, IsClaude(ctx, nil, "amazon-bedrock", "amazon.titan-text-express-v1"))
-	assert.False(t, IsClaude(ctx, nil, "google", "gemini-2.5-pro"))
-	assert.False(t, IsClaude(ctx, nil, "", ""))
+	assert.False(t, IsClaude(ctx, store, modelsdev.NewID("openai", "gpt-4o")))
+	assert.False(t, IsClaude(ctx, nil, modelsdev.NewID("openai", "gpt-4o")))
+	assert.False(t, IsClaude(ctx, nil, modelsdev.NewID("amazon-bedrock", "amazon.titan-text-express-v1")))
+	assert.False(t, IsClaude(ctx, nil, modelsdev.NewID("google", "gemini-2.5-pro")))
+	assert.False(t, IsClaude(ctx, nil, modelsdev.ID{}))
 }
 
 func TestIsClaude_StoreErrorFallsBackToPattern(t *testing.T) {
@@ -325,8 +325,8 @@ func TestIsClaude_StoreErrorFallsBackToPattern(t *testing.T) {
 	// the bare-name fallback to identify Claude models correctly.
 	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{}})
 
-	require.True(t, IsClaude(t.Context(), store, "anthropic", "claude-sonnet-4-5"))
-	require.False(t, IsClaude(t.Context(), store, "openai", "gpt-4o"))
+	require.True(t, IsClaude(t.Context(), store, modelsdev.NewID("anthropic", "claude-sonnet-4-5")))
+	require.False(t, IsClaude(t.Context(), store, modelsdev.NewID("openai", "gpt-4o")))
 }
 
 // ---------------------------------------------------------------------------
@@ -349,20 +349,20 @@ func TestLoadCaps_QualifiedIDRequired(t *testing.T) {
 	}})
 
 	// Bare model name: must fall back to conservative text-only caps.
-	bareID := "claude-sonnet-4-6"
+	bareID := modelsdev.NewID("", "claude-sonnet-4-6")
 	mcBare := LoadCaps(store, bareID)
 	assert.False(t, mcBare.Supports("image/jpeg"),
-		"bare model name %q must NOT resolve to vision caps", bareID)
+		"bare model name %q must NOT resolve to vision caps", bareID.String())
 	assert.False(t, mcBare.Supports("application/pdf"),
-		"bare model name %q must NOT resolve to PDF caps", bareID)
+		"bare model name %q must NOT resolve to PDF caps", bareID.String())
 
 	// Fully-qualified ID: must resolve to vision+pdf caps.
-	qualifiedID := "anthropic/claude-sonnet-4-6"
+	qualifiedID := modelsdev.NewID("anthropic", "claude-sonnet-4-6")
 	mcQualified := LoadCaps(store, qualifiedID)
 	assert.True(t, mcQualified.Supports("image/jpeg"),
-		"qualified ID %q must resolve to vision caps", qualifiedID)
+		"qualified ID %q must resolve to vision caps", qualifiedID.String())
 	assert.True(t, mcQualified.Supports("application/pdf"),
-		"qualified ID %q must resolve to PDF caps", qualifiedID)
+		"qualified ID %q must resolve to PDF caps", qualifiedID.String())
 }
 
 func TestLoadCaps_VisionModel(t *testing.T) {
@@ -380,7 +380,7 @@ func TestLoadCaps_VisionModel(t *testing.T) {
 		},
 	}})
 
-	mc := LoadCaps(store, "anthropic/claude-3-5-sonnet")
+	mc := LoadCaps(store, modelsdev.NewID("anthropic", "claude-3-5-sonnet"))
 
 	assert.True(t, mc.Supports("image/jpeg"))
 	assert.True(t, mc.Supports("image/png"))
@@ -403,7 +403,7 @@ func TestLoadCaps_TextOnlyModel(t *testing.T) {
 		},
 	}})
 
-	mc := LoadCaps(store, "openai/gpt-3.5-turbo")
+	mc := LoadCaps(store, modelsdev.NewID("openai", "gpt-3.5-turbo"))
 
 	assert.False(t, mc.Supports("image/jpeg"))
 	assert.False(t, mc.Supports("application/pdf"))
@@ -414,7 +414,7 @@ func TestLoadCaps_TextOnlyModel(t *testing.T) {
 func TestLoadCaps_ModelNotFound(t *testing.T) {
 	store := modelsdev.NewDatabaseStore(&modelsdev.Database{Providers: map[string]modelsdev.Provider{}})
 
-	mc := LoadCaps(store, "unknown/nonexistent-model")
+	mc := LoadCaps(store, modelsdev.NewID("unknown", "nonexistent-model"))
 
 	assert.False(t, mc.Supports("image/jpeg"))
 	assert.False(t, mc.Supports("application/pdf"))
@@ -436,7 +436,7 @@ func TestLoadCaps_OfficeDocsNotAllowed(t *testing.T) {
 		},
 	}})
 
-	mc := LoadCaps(store, "openai/gpt-4o")
+	mc := LoadCaps(store, modelsdev.NewID("openai", "gpt-4o"))
 
 	for _, officeMIME := range []string{
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",

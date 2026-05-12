@@ -28,17 +28,17 @@ func (j JSONSchema) MarshalJSON() ([]byte, error) {
 
 // ConvertMultiContent converts chat.MessagePart slices to OpenAI content
 // parts using the provided modelsdev.Store for capability lookups.
-func ConvertMultiContent(ctx context.Context, multiContent []chat.MessagePart, modelID string, store *modelsdev.Store) []openai.ChatCompletionContentPartUnionParam {
-	return convertMultiContentWithStore(ctx, multiContent, modelID, store)
+func ConvertMultiContent(ctx context.Context, multiContent []chat.MessagePart, id modelsdev.ID, store *modelsdev.Store) []openai.ChatCompletionContentPartUnionParam {
+	return convertMultiContentWithStore(ctx, multiContent, id, store)
 }
 
 // ConvertMessages converts chat.Message slices to OpenAI message params
 // using the provided modelsdev.Store for capability lookups.
-func ConvertMessages(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {
-	return convertMessagesWithStore(ctx, messages, modelID, store)
+func ConvertMessages(ctx context.Context, messages []chat.Message, id modelsdev.ID, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {
+	return convertMessagesWithStore(ctx, messages, id, store)
 }
 
-func convertMultiContentWithStore(ctx context.Context, multiContent []chat.MessagePart, modelID string, store *modelsdev.Store) []openai.ChatCompletionContentPartUnionParam {
+func convertMultiContentWithStore(ctx context.Context, multiContent []chat.MessagePart, id modelsdev.ID, store *modelsdev.Store) []openai.ChatCompletionContentPartUnionParam {
 	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(multiContent))
 	for _, part := range multiContent {
 		switch part.Type {
@@ -54,7 +54,7 @@ func convertMultiContentWithStore(ctx context.Context, multiContent []chat.Messa
 			}
 		case chat.MessagePartTypeDocument:
 			if part.Document != nil {
-				docParts, err := convertDocument(ctx, *part.Document, modelID, store)
+				docParts, err := convertDocument(ctx, *part.Document, id, store)
 				if err != nil {
 					slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 					continue
@@ -66,7 +66,7 @@ func convertMultiContentWithStore(ctx context.Context, multiContent []chat.Messa
 	return parts
 }
 
-func convertMessagesWithStore(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {
+func convertMessagesWithStore(ctx context.Context, messages []chat.Message, id modelsdev.ID, store *modelsdev.Store) []openai.ChatCompletionMessageParamUnion {
 	openaiMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for i := range messages {
 		msg := &messages[i]
@@ -99,7 +99,7 @@ func convertMessagesWithStore(ctx context.Context, messages []chat.Message, mode
 			if len(msg.MultiContent) == 0 {
 				openaiMessage = openai.UserMessage(msg.Content)
 			} else {
-				openaiMessage = openai.UserMessage(convertMultiContentWithStore(ctx, msg.MultiContent, modelID, store))
+				openaiMessage = openai.UserMessage(convertMultiContentWithStore(ctx, msg.MultiContent, id, store))
 			}
 
 		case chat.MessageRoleAssistant:

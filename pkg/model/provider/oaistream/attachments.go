@@ -24,8 +24,8 @@ import (
 //   - other binary MIMEs with InlineData → drop (no native document block on Chat Completions)
 //   - text MIMEs with InlineText → text part with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocument(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]openai.ChatCompletionContentPartUnionParam, error) {
-	mc := modelinfo.LoadCaps(store, modelID)
+func convertDocument(ctx context.Context, doc chat.Document, id modelsdev.ID, store *modelsdev.Store) ([]openai.ChatCompletionContentPartUnionParam, error) {
+	mc := modelinfo.LoadCaps(store, id)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

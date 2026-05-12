@@ -134,7 +134,7 @@ func (r *LocalRuntime) setAgentModelInternal(ctx context.Context, agentName, mod
 			return agent.ModelOverrideSnapshot{}, fmt.Errorf("failed to create model from config: %w", err)
 		}
 		snap := a.SetModelOverride(prov)
-		slog.InfoContext(ctx, "Set agent model override", "agent", agentName, "model", prov.ID(), "config_name", modelRef)
+		slog.InfoContext(ctx, "Set agent model override", "agent", agentName, "model", prov.ID().String(), "config_name", modelRef)
 		return snap, nil
 	}
 
@@ -156,7 +156,7 @@ func (r *LocalRuntime) setAgentModelInternal(ctx context.Context, agentName, mod
 		return agent.ModelOverrideSnapshot{}, fmt.Errorf("failed to resolve model %q: %w", modelRef, err)
 	}
 	snap := a.SetModelOverride(prov)
-	slog.InfoContext(ctx, "Set agent model override (inline)", "agent", agentName, "model", prov.ID())
+	slog.InfoContext(ctx, "Set agent model override (inline)", "agent", agentName, "model", prov.ID().String())
 	return snap, nil
 }
 
@@ -405,7 +405,7 @@ func (r *LocalRuntime) populateCatalogMetadata(ctx context.Context, choice *Mode
 	if r.modelsStore == nil {
 		return
 	}
-	m, err := r.modelsStore.GetModel(ctx, providerID+"/"+modelID)
+	m, err := r.modelsStore.GetModel(ctx, modelsdev.NewID(providerID, modelID))
 	if err == nil {
 		applyCatalogMetadata(choice, m)
 	}
@@ -543,7 +543,7 @@ func (r *LocalRuntime) createProviderFromConfig(ctx context.Context, cfg *latest
 	if cfg.MaxTokens != nil {
 		opts = append(opts, options.WithMaxTokens(*cfg.MaxTokens))
 	} else if r.modelsStore != nil {
-		m, err := r.modelsStore.GetModel(ctx, cfg.Provider+"/"+cfg.Model)
+		m, err := r.modelsStore.GetModel(ctx, modelsdev.NewID(cfg.Provider, cfg.Model))
 		if err == nil && m != nil {
 			opts = append(opts, options.WithMaxTokens(m.Limit.Output))
 		}

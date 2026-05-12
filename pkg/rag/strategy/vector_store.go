@@ -63,7 +63,7 @@ type VectorStore struct {
 	indexingTokens int64 // Track tokens used during indexing
 	indexingCost   float64
 
-	modelID     string // Full model ID (e.g., "openai/text-embedding-3-small") for pricing lookup
+	modelID     modelsdev.ID // Provider/model identity, used for pricing lookup.
 	modelsStore modelStore
 
 	// embeddingInputBuilder controls how raw chunks are transformed into the
@@ -88,7 +88,7 @@ type VectorStore struct {
 }
 
 type modelStore interface {
-	GetModel(ctx context.Context, modelID string) (*modelsdev.Model, error)
+	GetModel(ctx context.Context, id modelsdev.ID) (*modelsdev.Model, error)
 }
 
 // EmbeddingInputBuilder builds the string that will be sent to the embedding model
@@ -114,7 +114,7 @@ type VectorStoreConfig struct {
 	Embedder             *embed.Embedder
 	Events               chan<- types.Event
 	SimilarityMetric     string
-	ModelID              string
+	ModelID              modelsdev.ID
 	ModelsStore          modelStore
 	EmbeddingConcurrency int
 	FileIndexConcurrency int
@@ -171,14 +171,14 @@ func (s *VectorStore) SetEmbeddingInputBuilder(builder EmbeddingInputBuilder) {
 
 // calculateCost calculates embedding cost using models.dev pricing
 func (s *VectorStore) calculateCost(tokens int64) float64 {
-	if s.modelsStore == nil || strings.HasPrefix(s.modelID, "dmr/") {
+	if s.modelsStore == nil || s.modelID.Provider == "dmr" {
 		return 0
 	}
 
 	model, err := s.modelsStore.GetModel(context.Background(), s.modelID)
 	if err != nil {
 		slog.Debug("Failed to get model pricing from models.dev, cost will be 0",
-			"model_id", s.modelID,
+			"model_id", s.modelID.String(),
 			"error", err)
 		return 0
 	}

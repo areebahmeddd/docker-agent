@@ -140,11 +140,11 @@ func detectCachingSupport(ctx context.Context, model string, store *modelsdev.St
 		return false
 	}
 
-	modelID := "amazon-bedrock/" + model
-	m, err := store.GetModel(ctx, modelID)
+	id := modelsdev.NewID("amazon-bedrock", model)
+	m, err := store.GetModel(ctx, id)
 	if err != nil {
 		slog.DebugContext(ctx, "Bedrock prompt caching disabled: model not found in models.dev",
-			"model_id", modelID, "error", err)
+			"model_id", id.String(), "error", err)
 		return false
 	}
 

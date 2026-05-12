@@ -20,8 +20,8 @@ import (
 //   - image/* or binary with InlineData → genai.Blob part
 //   - text MIMEs with InlineText → genai.Text part with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocument(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) (*genai.Part, error) {
-	mc := modelinfo.LoadCaps(store, modelID)
+func convertDocument(ctx context.Context, doc chat.Document, id modelsdev.ID, store *modelsdev.Store) (*genai.Part, error) {
+	mc := modelinfo.LoadCaps(store, id)
 	return convertDocumentWithCaps(ctx, doc, mc)
 }
 

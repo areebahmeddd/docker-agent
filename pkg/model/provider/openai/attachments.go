@@ -25,8 +25,8 @@ import (
 //   - application/pdf with InlineData → OfInputFile (base64)
 //   - text MIMEs with InlineText → OfInputText with TXTEnvelope
 //   - unsupported / no content → nil (logged as warning)
-func convertDocumentToResponseInput(ctx context.Context, doc chat.Document, modelID string, store *modelsdev.Store) ([]responses.ResponseInputContentUnionParam, error) {
-	mc := modelinfo.LoadCaps(store, modelID)
+func convertDocumentToResponseInput(ctx context.Context, doc chat.Document, id modelsdev.ID, store *modelsdev.Store) ([]responses.ResponseInputContentUnionParam, error) {
+	mc := modelinfo.LoadCaps(store, id)
 	return convertDocumentToResponseInputWithCaps(ctx, doc, mc)
 }
 

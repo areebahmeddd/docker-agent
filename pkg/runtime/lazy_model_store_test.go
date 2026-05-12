@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/team"
 )
 
@@ -69,7 +70,7 @@ func TestLazyModelStore_DefersError(t *testing.T) {
 		l.err = wantErr
 	})
 
-	_, err := l.GetModel(t.Context(), "anything")
+	_, err := l.GetModel(t.Context(), modelsdev.NewID("openai", "anything"))
 	require.ErrorIs(t, err, wantErr)
 	_, err = l.GetDatabase(t.Context())
 	require.ErrorIs(t, err, wantErr)

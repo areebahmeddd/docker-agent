@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -207,7 +208,7 @@ type blockingProvider struct {
 	id string
 }
 
-func (p *blockingProvider) ID() string { return p.id }
+func (p *blockingProvider) ID() modelsdev.ID { return modelsdev.ParseIDOrZero(p.id) }
 
 func (p *blockingProvider) CreateChatCompletionStream(ctx context.Context, _ []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
 	// Snapshot ctx.Done() at stream-construction time — the runtime

@@ -182,7 +182,7 @@ func TestHandleStreamError_ContextCanceled_Fatal(t *testing.T) {
 // trying to drive a real compaction agent.
 type errModelStore struct{ ModelStore }
 
-func (errModelStore) GetModel(_ context.Context, _ string) (*modelsdev.Model, error) {
+func (errModelStore) GetModel(_ context.Context, _ modelsdev.ID) (*modelsdev.Model, error) {
 	return nil, errors.New("no model")
 }
 

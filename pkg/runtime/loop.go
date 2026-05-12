@@ -343,7 +343,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 					"model_override", ls.toolModelOverride, "error", err)
 			} else {
 				slog.InfoContext(ctx, "Using per-tool model override for this turn",
-					"agent", a.Name(), "override", overrideModel.ID(), "primary", model.ID())
+					"agent", a.Name(), "override", overrideModel.ID().String(), "primary", model.ID().String())
 				model = overrideModel
 			}
 			ls.toolModelOverride = ""
@@ -354,10 +354,10 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// Notify sidebar of the model for this turn. For rule-based
 		// routing, the actual routed model is emitted from within the
 		// stream once the first chunk arrives.
-		sink.Emit(AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage()))
+		sink.Emit(AgentInfo(a.Name(), modelID.String(), a.Description(), a.WelcomeMessage()))
 
-		slog.DebugContext(ctx, "Using agent", "agent", a.Name(), "model", modelID)
-		slog.DebugContext(ctx, "Getting model definition", "model_id", modelID)
+		slog.DebugContext(ctx, "Using agent", "agent", a.Name(), "model", modelID.String())
+		slog.DebugContext(ctx, "Getting model definition", "model_id", modelID.String())
 		m, err := r.modelsStore.GetModel(ctx, modelID)
 		if err != nil {
 			slog.DebugContext(ctx, "Failed to get model definition", "error", err)
@@ -452,7 +452,7 @@ func (r *LocalRuntime) runTurn(
 	a *agent.Agent,
 	m *modelsdev.Model,
 	model provider.Provider,
-	modelID string,
+	modelID modelsdev.ID,
 	contextLimit int64,
 	sessionSpan trace.Span,
 	agentTools []tools.Tool,
@@ -519,7 +519,7 @@ func (r *LocalRuntime) runTurn(
 	// runtime's Go-only message transforms so a hook that drops a
 	// message (e.g. a custom "strip system reminders") doesn't get
 	// silently overridden by a transform later in the chain.
-	stop, msg, rewritten := r.executeBeforeLLMCallHooks(ctx, sess, a, modelID, ls.iteration, messages)
+	stop, msg, rewritten := r.executeBeforeLLMCallHooks(ctx, sess, a, modelID.String(), ls.iteration, messages)
 	if stop {
 		slog.WarnContext(ctx, "before_llm_call hook signalled run termination",
 			"agent", a.Name(), "session_id", sess.ID, "reason", msg)
@@ -540,7 +540,7 @@ func (r *LocalRuntime) runTurn(
 	// passed explicitly so transforms see the actual model the
 	// loop chose (per-tool override + alloy-mode selection),
 	// not whatever a fresh agent.Model() call would re-randomize.
-	messages = r.applyBeforeLLMCallTransforms(ctx, sess, a, modelID, messages)
+	messages = r.applyBeforeLLMCallTransforms(ctx, sess, a, modelID.String(), messages)
 
 	// Try primary model with fallback chain if configured
 	res, usedModel, err := r.fallback.execute(streamCtx, a, model, messages, agentTools, sess, m, events)
@@ -564,8 +564,8 @@ func (r *LocalRuntime) runTurn(
 	r.executeAfterLLMCallHooks(ctx, sess, a, res.Content)
 
 	if usedModel != nil && usedModel.ID() != model.ID() {
-		slog.InfoContext(ctx, "Used fallback model", "agent", a.Name(), "primary", model.ID(), "used", usedModel.ID())
-		events.Emit(AgentInfo(a.Name(), usedModel.ID(), a.Description(), a.WelcomeMessage()))
+		slog.InfoContext(ctx, "Used fallback model", "agent", a.Name(), "primary", model.ID().String(), "used", usedModel.ID().String())
+		events.Emit(AgentInfo(a.Name(), usedModel.ID().String(), a.Description(), a.WelcomeMessage()))
 	}
 	streamSpan.SetAttributes(
 		attribute.Int("tool.calls", len(res.Calls)),
@@ -575,7 +575,7 @@ func (r *LocalRuntime) runTurn(
 	endStreamSpan()
 	slog.DebugContext(ctx, "Stream processed", "agent", a.Name(), "tool_calls", len(res.Calls), "content_length", len(res.Content), "stopped", res.Stopped)
 
-	msgUsage := r.recordAssistantMessage(sess, a, res, agentTools, modelID, m, events)
+	msgUsage := r.recordAssistantMessage(sess, a, res, agentTools, modelID.String(), m, events)
 
 	usage := SessionUsage(sess, contextLimit)
 	usage.LastMessage = msgUsage

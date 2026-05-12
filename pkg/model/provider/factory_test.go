@@ -13,15 +13,16 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // fakeProvider is a Provider stub used to verify factory dispatch.
 type fakeProvider struct {
-	id string
+	id modelsdev.ID
 }
 
-func (f *fakeProvider) ID() string { return f.id }
+func (f *fakeProvider) ID() modelsdev.ID { return f.id }
 func (f *fakeProvider) CreateChatCompletionStream(_ context.Context, _ []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
 	return nil, errors.New("not implemented")
 }
@@ -39,7 +40,7 @@ func withFactories(t *testing.T, factories map[string]providerFactory) {
 
 func tagFactory(id string) providerFactory {
 	return func(_ context.Context, _ *latest.ModelConfig, _ environment.Provider, _ ...options.Opt) (Provider, error) {
-		return &fakeProvider{id: id}, nil
+		return &fakeProvider{id: modelsdev.NewID("test", id)}, nil
 	}
 }
 
@@ -110,7 +111,7 @@ func TestCreateDirectProvider_DispatchByType(t *testing.T) {
 			require.NoError(t, err)
 			fp, ok := p.(*fakeProvider)
 			require.True(t, ok, "expected fakeProvider, got %T", p)
-			assert.Equal(t, tt.expectID, fp.id)
+			assert.Equal(t, tt.expectID, fp.id.Model)
 		})
 	}
 }
@@ -152,7 +153,7 @@ func TestCreateDirectProvider_AppliesProviderDefaults(t *testing.T) {
 	withFactories(t, map[string]providerFactory{
 		"openai_chatcompletions": func(_ context.Context, cfg *latest.ModelConfig, _ environment.Provider, _ ...options.Opt) (Provider, error) {
 			got = cfg
-			return &fakeProvider{id: "captured"}, nil
+			return &fakeProvider{id: modelsdev.NewID("test", "captured")}, nil
 		},
 	})
 

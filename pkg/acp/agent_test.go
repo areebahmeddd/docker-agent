@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -38,11 +39,11 @@ func (m *mockStream) Close() {}
 
 // mockProvider returns a predetermined stream for testing.
 type mockProvider struct {
-	id     string
+	id     modelsdev.ID
 	stream chat.MessageStream
 }
 
-func (m *mockProvider) ID() string { return m.id }
+func (m *mockProvider) ID() modelsdev.ID { return m.id }
 
 func (m *mockProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
 	return m.stream, nil
@@ -85,7 +86,7 @@ func TestACPSessionPersistence(t *testing.T) {
 			},
 		},
 	}
-	prov := &mockProvider{id: "test/mock-model", stream: stream}
+	prov := &mockProvider{id: modelsdev.NewID("test", "mock-model"), stream: stream}
 
 	// Create a minimal team with a root agent
 	root := agent.New("root", "You are a test agent", agent.WithModel(prov))

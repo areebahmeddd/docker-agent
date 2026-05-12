@@ -13,15 +13,16 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // mockProvider is a simple mock provider for testing.
 type mockProvider struct {
-	id string
+	id modelsdev.ID
 }
 
-func (m *mockProvider) ID() string {
+func (m *mockProvider) ID() modelsdev.ID {
 	return m.id
 }
 
@@ -41,9 +42,9 @@ func (m *mockProvider) BaseConfig() base.Config {
 // It resolves model references from the models map or parses inline specs.
 func mockProviderFactory(_ context.Context, modelSpec string, models map[string]latest.ModelConfig, _ environment.Provider, _ ...options.Opt) (Provider, error) {
 	if cfg, exists := models[modelSpec]; exists {
-		return &mockProvider{id: cfg.Provider + "/" + cfg.Model}, nil
+		return &mockProvider{id: modelsdev.NewID(cfg.Provider, cfg.Model)}, nil
 	}
-	return &mockProvider{id: modelSpec}, nil
+	return &mockProvider{id: modelsdev.ParseIDOrZero(modelSpec)}, nil
 }
 
 func TestNewClient(t *testing.T) {
@@ -201,7 +202,7 @@ func TestClient_SelectProvider(t *testing.T) {
 			messages := []chat.Message{{Role: chat.MessageRoleUser, Content: tt.message}}
 			provider := client.selectProvider(messages)
 			require.NotNil(t, provider)
-			assert.Equal(t, tt.expectedModel, provider.ID())
+			assert.Equal(t, tt.expectedModel, provider.ID().String())
 		})
 	}
 }
@@ -288,7 +289,7 @@ func TestClient_ID(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Close()
 
-	assert.Equal(t, "openai/gpt-4o", client.ID())
+	assert.Equal(t, "openai/gpt-4o", client.ID().String())
 }
 
 func TestClient_DefaultProvider(t *testing.T) {
@@ -310,7 +311,7 @@ func TestClient_DefaultProvider(t *testing.T) {
 	defer client.Close()
 
 	provider := client.selectProvider(nil)
-	assert.Equal(t, "openai/gpt-4o", provider.ID())
+	assert.Equal(t, "openai/gpt-4o", provider.ID().String())
 }
 
 func TestClient_CreateChatCompletionStream_NilProvider(t *testing.T) {

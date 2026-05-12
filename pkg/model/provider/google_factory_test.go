@@ -43,7 +43,7 @@ func TestGoogleFactory_RoutesGeminiByDefault(t *testing.T) {
 	require.NoError(t, err)
 	fp, ok := p.(*fakeProvider)
 	require.True(t, ok)
-	assert.Equal(t, "gemini", fp.id)
+	assert.Equal(t, "gemini", fp.id.Model)
 }
 
 // TestGoogleFactory_RoutesGeminiWhenPublisherIsGoogle covers the documented
@@ -68,7 +68,7 @@ func TestGoogleFactory_RoutesGeminiWhenPublisherIsGoogle(t *testing.T) {
 	require.NoError(t, err)
 	fp, ok := p.(*fakeProvider)
 	require.True(t, ok)
-	assert.Equal(t, "gemini", fp.id)
+	assert.Equal(t, "gemini", fp.id.Model)
 }
 
 // TestGoogleFactory_RoutesVertexForModelGarden verifies that any non-Google
@@ -92,7 +92,7 @@ func TestGoogleFactory_RoutesVertexForModelGarden(t *testing.T) {
 	require.NoError(t, err)
 	fp, ok := p.(*fakeProvider)
 	require.True(t, ok)
-	assert.Equal(t, "vertex", fp.id)
+	assert.Equal(t, "vertex", fp.id.Model)
 }
 
 // TestGoogleFactory_PropagatesGeminiError verifies that errors from the inner

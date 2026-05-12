@@ -19,7 +19,7 @@ import (
 // convertMessages handles Bedrock's Converse API constraints:
 // - Tool results must immediately follow the assistant message with tool_use
 // - Multiple consecutive tool results must be grouped into a single user message
-func convertMessages(ctx context.Context, messages []chat.Message, modelID string, store *modelsdev.Store, enableCaching bool) ([]types.Message, []types.SystemContentBlock) {
+func convertMessages(ctx context.Context, messages []chat.Message, id modelsdev.ID, store *modelsdev.Store, enableCaching bool) ([]types.Message, []types.SystemContentBlock) {
 	var bedrockMessages []types.Message
 	var systemBlocks []types.SystemContentBlock
 
@@ -44,7 +44,7 @@ func convertMessages(ctx context.Context, messages []chat.Message, modelID strin
 			}
 
 		case chat.MessageRoleUser:
-			contentBlocks := convertUserContent(ctx, msg, modelID, store)
+			contentBlocks := convertUserContent(ctx, msg, id, store)
 			if len(contentBlocks) > 0 {
 				bedrockMessages = append(bedrockMessages, types.Message{
 					Role:    types.ConversationRoleUser,
@@ -121,7 +121,7 @@ func applyCachePointsToMessages(messages []types.Message) {
 	}
 }
 
-func convertUserContent(ctx context.Context, msg *chat.Message, modelID string, store *modelsdev.Store) []types.ContentBlock {
+func convertUserContent(ctx context.Context, msg *chat.Message, id modelsdev.ID, store *modelsdev.Store) []types.ContentBlock {
 	var blocks []types.ContentBlock
 
 	if len(msg.MultiContent) > 0 {
@@ -140,7 +140,7 @@ func convertUserContent(ctx context.Context, msg *chat.Message, modelID string, 
 				}
 			case chat.MessagePartTypeDocument:
 				if part.Document != nil {
-					docBlocks, err := convertDocument(ctx, *part.Document, modelID, store)
+					docBlocks, err := convertDocument(ctx, *part.Document, id, store)
 					if err != nil {
 						slog.WarnContext(ctx, "failed to convert document attachment", "error", err, "doc", part.Document.Name)
 						continue

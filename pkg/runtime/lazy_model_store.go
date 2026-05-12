@@ -31,12 +31,12 @@ func (l *lazyModelStore) load() (*modelsdev.Store, error) {
 	return l.st, l.err
 }
 
-func (l *lazyModelStore) GetModel(ctx context.Context, modelID string) (*modelsdev.Model, error) {
+func (l *lazyModelStore) GetModel(ctx context.Context, id modelsdev.ID) (*modelsdev.Model, error) {
 	st, err := l.load()
 	if err != nil {
 		return nil, err
 	}
-	return st.GetModel(ctx, modelID)
+	return st.GetModel(ctx, id)
 }
 
 func (l *lazyModelStore) GetDatabase(ctx context.Context) (*modelsdev.Database, error) {

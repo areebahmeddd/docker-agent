@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/dmr"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/permissions"
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/team"
@@ -306,7 +307,7 @@ func getModelsForAgent(ctx context.Context, cfg *latest.Config, a *latest.AgentC
 		if modelCfg.MaxTokens != nil {
 			maxTokens = modelCfg.MaxTokens
 		} else if modelsStoreErr == nil {
-			m, err := modelsStore.GetModel(ctx, modelCfg.Provider+"/"+modelCfg.Model)
+			m, err := modelsStore.GetModel(ctx, modelsdev.NewID(modelCfg.Provider, modelCfg.Model))
 			if err == nil {
 				maxTokens = &m.Limit.Output
 			}
@@ -369,7 +370,7 @@ func getFallbackModelsForAgent(ctx context.Context, cfg *latest.Config, a *lates
 		if modelCfg.MaxTokens != nil {
 			maxTokens = modelCfg.MaxTokens
 		} else if modelsStoreErr == nil {
-			m, err := modelsStore.GetModel(ctx, modelCfg.Provider+"/"+modelCfg.Model)
+			m, err := modelsStore.GetModel(ctx, modelsdev.NewID(modelCfg.Provider, modelCfg.Model))
 			if err == nil {
 				maxTokens = &m.Limit.Output
 			}

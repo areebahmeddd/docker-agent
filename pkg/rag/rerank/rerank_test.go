@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/rag/database"
 	"github.com/docker/docker-agent/pkg/rag/types"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -23,8 +24,8 @@ type fakeRerankingProvider struct {
 	err    error
 }
 
-func (f *fakeRerankingProvider) ID() string {
-	return "fake-reranker"
+func (f *fakeRerankingProvider) ID() modelsdev.ID {
+	return modelsdev.NewID("test", "fake-reranker")
 }
 
 func (f *fakeRerankingProvider) CreateChatCompletionStream(
@@ -66,8 +67,8 @@ type fakeProviderWithoutRerank struct {
 	base.Config
 }
 
-func (f *fakeProviderWithoutRerank) ID() string {
-	return "fake-no-rerank"
+func (f *fakeProviderWithoutRerank) ID() modelsdev.ID {
+	return modelsdev.NewID("test", "fake-no-rerank")
 }
 
 func (f *fakeProviderWithoutRerank) CreateChatCompletionStream(
