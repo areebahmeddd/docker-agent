@@ -154,9 +154,6 @@ We collect anonymous usage data to help improve docker agent. To disable:
 	cmd.AddCommand(
 		newVersionCmd(),
 		newRunCmd(),
-		newSendCmd(),
-		newWatchCmd(),
-		newProtoCmd(),
 		newNewCmd(),
 		newEvalCmd(),
 		newShareCmd(),
