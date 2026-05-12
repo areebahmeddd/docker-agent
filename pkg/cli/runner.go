@@ -413,13 +413,13 @@ func CreateUserMessageWithAttachment(ctx context.Context, userContent, attachmen
 
 	absPath, err := filepath.Abs(attachmentPath)
 	if err != nil {
-		slog.Warn("Failed to get absolute path for attachment", "path", attachmentPath, "error", err)
+		slog.WarnContext(ctx, "Failed to get absolute path for attachment", "path", attachmentPath, "error", err)
 		return noAttachment()
 	}
 
 	fi, err := os.Stat(absPath)
 	if err != nil {
-		slog.Warn("Attachment file not accessible", "path", absPath, "error", err)
+		slog.WarnContext(ctx, "Attachment file not accessible", "path", absPath, "error", err)
 		return noAttachment()
 	}
 
