@@ -567,19 +567,25 @@ func (e *editor) resetAndSend(content string) tea.Cmd {
 	e.pendingFileRef = ""
 	attachments := e.collectAttachments(content)
 
-	// Sort attachments by name length descending to avoid partial matches
-	// e.g., replacing @paste-1 before @paste-10 would corrupt @paste-10.
-	slices.SortFunc(attachments, func(a, b messages.Attachment) int {
-		return len(b.Name) - len(a.Name)
-	})
-
 	var finalAttachments []messages.Attachment
+	var pastes []messages.Attachment
+
 	for _, att := range attachments {
 		if att.Content != "" && strings.HasPrefix(att.Name, "paste-") {
-			content = strings.ReplaceAll(content, "@"+att.Name, att.Content)
+			pastes = append(pastes, att)
 		} else {
 			finalAttachments = append(finalAttachments, att)
 		}
+	}
+
+	// Sort pastes by name length descending to avoid partial matches
+	// e.g., replacing @paste-1 before @paste-10 would corrupt @paste-10.
+	slices.SortFunc(pastes, func(a, b messages.Attachment) int {
+		return len(b.Name) - len(a.Name)
+	})
+
+	for _, att := range pastes {
+		content = strings.ReplaceAll(content, "@"+att.Name, att.Content)
 	}
 
 	e.textarea.Reset()
