@@ -3,6 +3,71 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.59.0] - 2026-05-13
+
+This release adds XML tool call parsing for better model compatibility, performance improvements for TUI rendering, and enhanced remote runtime capabilities.
+
+## What's New
+
+- Adds XML tool call fallback parsing for models that return `<tool_call>...</tool_call>` text instead of using OpenAI function-calling API
+- Adds fd:// scheme support to server.Listen for parent process socket passing
+- Adds per-code-block copy affordance with clickable copy glyphs in TUI
+- Adds session persistence and resumption for A2A (agent-to-agent) interactions using SQLite
+- Adds comprehensive remote runtime API with SSE event streaming, session management, and graceful degradation
+
+## Improvements
+
+- Improves TUI rendering performance with cached output, targeted invalidation, and incremental markdown rendering
+- Improves ACP support with session management, event handling, and structured error codes
+- Preserves user input across tab switches in TUI dialogs
+
+## Bug Fixes
+
+- Fixes crash during tool auto-install by adding panic recovery
+- Fixes SSE stream cancellation and IPv6 address binding issues
+- Fixes Vertex AI Model Garden provider capability lookups by rewriting provider to publisher mapping
+
+## Technical Changes
+
+- Replaces internal secretsscan with github.com/docker/portcullis library
+- Centralizes modelsdev.Store creation via RuntimeConfig with lazy initialization
+- Merges modelcaps into modelinfo and introduces strongly-typed modelsdev.ID
+- Refactors event handling to use EventSink interface instead of channel threading
+- Removes experimental send, watch, and proto subcommands
+
+### Pull Requests
+
+- [#2732](https://github.com/docker/docker-agent/pull/2732) - xml fallback for llama.cpp models
+- [#2744](https://github.com/docker/docker-agent/pull/2744) - feat: add fd:// scheme support to server.Listen
+- [#2745](https://github.com/docker/docker-agent/pull/2745) - docs: update CHANGELOG.md for v1.58.0
+- [#2746](https://github.com/docker/docker-agent/pull/2746) - refactor: centralize modelsdev.Store creation and inject via RuntimeConfig
+- [#2747](https://github.com/docker/docker-agent/pull/2747) - refactor: replace internal secretsscan with github.com/docker/portcullis
+- [#2748](https://github.com/docker/docker-agent/pull/2748) - fix: avoid sub-agent terminology in skill instructions to prevent transfer_task confusion
+- [#2749](https://github.com/docker/docker-agent/pull/2749) - feat(runtime): remote runtime with full TUI parity and production readiness
+- [#2750](https://github.com/docker/docker-agent/pull/2750) - docs: Docker-branded redesign with dark-mode-first theme and improved homepage
+- [#2751](https://github.com/docker/docker-agent/pull/2751) - feat: wire TUI/CLI to emit Document parts and render attachments
+- [#2752](https://github.com/docker/docker-agent/pull/2752) - feat: add docs preview workflow for PRs
+- [#2753](https://github.com/docker/docker-agent/pull/2753) - feat(modelsdev): add WithCache option to override cache file path
+- [#2754](https://github.com/docker/docker-agent/pull/2754) - refactor: simplify RuntimeConfig by removing dead field and caching env provider
+- [#2755](https://github.com/docker/docker-agent/pull/2755) - refactor: merge modelcaps into modelinfo and simplify
+- [#2756](https://github.com/docker/docker-agent/pull/2756) - perf: TUI rendering performance improvements
+- [#2757](https://github.com/docker/docker-agent/pull/2757) - feat: improve TUI control plane API for external consumers
+- [#2758](https://github.com/docker/docker-agent/pull/2758) - Improve ACP support: session management, event handling, and code simplification
+- [#2759](https://github.com/docker/docker-agent/pull/2759) - refactor: extract loopState struct to bundle runTurn parameters
+- [#2760](https://github.com/docker/docker-agent/pull/2760) - refactor: replace chan Event threading with EventSink interface
+- [#2762](https://github.com/docker/docker-agent/pull/2762) - feat(a2a): allow session to be resumed interactively
+- [#2763](https://github.com/docker/docker-agent/pull/2763) - drop send, watch and proto subcommands
+- [#2766](https://github.com/docker/docker-agent/pull/2766) - refactor: introduce modelsdev.ID for provider-qualified model identity
+- [#2767](https://github.com/docker/docker-agent/pull/2767) - fix: rewrite Vertex AI Model Garden provider to publisher for capability lookups
+- [#2768](https://github.com/docker/docker-agent/pull/2768) - fix(toolinstall): recover from panics during auto-install
+- [#2771](https://github.com/docker/docker-agent/pull/2771) - bump direct go dependencies
+- [#2772](https://github.com/docker/docker-agent/pull/2772) - Fix linter
+- [#2773](https://github.com/docker/docker-agent/pull/2773) - perf(tui): make streaming chunk rendering linear
+- [#2774](https://github.com/docker/docker-agent/pull/2774) - fix(tui): preserve user_prompt input across tab switches
+- [#2775](https://github.com/docker/docker-agent/pull/2775) - fix: two TUI control-plane bugs (SSE cancel, IPv6 listen)
+- [#2778](https://github.com/docker/docker-agent/pull/2778) - feat(tui): add per-code-block copy affordance
+
+
 ## [v1.58.0] - 2026-05-11
 
 This release adds external TUI control capabilities, HTTP POST hooks, and several security hardening improvements.
@@ -2675,3 +2740,5 @@ This release improves the terminal user interface with better error handling and
 [v1.57.0]: https://github.com/docker/docker-agent/releases/tag/v1.57.0
 
 [v1.58.0]: https://github.com/docker/docker-agent/releases/tag/v1.58.0
+
+[v1.59.0]: https://github.com/docker/docker-agent/releases/tag/v1.59.0
