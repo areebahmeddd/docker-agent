@@ -168,7 +168,7 @@ func TestAutoModelConfig(t *testing.T) {
 				"ANTHROPIC_API_KEY": "test-key",
 			},
 			expectedProvider:  "anthropic",
-			expectedModel:     "claude-sonnet-4-5",
+			expectedModel:     "claude-sonnet-4-6",
 			expectedMaxTokens: 32000,
 		},
 		{
@@ -210,7 +210,7 @@ func TestAutoModelConfig(t *testing.T) {
 			envVars:           map[string]string{},
 			gateway:           "gateway:8080",
 			expectedProvider:  "anthropic",
-			expectedModel:     "claude-sonnet-4-5",
+			expectedModel:     "claude-sonnet-4-6",
 			expectedMaxTokens: 32000,
 		},
 	}
@@ -288,7 +288,7 @@ func TestDefaultModels(t *testing.T) {
 
 	// Test specific model values
 	assert.Equal(t, "gpt-5-mini", DefaultModels["openai"])
-	assert.Equal(t, "claude-sonnet-4-5", DefaultModels["anthropic"])
+	assert.Equal(t, "claude-sonnet-4-6", DefaultModels["anthropic"])
 	assert.Equal(t, "gemini-2.5-flash", DefaultModels["google"])
 	assert.Equal(t, "ai/qwen3:latest", DefaultModels["dmr"])
 	assert.Equal(t, "mistral-small-latest", DefaultModels["mistral"])
@@ -439,7 +439,7 @@ func TestAutoModelConfig_UserDefaultModel(t *testing.T) {
 			defaultModel:      &latest.ModelConfig{Provider: "openai", Model: ""},
 			envVars:           map[string]string{"ANTHROPIC_API_KEY": "test-key"},
 			expectedProvider:  "anthropic",
-			expectedModel:     "claude-sonnet-4-5",
+			expectedModel:     "claude-sonnet-4-6",
 			expectedMaxTokens: 32000,
 		},
 	}
