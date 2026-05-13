@@ -117,18 +117,19 @@ type cachedStyles struct {
 	styleCodeBg lipgloss.Style // kept only because chroma styles inherit its bg color
 
 	// ANSI styles (for fast inline rendering)
-	ansiBold       ansiStyle
-	ansiItalic     ansiStyle
-	ansiBoldItal   ansiStyle
-	ansiStrike     ansiStyle
-	ansiCode       ansiStyle
-	ansiLink       ansiStyle
-	ansiLinkText   ansiStyle
-	ansiText       ansiStyle    // base document text style
-	ansiHeadings   [6]ansiStyle // heading styles for inline restoration
-	ansiBlockquote ansiStyle    // blockquote style for inline restoration
-	ansiFootnote   ansiStyle    // footnote reference style
-	ansiCodeBg     ansiStyle    // code block background (cached to avoid repeated buildAnsiStyle)
+	ansiBold        ansiStyle
+	ansiItalic      ansiStyle
+	ansiBoldItal    ansiStyle
+	ansiStrike      ansiStyle
+	ansiCode        ansiStyle
+	ansiLink        ansiStyle
+	ansiLinkText    ansiStyle
+	ansiText        ansiStyle    // base document text style
+	ansiHeadings    [6]ansiStyle // heading styles for inline restoration
+	ansiBlockquote  ansiStyle    // blockquote style for inline restoration
+	ansiFootnote    ansiStyle    // footnote reference style
+	ansiCodeBg      ansiStyle    // code block background (cached to avoid repeated buildAnsiStyle)
+	ansiCodeBgMuted ansiStyle    // muted foreground on code block background (for code-block chrome like copy label)
 
 	// Pre-rendered chrome (computed once, reused across renders)
 	headingPrefixes         [6]string // raw prefix strings (e.g. "## ") for width math
@@ -242,6 +243,7 @@ func getGlobalStyles() *cachedStyles {
 			ansiBlockquote:          buildAnsiStyle(blockquoteLipStyle),
 			ansiFootnote:            buildAnsiStyle(lipgloss.NewStyle().Foreground(styles.TextSecondary).Italic(true)),
 			ansiCodeBg:              buildAnsiStyle(codeBg),
+			ansiCodeBgMuted:         buildAnsiStyle(codeBg.Foreground(styles.TextMutedGray)),
 			headingPrefixes:         headingPrefixes,
 			styledHeadingPrefixes:   styledPrefixes,
 			styledHeadingContIndent: styledContIndents,
@@ -278,8 +280,17 @@ var parserPool = sync.Pool{
 
 // Render parses and renders markdown content to styled terminal output.
 func (r *FastRenderer) Render(input string) (string, error) {
+	out, _, err := r.RenderWithCodeBlocks(input)
+	return out, err
+}
+
+// RenderWithCodeBlocks renders markdown content and returns both the styled
+// terminal output and the list of fenced code blocks emitted, in document
+// order. Each entry's Line points at the rendered line that carries the
+// clickable copy label for that block.
+func (r *FastRenderer) RenderWithCodeBlocks(input string) (string, []CodeBlock, error) {
 	if input == "" {
-		return "", nil
+		return "", nil, nil
 	}
 
 	input = sanitizeForTerminal(input)
@@ -287,18 +298,24 @@ func (r *FastRenderer) Render(input string) (string, error) {
 	p := parserPool.Get().(*parser)
 	p.reset(input, r.width)
 	result := p.parse()
+	var blocks []CodeBlock
+	if len(p.codeBlocks) > 0 {
+		blocks = make([]CodeBlock, len(p.codeBlocks))
+		copy(blocks, p.codeBlocks)
+	}
 	parserPool.Put(p)
-	return finalizeOutput(result, r.width), nil
+	return finalizeOutput(result, r.width), blocks, nil
 }
 
 // parser holds the state for parsing markdown.
 type parser struct {
-	input   string
-	width   int
-	styles  *cachedStyles
-	out     strings.Builder
-	lines   []string
-	lineIdx int
+	input      string
+	width      int
+	styles     *cachedStyles
+	out        strings.Builder
+	lines      []string
+	lineIdx    int
+	codeBlocks []CodeBlock
 }
 
 func (p *parser) reset(input string, width int) {
@@ -311,6 +328,7 @@ func (p *parser) reset(input string, width int) {
 		p.lines = append(p.lines, line)
 	}
 	p.lineIdx = 0
+	p.codeBlocks = p.codeBlocks[:0]
 	p.out.Reset()
 	p.out.Grow(len(input) * 2) // Pre-allocate for styled output
 }
@@ -1913,10 +1931,25 @@ func (p *parser) renderCodeBlockWithIndent(code, lang, indent string, availableW
 	// Use cached background style
 	bgStyle := p.styles.ansiCodeBg
 
-	// Render empty line at the top (use sequential writes instead of concat)
+	// Render empty line at the top with a copy affordance pushed to the right
+	// edge. Record the rendered line index so click handlers can map a click
+	// back to this block's raw content.
+	topLine := strings.Count(p.out.String(), "\n")
 	p.out.WriteString(indent)
-	bgStyle.renderTo(&p.out, fullWidthPad)
+	labelWidth := runewidth.StringWidth(CodeBlockCopyLabel)
+	leftFill := max(availableWidth-paddingRight-labelWidth, 0)
+	if availableWidth >= labelWidth+paddingRight {
+		bgStyle.renderTo(&p.out, spaces(leftFill))
+		p.styles.ansiCodeBgMuted.renderTo(&p.out, CodeBlockCopyLabel)
+		if paddingRight > 0 {
+			bgStyle.renderTo(&p.out, spaces(paddingRight))
+		}
+	} else {
+		// Too narrow for the label; fall back to a plain top padding row.
+		bgStyle.renderTo(&p.out, fullWidthPad)
+	}
 	p.out.WriteByte('\n')
+	p.codeBlocks = append(p.codeBlocks, CodeBlock{Content: code, Line: topLine})
 
 	// Process tokens line by line for better performance
 	var lineBuilder strings.Builder

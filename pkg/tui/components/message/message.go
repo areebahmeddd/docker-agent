@@ -21,6 +21,7 @@ type Model interface {
 	SetMessage(msg *types.Message)
 	SetSelected(selected bool)
 	SetHovered(hovered bool)
+	CodeBlocks() []markdown.CodeBlock
 }
 
 // messageModel implements Model
@@ -41,6 +42,12 @@ type messageModel struct {
 	// tracking and scroll updates; without this cache each call would re-parse
 	// the entire accumulated markdown from scratch.
 	renderCache renderCache
+
+	// codeBlocks holds the fenced code blocks emitted by the last call to
+	// render() for assistant messages, with Line indices translated into the
+	// messageModel's own View() output coordinate system (i.e. zero-indexed
+	// from the first line of View()).
+	codeBlocks []markdown.CodeBlock
 
 	// mdRenderer is reused across renders of an assistant message so that
 	// streamed-in chunks only re-render the trailing block instead of the whole
@@ -229,9 +236,10 @@ func (mv *messageModel) render(width int) string {
 		}
 
 		innerRenderWidth := width - messageStyle.GetHorizontalFrameSize()
-		rendered, err := mv.renderAssistantMarkdown(msg.Content, innerRenderWidth)
+		rendered, codeBlocks, err := mv.renderAssistantMarkdown(msg.Content, innerRenderWidth)
 		if err != nil {
 			rendered = msg.Content
+			codeBlocks = nil
 		}
 
 		var prefix string
@@ -251,6 +259,28 @@ func (mv *messageModel) render(width int) string {
 			padding := max(innerWidth-iconWidth, 0)
 			topRow = strings.Repeat(" ", padding) + copyIcon
 		}
+
+		// Translate the markdown-relative line indices into messageModel View()
+		// coordinates. The rendered markdown is preceded by the sender prefix
+		// (when shown) and the always-present topRow line inside the styled
+		// envelope, so the first line of `rendered` lands at this offset.
+		prefixLines := 0
+		if prefix != "" {
+			prefixLines = strings.Count(prefix, "\n")
+		}
+		lineOffset := prefixLines + 1 // +1 for topRow
+		if len(codeBlocks) > 0 {
+			mv.codeBlocks = make([]markdown.CodeBlock, len(codeBlocks))
+			for i, cb := range codeBlocks {
+				mv.codeBlocks[i] = markdown.CodeBlock{
+					Content: cb.Content,
+					Line:    cb.Line + lineOffset,
+				}
+			}
+		} else {
+			mv.codeBlocks = nil
+		}
+
 		return prefix + messageStyle.Width(width).Render(topRow+"\n"+rendered)
 	case types.MessageTypeShellOutput:
 		if rendered, err := markdown.NewRenderer(width).Render(fmt.Sprintf("```console\n%s\n```", msg.Content)); err == nil {
@@ -291,13 +321,17 @@ func (mv *messageModel) render(width int) string {
 // IncrementalRenderer. The renderer remembers the last rendered stable prefix
 // so each new chunk only re-parses the trailing region. The first render at a
 // given width is equivalent to a fresh full render.
-func (mv *messageModel) renderAssistantMarkdown(content string, width int) (string, error) {
+//
+// It also returns the list of fenced code blocks emitted by the renderer so
+// that callers can map clicks on the per-block copy affordance back to the
+// underlying raw code.
+func (mv *messageModel) renderAssistantMarkdown(content string, width int) (string, []markdown.CodeBlock, error) {
 	if mv.mdRenderer == nil {
 		mv.mdRenderer = markdown.NewIncrementalRenderer(width)
 	} else {
 		mv.mdRenderer.SetWidth(width)
 	}
-	return mv.mdRenderer.Render(content)
+	return mv.mdRenderer.RenderWithCodeBlocks(content)
 }
 
 func (mv *messageModel) senderPrefix(sender string) string {
@@ -334,6 +368,14 @@ func (mv *messageModel) Height(width int) int {
 // Message returns the underlying message
 func (mv *messageModel) Message() *types.Message {
 	return mv.message
+}
+
+// CodeBlocks returns the fenced code blocks emitted by the most recent render
+// of this message, with Line indices expressed in View() output coordinates.
+// Returns nil when the message has no code blocks or has not been rendered
+// yet (e.g. non-assistant messages).
+func (mv *messageModel) CodeBlocks() []markdown.CodeBlock {
+	return mv.codeBlocks
 }
 
 // Layout.Sizeable methods

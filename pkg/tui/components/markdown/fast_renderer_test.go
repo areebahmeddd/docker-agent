@@ -2028,3 +2028,54 @@ func BenchmarkStreamingGlamourRenderer(b *testing.B) {
 		}
 	}
 }
+
+func TestFastRendererCodeBlocksReturnsRawContent(t *testing.T) {
+	t.Parallel()
+
+	input := "Some intro.\n\n```go\npackage main\n\nfunc main() {}\n```\n\nMid.\n\n```\nhello\nworld\n```\n"
+	r := NewFastRenderer(80)
+	out, blocks, err := r.RenderWithCodeBlocks(input)
+	require.NoError(t, err)
+
+	require.Len(t, blocks, 2)
+	assert.Equal(t, "package main\n\nfunc main() {}", blocks[0].Content)
+	assert.Equal(t, "hello\nworld", blocks[1].Content)
+
+	// Each block's recorded line must contain the copy-affordance glyph.
+	lines := strings.Split(out, "\n")
+	for _, b := range blocks {
+		require.Less(t, b.Line, len(lines), "code block line index out of range")
+		assert.Contains(t, stripANSI(lines[b.Line]), CodeBlockCopyLabel,
+			"line %d should contain the code block copy label", b.Line)
+	}
+
+	// The two code blocks must land on different lines.
+	assert.NotEqual(t, blocks[0].Line, blocks[1].Line)
+}
+
+func TestIncrementalRendererCodeBlocksAggregate(t *testing.T) {
+	t.Parallel()
+
+	// Render in two streamed chunks; the second extends the first.
+	chunk1 := "Intro paragraph.\n\n```go\nfunc a() {}\n```\n\n"
+	chunk2 := chunk1 + "Middle.\n\n```\nplain\ncode\n```\n"
+
+	r := NewIncrementalRenderer(80)
+	_, blocks1, err := r.RenderWithCodeBlocks(chunk1)
+	require.NoError(t, err)
+	require.Len(t, blocks1, 1)
+	assert.Equal(t, "func a() {}", blocks1[0].Content)
+
+	out, blocks2, err := r.RenderWithCodeBlocks(chunk2)
+	require.NoError(t, err)
+	require.Len(t, blocks2, 2)
+	assert.Equal(t, "func a() {}", blocks2[0].Content)
+	assert.Equal(t, "plain\ncode", blocks2[1].Content)
+
+	// Each block's reported line must carry the copy label in the final output.
+	lines := strings.Split(out, "\n")
+	for _, b := range blocks2 {
+		require.Less(t, b.Line, len(lines))
+		assert.Contains(t, stripANSI(lines[b.Line]), CodeBlockCopyLabel)
+	}
+}
