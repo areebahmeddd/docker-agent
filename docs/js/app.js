@@ -33,38 +33,96 @@ function toggleTheme() {
 }
 
 // ---------- Table of Contents ----------
+// The right-column aside on each page contains:
+//   1. An "Edit this page" link to the source on GitHub (resolved
+//      from a <meta name="docs-edit-url"> set in the layout).
+//   2. A "Table of contents" heading + nested links to in-page
+//      <h2 id> / <h3 id> headings.
+// We render the heading + nav unconditionally when there are at least
+// 2 headings; the edit link renders even on short pages.
+//
+// Built programmatically (createElement + textContent) rather than via
+// innerHTML so that heading text — which is authored by humans and may
+// contain stray HTML metacharacters — is treated as text and never
+// reinterpreted as markup (CodeQL: "DOM text reinterpreted as HTML").
 function buildTOC() {
   if (!$content) return;
 
   const headings = $content.querySelectorAll('h2[id], h3[id]');
-  if (headings.length < 3) return;
+  const editUrl = (document.querySelector('meta[name="docs-edit-url"]') || {}).content || '';
+
+  if (headings.length < 2 && !editUrl) return;
 
   const aside = document.createElement('aside');
   aside.className = 'toc-aside';
-  aside.setAttribute('aria-label', 'Table of contents');
-  aside.innerHTML = `
-    <div class="toc-inner">
-      <div class="toc-title">On this page</div>
-      <nav class="toc-nav">
-        ${Array.from(headings).map(h => {
-          const level = h.tagName === 'H3' ? 'toc-h3' : '';
-          return `<a class="toc-link ${level}" href="#${h.id}" data-id="${h.id}">${h.textContent}</a>`;
-        }).join('')}
-      </nav>
-    </div>`;
+  aside.setAttribute('aria-label', 'On this page');
+
+  const inner = document.createElement('div');
+  inner.className = 'toc-inner';
+  aside.appendChild(inner);
+
+  // "Edit this page" — only when an edit URL was provided.
+  if (editUrl) {
+    const actions = document.createElement('div');
+    actions.className = 'toc-actions';
+
+    const link = document.createElement('a');
+    link.className = 'toc-action';
+    link.href = editUrl;
+    link.target = '_blank';
+    link.rel = 'noopener';
+
+    // Pencil icon (Lucide-style line). Reusing one literal here is
+    // fine because no untrusted data is interpolated into it.
+    link.insertAdjacentHTML('afterbegin',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
+      ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
+      ' aria-hidden="true">' +
+      '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>' +
+      '<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>' +
+      '</svg>');
+
+    const label = document.createElement('span');
+    label.textContent = 'Edit this page';
+    link.appendChild(label);
+
+    actions.appendChild(link);
+    inner.appendChild(actions);
+  }
+
+  // "Table of contents" + nav — only when there are enough headings.
+  if (headings.length >= 2) {
+    const heading = document.createElement('div');
+    heading.className = 'toc-heading';
+    heading.textContent = 'Table of contents';
+    inner.appendChild(heading);
+
+    const nav = document.createElement('nav');
+    nav.className = 'toc-nav';
+    inner.appendChild(nav);
+
+    for (const h of headings) {
+      const a = document.createElement('a');
+      a.className = 'toc-link' + (h.tagName === 'H3' ? ' toc-h3' : '');
+      a.href = '#' + h.id;
+      a.dataset.id = h.id;
+      a.textContent = h.textContent;
+      nav.appendChild(a);
+    }
+
+    aside.addEventListener('click', (e) => {
+      const a = e.target.closest('.toc-link');
+      if (!a) return;
+      e.preventDefault();
+      const target = document.getElementById(a.dataset.id);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    setupScrollSpy(headings, aside);
+  }
 
   const main = document.querySelector('.main');
   if (main) main.appendChild(aside);
-
-  aside.addEventListener('click', (e) => {
-    const link = e.target.closest('.toc-link');
-    if (!link) return;
-    e.preventDefault();
-    const target = document.getElementById(link.dataset.id);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-
-  setupScrollSpy(headings, aside);
 }
 
 function setupScrollSpy(headings, aside) {
