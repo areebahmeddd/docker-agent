@@ -117,19 +117,19 @@ type cachedStyles struct {
 	styleCodeBg lipgloss.Style // kept only because chroma styles inherit its bg color
 
 	// ANSI styles (for fast inline rendering)
-	ansiBold        ansiStyle
-	ansiItalic      ansiStyle
-	ansiBoldItal    ansiStyle
-	ansiStrike      ansiStyle
-	ansiCode        ansiStyle
-	ansiLink        ansiStyle
-	ansiLinkText    ansiStyle
-	ansiText        ansiStyle    // base document text style
-	ansiHeadings    [6]ansiStyle // heading styles for inline restoration
-	ansiBlockquote  ansiStyle    // blockquote style for inline restoration
-	ansiFootnote    ansiStyle    // footnote reference style
-	ansiCodeBg      ansiStyle    // code block background (cached to avoid repeated buildAnsiStyle)
-	ansiCodeBgMuted ansiStyle    // muted foreground on code block background (for code-block chrome like copy label)
+	ansiBold              ansiStyle
+	ansiItalic            ansiStyle
+	ansiBoldItal          ansiStyle
+	ansiStrike            ansiStyle
+	ansiCode              ansiStyle
+	ansiLink              ansiStyle
+	ansiLinkText          ansiStyle
+	ansiText              ansiStyle    // base document text style
+	ansiHeadings          [6]ansiStyle // heading styles for inline restoration
+	ansiBlockquote        ansiStyle    // blockquote style for inline restoration
+	ansiFootnote          ansiStyle    // footnote reference style
+	ansiCodeBg            ansiStyle    // code block background (cached to avoid repeated buildAnsiStyle)
+	ansiCodeBlockCopyIcon ansiStyle    // muted foreground on code block background, used for the per-block copy icon
 
 	// Pre-rendered chrome (computed once, reused across renders)
 	headingPrefixes         [6]string // raw prefix strings (e.g. "## ") for width math
@@ -243,7 +243,7 @@ func getGlobalStyles() *cachedStyles {
 			ansiBlockquote:          buildAnsiStyle(blockquoteLipStyle),
 			ansiFootnote:            buildAnsiStyle(lipgloss.NewStyle().Foreground(styles.TextSecondary).Italic(true)),
 			ansiCodeBg:              buildAnsiStyle(codeBg),
-			ansiCodeBgMuted:         buildAnsiStyle(codeBg.Foreground(styles.TextMutedGray)),
+			ansiCodeBlockCopyIcon:   buildAnsiStyle(codeBg.Foreground(styles.TextMutedGray)),
 			headingPrefixes:         headingPrefixes,
 			styledHeadingPrefixes:   styledPrefixes,
 			styledHeadingContIndent: styledContIndents,
@@ -1936,16 +1936,16 @@ func (p *parser) renderCodeBlockWithIndent(code, lang, indent string, availableW
 	// back to this block's raw content.
 	topLine := strings.Count(p.out.String(), "\n")
 	p.out.WriteString(indent)
-	labelWidth := runewidth.StringWidth(CodeBlockCopyLabel)
-	leftFill := max(availableWidth-paddingRight-labelWidth, 0)
-	if availableWidth >= labelWidth+paddingRight {
+	iconWidth := runewidth.StringWidth(CodeBlockCopyIcon)
+	leftFill := max(availableWidth-paddingRight-iconWidth, 0)
+	if availableWidth >= iconWidth+paddingRight {
 		bgStyle.renderTo(&p.out, spaces(leftFill))
-		p.styles.ansiCodeBgMuted.renderTo(&p.out, CodeBlockCopyLabel)
+		p.styles.ansiCodeBlockCopyIcon.renderTo(&p.out, CodeBlockCopyIcon)
 		if paddingRight > 0 {
 			bgStyle.renderTo(&p.out, spaces(paddingRight))
 		}
 	} else {
-		// Too narrow for the label; fall back to a plain top padding row.
+		// Too narrow for the icon; fall back to a plain top padding row.
 		bgStyle.renderTo(&p.out, fullWidthPad)
 	}
 	p.out.WriteByte('\n')

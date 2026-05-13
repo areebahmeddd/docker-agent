@@ -1766,13 +1766,13 @@ func (m *model) codeBlockAt(msgIdx, localLine, col int) (string, bool) {
 		return "", false
 	}
 	plainLine := ansi.Strip(item.lines[localLine])
-	before, _, found := strings.Cut(plainLine, markdown.CodeBlockCopyLabel)
+	before, _, found := strings.Cut(plainLine, markdown.CodeBlockCopyIcon)
 	if !found {
 		return "", false
 	}
-	labelStart := ansi.StringWidth(before)
-	labelEnd := labelStart + ansi.StringWidth(markdown.CodeBlockCopyLabel)
-	if col < labelStart || col >= labelEnd {
+	iconStart := ansi.StringWidth(before)
+	iconEnd := iconStart + ansi.StringWidth(markdown.CodeBlockCopyIcon)
+	if col < iconStart || col >= iconEnd {
 		return "", false
 	}
 	return target.Content, true

@@ -217,10 +217,15 @@ func (r *IncrementalRenderer) joinPrefixAndTail(prefix, tail string) string {
 	return b.String()
 }
 
+// joinSeparatorLines is the number of extra rendered lines that
+// joinPrefixAndTail inserts between the prefix output and the tail output:
+// one to terminate the prefix's final (untrailing-newlined) line, and one
+// blank-padded separator line. Keep this in sync with joinPrefixAndTail.
+const joinSeparatorLines = 2
+
 // mergeCodeBlocks returns the union of code blocks from a cached prefix output
-// and a freshly rendered tail. Tail block line indices are shifted by the
-// number of lines in the prefix plus one for the blank separator inserted by
-// joinPrefixAndTail.
+// and a freshly rendered tail. Tail block line indices are shifted past the
+// prefix's lines and the separator that joinPrefixAndTail inserts.
 func (r *IncrementalRenderer) mergeCodeBlocks(prefixOut string, prefixBlocks, tailBlocks []CodeBlock) []CodeBlock {
 	if len(prefixBlocks) == 0 && len(tailBlocks) == 0 {
 		return nil
@@ -232,10 +237,7 @@ func (r *IncrementalRenderer) mergeCodeBlocks(prefixOut string, prefixBlocks, ta
 	}
 	offset := 0
 	if prefixOut != "" {
-		// Number of lines in prefix (FastRenderer trims its trailing newline so
-		// the count is newlines + 1) plus one for the blank separator inserted
-		// by joinPrefixAndTail.
-		offset = strings.Count(prefixOut, "\n") + 2
+		offset = strings.Count(prefixOut, "\n") + joinSeparatorLines
 	}
 	for _, b := range tailBlocks {
 		out = append(out, CodeBlock{Content: b.Content, Line: b.Line + offset})

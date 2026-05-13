@@ -2045,7 +2045,7 @@ func TestFastRendererCodeBlocksReturnsRawContent(t *testing.T) {
 	lines := strings.Split(out, "\n")
 	for _, b := range blocks {
 		require.Less(t, b.Line, len(lines), "code block line index out of range")
-		assert.Contains(t, stripANSI(lines[b.Line]), CodeBlockCopyLabel,
+		assert.Contains(t, stripANSI(lines[b.Line]), CodeBlockCopyIcon,
 			"line %d should contain the code block copy label", b.Line)
 	}
 
@@ -2076,6 +2076,6 @@ func TestIncrementalRendererCodeBlocksAggregate(t *testing.T) {
 	lines := strings.Split(out, "\n")
 	for _, b := range blocks2 {
 		require.Less(t, b.Line, len(lines))
-		assert.Contains(t, stripANSI(lines[b.Line]), CodeBlockCopyLabel)
+		assert.Contains(t, stripANSI(lines[b.Line]), CodeBlockCopyIcon)
 	}
 }
