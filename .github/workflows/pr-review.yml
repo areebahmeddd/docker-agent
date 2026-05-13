@@ -6,6 +6,10 @@ on:
     workflows: ["PR Review - Trigger"]
     types: [completed]
 
+concurrency:
+  group: pr-review-${{ github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: read # Required at top-level to give `issue_comment` events access to the secrets below.
 
