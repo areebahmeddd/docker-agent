@@ -2093,12 +2093,6 @@ func (m *appModel) handleWheelCoalesced(msg messages.WheelCoalescedMsg) (tea.Mod
 	}
 
 	if m.dialogMgr.Open() {
-		// Background dialogs (e.g. pending elicitations) let chat-area scroll
-		// wheel events fall through so the user can review the conversation
-		// behind the dialog while the prompt waits.
-		if m.dialogMgr.TopIsBackground() && m.hitTestRegion(msg.Y) == regionContent {
-			return m.forwardChat(msg)
-		}
 		return m.forwardDialog(msg)
 	}
 

@@ -11,11 +11,12 @@ import (
 // OpenDialogMsg is sent to open a new dialog.
 //
 // OriginatingEvent is an optional runtime event whose presence marks the
-// dialog as a background dialog. Background dialogs do not block the rest of
-// the UI: tab navigation, tab-bar mouse clicks and chat scroll-wheel events
-// keep working. When the user switches away from the tab that opened the
-// dialog, the dialog is closed and OriginatingEvent is re-stashed in the
-// supervisor so the same prompt is re-displayed when the user returns.
+// dialog as a background dialog. Background dialogs do not block tab
+// navigation: tab-switch keys and tab-bar mouse clicks keep working. When
+// the user switches away from the tab that opened the dialog, the dialog is
+// closed and OriginatingEvent is re-stashed in the supervisor so the same
+// prompt is re-displayed when the user returns. Other input (including
+// mouse-wheel events) is still routed to the dialog while it is on screen.
 type OpenDialogMsg struct {
 	Model            Dialog
 	OriginatingEvent tea.Msg
@@ -41,7 +42,7 @@ type Manager interface {
 	Open() bool
 	TopIsExitConfirmation() bool
 	// TopIsBackground reports whether the topmost dialog is a background
-	// dialog (i.e. it should not block tab navigation or chat scrolling).
+	// dialog (i.e. it should not block tab navigation).
 	TopIsBackground() bool
 	// TopBackgroundEvent returns the originating event of the topmost
 	// background dialog, or nil if the top dialog is not a background dialog
