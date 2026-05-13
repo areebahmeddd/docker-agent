@@ -1,6 +1,7 @@
 package message
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -219,4 +220,76 @@ func TestWelcomeMessagePreservesLineBreaks(t *testing.T) {
 	// Verify indentation is preserved in the output
 	plainRendered := stripANSI(rendered)
 	assert.Contains(t, plainRendered, "indented")
+}
+
+func TestUserMessageCollapsible(t *testing.T) {
+	t.Parallel()
+
+	// Create a user message with > 30 lines
+	lines := make([]string, 35)
+	for i := range 35 {
+		lines[i] = fmt.Sprintf("Line %d", i+1)
+	}
+	content := strings.Join(lines, "\n")
+
+	msg := &types.Message{
+		Type:    types.MessageTypeUser,
+		Content: content,
+	}
+	mv := New(msg, nil)
+	mv.SetSize(80, 0)
+
+	// Initially, it should not be expanded.
+	// It should render 5 lines + indicator
+	rendered := mv.View()
+	renderedPlain := stripANSI(rendered)
+
+	assert.Contains(t, renderedPlain, "Line 1")
+	assert.Contains(t, renderedPlain, "Line 5")
+	assert.NotContains(t, renderedPlain, "Line 6")
+	assert.Contains(t, renderedPlain, "[+] expand 30 more lines")
+
+	// Test IsToggleLine
+	// The height calculation inside IsToggleLine relies on mv.Height(80)
+	height := mv.Height(80)
+	assert.True(t, mv.IsToggleLine(height-1), "Bottom padding line should be toggleable")
+	assert.True(t, mv.IsToggleLine(height-2), "Indicator text line should be toggleable")
+	assert.True(t, mv.IsToggleLine(height-3), "Empty line above indicator should be toggleable")
+	assert.False(t, mv.IsToggleLine(height-4), "Text content lines should not be toggleable")
+
+	// Toggle it
+	mv.Toggle()
+
+	// Render again, should be expanded
+	renderedExpanded := mv.View()
+	renderedExpandedPlain := stripANSI(renderedExpanded)
+
+	assert.Contains(t, renderedExpandedPlain, "Line 1")
+	assert.Contains(t, renderedExpandedPlain, "Line 35")
+	assert.Contains(t, renderedExpandedPlain, "[-] collapse")
+}
+
+func TestUserMessageNotCollapsible(t *testing.T) {
+	t.Parallel()
+
+	// Create a user message with <= 30 lines
+	lines := make([]string, 10)
+	for i := range 10 {
+		lines[i] = fmt.Sprintf("Line %d", i+1)
+	}
+	msg := &types.Message{
+		Type:    types.MessageTypeUser,
+		Content: strings.Join(lines, "\n"),
+	}
+	mv := New(msg, nil)
+	mv.SetSize(80, 0)
+
+	renderedPlain := stripANSI(mv.View())
+
+	assert.Contains(t, renderedPlain, "Line 10")
+	assert.NotContains(t, renderedPlain, "[+] expand")
+	assert.NotContains(t, renderedPlain, "[-] collapse")
+
+	height := mv.Height(80)
+	assert.False(t, mv.IsToggleLine(height-1))
 }

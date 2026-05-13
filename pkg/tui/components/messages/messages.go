@@ -37,6 +37,11 @@ import (
 // ToggleHideToolResultsMsg triggers hiding/showing tool results
 type ToggleHideToolResultsMsg struct{}
 
+type toggleableView interface {
+	IsToggleLine(lineIdx int) bool
+	Toggle()
+}
+
 // Model represents a chat message list component
 type Model interface {
 	layout.Model
@@ -296,11 +301,11 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) (layout.Model, tea.Cmd) 
 
 	line, col := m.mouseToLineCol(msg.X, msg.Y)
 
-	// Check for reasoning block header toggle
 	if msgIdx, localLine := m.globalLineToMessageLine(line); msgIdx >= 0 {
-		if block, ok := m.views[msgIdx].(*reasoningblock.Model); ok {
-			if block.IsToggleLine(localLine) {
-				block.Toggle()
+		// Check for toggleable blocks (e.g. reasoning block, collapsed long messages)
+		if t, ok := m.views[msgIdx].(toggleableView); ok {
+			if t.IsToggleLine(localLine) {
+				t.Toggle()
 				m.bottomSlack = 0
 				m.invalidateItem(msgIdx)
 				return m, nil
