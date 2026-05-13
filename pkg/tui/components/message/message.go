@@ -14,6 +14,11 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/types"
 )
 
+const (
+	maxUserMessageLines       = 30
+	collapsedUserMessageLines = 5
+)
+
 // Model represents a view that can render a message
 type Model interface {
 	layout.Model
@@ -34,6 +39,7 @@ type messageModel struct {
 	focused  bool
 	selected bool
 	hovered  bool
+	expanded bool
 	spinner  spinner.Spinner
 
 	// renderCache memoizes the output of Render(width) keyed by the inputs
@@ -65,6 +71,7 @@ type renderCache struct {
 	width     int
 	selected  bool
 	hovered   bool
+	expanded  bool
 	sameAgent bool
 	result    string
 }
@@ -128,6 +135,33 @@ func (mv *messageModel) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	return mv, nil
 }
 
+// Toggle switches between expanded and collapsed state.
+func (mv *messageModel) Toggle() {
+	mv.expanded = !mv.expanded
+	mv.renderCache.valid = false
+}
+
+// IsToggleLine returns true if the line contains the expand/collapse affordance.
+func (mv *messageModel) IsToggleLine(lineIdx int) bool {
+	if mv.message == nil || mv.message.Type != types.MessageTypeUser {
+		return false
+	}
+	content := strings.TrimRight(mv.message.Content, "\n\r\t ")
+	if strings.Count(content, "\n")+1 <= maxUserMessageLines {
+		return false
+	}
+
+	// The indicator is placed at the end of the message view with a leading \n\n.
+	// Depending on edit state, the view has 0 or 1 lines of top padding,
+	// and 1 line of bottom padding.
+	// height-1 is the bottom padding.
+	// height-2 is the text of the indicator ("[-] click to collapse").
+	// height-3 is the empty line above it.
+	// By checking >= height-3, we provide a generous clickable area exactly on the toggle.
+	height := mv.Height(mv.width)
+	return lineIdx >= height-3
+}
+
 // View renders the message view
 func (mv *messageModel) View() string {
 	return mv.Render(mv.width)
@@ -151,6 +185,7 @@ func (mv *messageModel) Render(width int) string {
 			c.msgType == msg.Type &&
 			c.selected == mv.selected &&
 			c.hovered == mv.hovered &&
+			c.expanded == mv.expanded &&
 			c.content == msg.Content &&
 			c.sameAgent == mv.sameAgentAsPrevious(msg) {
 			return c.result
@@ -167,6 +202,7 @@ func (mv *messageModel) Render(width int) string {
 			width:     width,
 			selected:  mv.selected,
 			hovered:   mv.hovered,
+			expanded:  mv.expanded,
 			sameAgent: mv.sameAgentAsPrevious(msg),
 			result:    result,
 		}
@@ -199,16 +235,34 @@ func (mv *messageModel) render(width int) string {
 			messageStyle = styles.SelectedUserMessageStyle
 		}
 
+		formatUserContent := func(c string) string {
+			c = strings.TrimRight(c, "\n\r\t ")
+			if c == "" {
+				return msg.Content
+			}
+
+			totalLines := strings.Count(c, "\n") + 1
+			if totalLines > maxUserMessageLines {
+				if !mv.expanded {
+					parts := strings.SplitN(c, "\n", collapsedUserMessageLines+1)
+					visibleLines := strings.Join(parts[:collapsedUserMessageLines], "\n")
+					hiddenCount := totalLines - collapsedUserMessageLines
+					indicator := "\n\n" + styles.MutedStyle.Render(fmt.Sprintf("[+] expand %d more lines", hiddenCount))
+					return visibleLines + indicator
+				}
+				indicator := "\n\n" + styles.MutedStyle.Render("[-] collapse")
+				return c + indicator
+			}
+			return c
+		}
+
 		if msg.SessionPosition == nil {
-			return messageStyle.Width(width).Render(msg.Content)
+			return messageStyle.Width(width).Render(formatUserContent(msg.Content))
 		}
 
 		// For editable messages, place the pencil icon in the top padding row
 		innerWidth := width - messageStyle.GetHorizontalFrameSize()
-		content := strings.TrimRight(msg.Content, "\n\r\t ")
-		if content == "" {
-			content = msg.Content
-		}
+		content := formatUserContent(msg.Content)
 
 		// Create the edit icon for the top row
 		editIcon := styles.MutedStyle.Render(types.UserMessageEditLabel)

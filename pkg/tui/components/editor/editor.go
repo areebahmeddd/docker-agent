@@ -566,10 +566,32 @@ func (e *editor) resetAndSend(content string) tea.Cmd {
 	e.tryAddFileRef(e.pendingFileRef)
 	e.pendingFileRef = ""
 	attachments := e.collectAttachments(content)
+
+	var finalAttachments []messages.Attachment
+	var pastes []messages.Attachment
+
+	for _, att := range attachments {
+		if att.Content != "" && strings.HasPrefix(att.Name, "paste-") {
+			pastes = append(pastes, att)
+		} else {
+			finalAttachments = append(finalAttachments, att)
+		}
+	}
+
+	// Sort pastes by name length descending to avoid partial matches
+	// e.g., replacing @paste-1 before @paste-10 would corrupt @paste-10.
+	slices.SortFunc(pastes, func(a, b messages.Attachment) int {
+		return len(b.Name) - len(a.Name)
+	})
+
+	for _, att := range pastes {
+		content = strings.ReplaceAll(content, "@"+att.Name, att.Content)
+	}
+
 	e.textarea.Reset()
 	e.userTyped = false
 	e.clearSuggestion()
-	return core.CmdHandler(messages.SendMsg{Content: content, Attachments: attachments})
+	return core.CmdHandler(messages.SendMsg{Content: content, Attachments: finalAttachments})
 }
 
 // configureNewlineKeybinding sets up the appropriate newline keybinding
