@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
 	"github.com/docker/docker-agent/pkg/tui/animation"
+	"github.com/docker/docker-agent/pkg/tui/components/markdown"
 	"github.com/docker/docker-agent/pkg/tui/components/message"
 	"github.com/docker/docker-agent/pkg/tui/components/reasoningblock"
 	"github.com/docker/docker-agent/pkg/tui/components/scrollview"
@@ -312,6 +313,10 @@ func (m *model) handleMouseClick(msg tea.MouseClickMsg) (layout.Model, tea.Cmd) 
 				SessionPosition: *msg.SessionPosition,
 				OriginalContent: msg.Content,
 			})
+		}
+
+		if content, ok := m.codeBlockAt(msgIdx, localLine, col); ok {
+			return m, copyTextToClipboard(content)
 		}
 
 		if m.isCopyLabelClick(msgIdx, localLine, col) {
@@ -1726,6 +1731,51 @@ func (m *model) isEditLabelClick(msgIdx, localLine, col int) (bool, *types.Messa
 	}
 
 	return false, nil
+}
+
+// codeBlockAt returns the raw code of the fenced code block whose copy label
+// is at the given click position, if any.
+func (m *model) codeBlockAt(msgIdx, localLine, col int) (string, bool) {
+	if msgIdx < 0 || msgIdx >= len(m.messages) {
+		return "", false
+	}
+	if msgIdx >= len(m.views) {
+		return "", false
+	}
+	mv, ok := m.views[msgIdx].(message.Model)
+	if !ok {
+		return "", false
+	}
+	blocks := mv.CodeBlocks()
+	if len(blocks) == 0 {
+		return "", false
+	}
+	var target *markdown.CodeBlock
+	for i := range blocks {
+		if blocks[i].Line == localLine {
+			target = &blocks[i]
+			break
+		}
+	}
+	if target == nil {
+		return "", false
+	}
+
+	item := m.renderItem(msgIdx, m.views[msgIdx])
+	if localLine < 0 || localLine >= len(item.lines) {
+		return "", false
+	}
+	plainLine := ansi.Strip(item.lines[localLine])
+	before, _, found := strings.Cut(plainLine, markdown.CodeBlockCopyIcon)
+	if !found {
+		return "", false
+	}
+	iconStart := ansi.StringWidth(before)
+	iconEnd := iconStart + ansi.StringWidth(markdown.CodeBlockCopyIcon)
+	if col < iconStart || col >= iconEnd {
+		return "", false
+	}
+	return target.Content, true
 }
 
 // isCopyLabelClick checks if the click is on the copy label of an assistant message.

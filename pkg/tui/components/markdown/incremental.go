@@ -30,6 +30,10 @@ type IncrementalRenderer struct {
 	inputPrefix  string
 	outputPrefix string
 
+	// codeBlocksPrefix is the list of code blocks emitted while rendering the
+	// cached prefix, with Line indices relative to outputPrefix.
+	codeBlocksPrefix []CodeBlock
+
 	// fallback is used for the actual rendering work; it is reused across calls
 	// so its parser pool (and chroma caches) stay warm.
 	fallback *FastRenderer
@@ -48,10 +52,20 @@ func NewIncrementalRenderer(width int) *IncrementalRenderer {
 // inputs that share a long common prefix (the streaming case), only the suffix
 // is parsed and rendered; the rest is served from the cached output.
 func (r *IncrementalRenderer) Render(input string) (string, error) {
+	out, _, err := r.RenderWithCodeBlocks(input)
+	return out, err
+}
+
+// RenderWithCodeBlocks behaves like Render but additionally returns the list
+// of fenced code blocks in the rendered output. Each entry's Line is the
+// 0-indexed line within the returned string where the block's copy label is
+// drawn.
+func (r *IncrementalRenderer) RenderWithCodeBlocks(input string) (string, []CodeBlock, error) {
 	if input == "" {
 		r.inputPrefix = ""
 		r.outputPrefix = ""
-		return "", nil
+		r.codeBlocksPrefix = nil
+		return "", nil, nil
 	}
 
 	// If the new input no longer starts with our cached prefix, the user (or a
@@ -70,33 +84,37 @@ func (r *IncrementalRenderer) Render(input string) (string, error) {
 	if boundary <= 0 {
 		// No new block boundary in the tail yet — render only the tail and
 		// concatenate. Cached prefix is unchanged.
-		renderedTail, err := r.fallback.Render(tail)
+		renderedTail, tailBlocks, err := r.fallback.RenderWithCodeBlocks(tail)
 		if err != nil {
 			return r.fullRender(input)
 		}
-		return r.joinPrefixAndTail(r.outputPrefix, renderedTail), nil
+		out := r.joinPrefixAndTail(r.outputPrefix, renderedTail)
+		return out, r.mergeCodeBlocks(r.outputPrefix, r.codeBlocksPrefix, tailBlocks), nil
 	}
 
 	// We have a new boundary inside the tail. Render the new stable region
 	// (inputPrefix + tail[:boundary]) once, append it to the cache, then render
 	// the new tail.
 	newStableTail := tail[:boundary]
-	renderedStableTail, err := r.fallback.Render(newStableTail)
+	renderedStableTail, stableBlocks, err := r.fallback.RenderWithCodeBlocks(newStableTail)
 	if err != nil {
 		return r.fullRender(input)
 	}
+	newBlocks := r.mergeCodeBlocks(r.outputPrefix, r.codeBlocksPrefix, stableBlocks)
 	r.inputPrefix += newStableTail
 	r.outputPrefix = r.joinPrefixAndTail(r.outputPrefix, renderedStableTail)
+	r.codeBlocksPrefix = newBlocks
 
 	rest := tail[boundary:]
 	if rest == "" {
-		return r.outputPrefix, nil
+		return r.outputPrefix, cloneCodeBlocks(r.codeBlocksPrefix), nil
 	}
-	renderedRest, err := r.fallback.Render(rest)
+	renderedRest, restBlocks, err := r.fallback.RenderWithCodeBlocks(rest)
 	if err != nil {
 		return r.fullRender(input)
 	}
-	return r.joinPrefixAndTail(r.outputPrefix, renderedRest), nil
+	out := r.joinPrefixAndTail(r.outputPrefix, renderedRest)
+	return out, r.mergeCodeBlocks(r.outputPrefix, r.codeBlocksPrefix, restBlocks), nil
 }
 
 // SetWidth updates the renderer width. Width changes invalidate the cache
@@ -109,6 +127,7 @@ func (r *IncrementalRenderer) SetWidth(width int) {
 	r.fallback = NewFastRenderer(width)
 	r.inputPrefix = ""
 	r.outputPrefix = ""
+	r.codeBlocksPrefix = nil
 }
 
 // Reset drops the cached prefix without changing the width. Use when the
@@ -116,6 +135,7 @@ func (r *IncrementalRenderer) SetWidth(width int) {
 func (r *IncrementalRenderer) Reset() {
 	r.inputPrefix = ""
 	r.outputPrefix = ""
+	r.codeBlocksPrefix = nil
 }
 
 // fullRender renders input from scratch, refreshes the cache, and returns the
@@ -124,36 +144,40 @@ func (r *IncrementalRenderer) Reset() {
 // pieces separately, then join. The two render calls on smaller inputs are
 // faster than one big render plus a separate prefix render, and the prefix
 // piece can be reused as outputPrefix.
-func (r *IncrementalRenderer) fullRender(input string) (string, error) {
+func (r *IncrementalRenderer) fullRender(input string) (string, []CodeBlock, error) {
 	boundary := stableBoundary(input)
 	if boundary <= 0 {
-		out, err := r.fallback.Render(input)
+		out, blocks, err := r.fallback.RenderWithCodeBlocks(input)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		r.inputPrefix = ""
 		r.outputPrefix = ""
-		return out, nil
+		r.codeBlocksPrefix = nil
+		return out, blocks, nil
 	}
 
 	prefix := input[:boundary]
 	rest := input[boundary:]
-	renderedPrefix, err := r.fallback.Render(prefix)
+	renderedPrefix, prefixBlocks, err := r.fallback.RenderWithCodeBlocks(prefix)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if rest == "" {
 		r.inputPrefix = prefix
 		r.outputPrefix = renderedPrefix
-		return renderedPrefix, nil
+		r.codeBlocksPrefix = prefixBlocks
+		return renderedPrefix, cloneCodeBlocks(prefixBlocks), nil
 	}
-	renderedRest, err := r.fallback.Render(rest)
+	renderedRest, restBlocks, err := r.fallback.RenderWithCodeBlocks(rest)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	r.inputPrefix = prefix
 	r.outputPrefix = renderedPrefix
-	return r.joinPrefixAndTail(renderedPrefix, renderedRest), nil
+	r.codeBlocksPrefix = prefixBlocks
+	out := r.joinPrefixAndTail(renderedPrefix, renderedRest)
+	return out, r.mergeCodeBlocks(renderedPrefix, prefixBlocks, restBlocks), nil
 }
 
 // joinPrefixAndTail concatenates a previously rendered prefix and a freshly
@@ -191,6 +215,43 @@ func (r *IncrementalRenderer) joinPrefixAndTail(prefix, tail string) string {
 	b.WriteByte('\n')
 	b.WriteString(tail)
 	return b.String()
+}
+
+// joinSeparatorLines is the number of extra rendered lines that
+// joinPrefixAndTail inserts between the prefix output and the tail output:
+// one to terminate the prefix's final (untrailing-newlined) line, and one
+// blank-padded separator line. Keep this in sync with joinPrefixAndTail.
+const joinSeparatorLines = 2
+
+// mergeCodeBlocks returns the union of code blocks from a cached prefix output
+// and a freshly rendered tail. Tail block line indices are shifted past the
+// prefix's lines and the separator that joinPrefixAndTail inserts.
+func (r *IncrementalRenderer) mergeCodeBlocks(prefixOut string, prefixBlocks, tailBlocks []CodeBlock) []CodeBlock {
+	if len(prefixBlocks) == 0 && len(tailBlocks) == 0 {
+		return nil
+	}
+	out := make([]CodeBlock, 0, len(prefixBlocks)+len(tailBlocks))
+	out = append(out, prefixBlocks...)
+	if len(tailBlocks) == 0 {
+		return out
+	}
+	offset := 0
+	if prefixOut != "" {
+		offset = strings.Count(prefixOut, "\n") + joinSeparatorLines
+	}
+	for _, b := range tailBlocks {
+		out = append(out, CodeBlock{Content: b.Content, Line: b.Line + offset})
+	}
+	return out
+}
+
+func cloneCodeBlocks(in []CodeBlock) []CodeBlock {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]CodeBlock, len(in))
+	copy(out, in)
+	return out
 }
 
 // stableBoundary returns the byte index just after the last "safe" block
