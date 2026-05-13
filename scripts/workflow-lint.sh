@@ -6,7 +6,9 @@
 #
 #   1. concurrency:           every PR-triggered workflow declares a
 #                             concurrency: group (AGENTS.md §
-#                             GitHub Actions);
+#                             GitHub Actions), EXCEPT pr-review-trigger.yml
+#                             which intentionally runs all events to completion
+#                             (see PR #2789);
 #
 #   2. pinned-by-sha:         every third-party `uses:` reference is
 #                             pinned by a 40-char SHA, not a tag/branch
@@ -64,8 +66,18 @@ note() {
 # yq-based so it runs in the lint job without extra deps; the
 # trade-off is a false positive if `pull_request` appears in a
 # comment, which we accept.
+#
+# EXCEPTION: pr-review-trigger.yml is exempt from this check because
+# it intentionally runs all events to completion (the workflow is cheap,
+# and deduplication happens downstream in pr-review.yml). See PR #2789.
 for f in "$WORKFLOWS_DIR"/*.yml "$WORKFLOWS_DIR"/*.yaml; do
   [ -e "$f" ] || continue
+  
+  # Skip pr-review-trigger.yml
+  if [[ "$f" == *"pr-review-trigger.yml" ]]; then
+    continue
+  fi
+  
   if grep -qE '\bpull_request\b' "$f"; then
     if ! grep -qE '^\s*concurrency:' "$f"; then
       note "$f" "PR-triggered workflow has no concurrency: block (AGENTS.md § GitHub Actions)"
