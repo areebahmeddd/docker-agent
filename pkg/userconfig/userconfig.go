@@ -41,6 +41,9 @@ func (a *Alias) HasOptions() bool {
 type Settings struct {
 	// HideToolResults hides tool call results in the TUI by default
 	HideToolResults bool `yaml:"hide_tool_results,omitempty"`
+	// ExpandThinking expands reasoning/tool blocks in the TUI by default.
+	// Defaults to false when not set.
+	ExpandThinking *bool `yaml:"expand_thinking,omitempty"`
 	// SplitDiffView enables side-by-side split diff rendering for file edits.
 	// Defaults to true when not set.
 	SplitDiffView *bool `yaml:"split_diff_view,omitempty"`
@@ -97,6 +100,14 @@ func (s *Settings) GetSoundThreshold() int {
 		return DefaultSoundThreshold
 	}
 	return s.SoundThreshold
+}
+
+// GetExpandThinking returns whether reasoning/tool blocks are expanded by default.
+func (s *Settings) GetExpandThinking() bool {
+	if s == nil || s.ExpandThinking == nil {
+		return false
+	}
+	return *s.ExpandThinking
 }
 
 // GetSplitDiffView returns whether split diff view is enabled, defaulting to true.

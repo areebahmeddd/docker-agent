@@ -98,6 +98,10 @@ type renderCache struct {
 	hasExtra         bool     // whether there's extra content beyond preview
 }
 
+type expandedToolView interface {
+	ExpandedView() string
+}
+
 // Model represents a collapsible reasoning + tool calls block.
 type Model struct {
 	id                  string
@@ -119,7 +123,7 @@ func New(id, agentName string, sessionState *service.SessionState) *Model {
 	return &Model{
 		id:           id,
 		agentName:    agentName,
-		expanded:     false,
+		expanded:     sessionState == nil || sessionState.ExpandThinking(),
 		width:        80,
 		sessionState: sessionState,
 	}
@@ -522,7 +526,7 @@ func (m *Model) renderExpanded() string {
 				if i == 0 || (i > 0 && m.contentItems[i-1].kind == contentItemReasoning) {
 					parts = append(parts, "")
 				}
-				parts = append(parts, m.toolEntries[item.toolIndex].view.View())
+				parts = append(parts, m.renderToolExpanded(m.toolEntries[item.toolIndex]))
 				// Blank line after last tool in a consecutive group (next is reasoning or end)
 				isLastItem := i == len(m.contentItems)-1
 				nextIsReasoning := !isLastItem && m.contentItems[i+1].kind == contentItemReasoning
@@ -534,6 +538,13 @@ func (m *Model) renderExpanded() string {
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+func (m *Model) renderToolExpanded(entry toolEntry) string {
+	if view, ok := entry.view.(expandedToolView); ok {
+		return view.ExpandedView()
+	}
+	return entry.view.View()
 }
 
 // renderCollapsed renders the compact preview.

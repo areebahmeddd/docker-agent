@@ -13,6 +13,7 @@ import (
 // rather than the full SessionState, following the principle of least privilege.
 type SessionStateReader interface {
 	SplitDiffView() bool
+	ExpandThinking() bool
 	YoloMode() bool
 	HideToolResults() bool
 	CurrentAgentName() string
@@ -30,6 +31,7 @@ var _ SessionStateReader = (*SessionState)(nil)
 // accessible by multiple components.
 type SessionState struct {
 	splitDiffView   bool
+	expandThinking  bool
 	yoloMode        bool
 	hideToolResults bool
 	sessionTitle    string
@@ -40,16 +42,32 @@ type SessionState struct {
 }
 
 func NewSessionState(s *session.Session) *SessionState {
-	return &SessionState{
-		splitDiffView:   userconfig.Get().GetSplitDiffView(),
-		yoloMode:        s.ToolsApproved,
-		hideToolResults: s.HideToolResults,
-		sessionTitle:    s.Title,
+	settings := userconfig.Get()
+	state := &SessionState{
+		splitDiffView:  settings.GetSplitDiffView(),
+		expandThinking: settings.GetExpandThinking(),
 	}
+	if s != nil {
+		state.yoloMode = s.ToolsApproved
+		state.hideToolResults = s.HideToolResults
+		state.sessionTitle = s.Title
+	}
+	return state
 }
 
 func (s *SessionState) SplitDiffView() bool {
 	return s.splitDiffView
+}
+
+func (s *SessionState) ExpandThinking() bool {
+	if s == nil {
+		return true
+	}
+	return s.expandThinking
+}
+
+func (s *SessionState) SetExpandThinking(expandThinking bool) {
+	s.expandThinking = expandThinking
 }
 
 func (s *SessionState) ToggleSplitDiffView() {
