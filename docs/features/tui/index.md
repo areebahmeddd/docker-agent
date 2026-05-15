@@ -61,6 +61,20 @@ Type `/` during a session to see available commands, or press <kbd>Ctrl</kbd>+<k
 | `/speak`           | Voice input via system speech-to-text (macOS only)                                   |
 | `/exit`            | Exit the application (aliases: `/quit`, `/q`)                                        |
 
+### Thinking and Tool Details
+
+Reasoning/thinking blocks are collapsed by default. When collapsed, the TUI shows a short preview and compact tool summaries. Expand a block to see the full thinking content and the real tool renderers, including detailed tool output such as file edit diffs.
+
+To start new sessions with thinking/tool blocks expanded by default, set `expand_thinking` in your user config:
+
+```yaml
+# ~/.config/cagent/config.yaml
+settings:
+  expand_thinking: true
+```
+
+Set it to `false` or omit it to keep the default collapsed behavior.
+
 ### Snapshots, `/undo`, and `/snapshots`
 
 Enable shadow-git snapshots globally in `~/.config/cagent/config.yaml`:

@@ -523,6 +523,29 @@ func TestConfig_Settings_Empty(t *testing.T) {
 	settings := config.GetSettings()
 	assert.NotNil(t, settings)
 	assert.False(t, settings.HideToolResults)
+	assert.False(t, settings.GetExpandThinking())
+}
+
+func TestConfig_Settings_ExpandThinking(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	expandThinking := false
+
+	config := &Config{
+		Settings: &Settings{
+			ExpandThinking: &expandThinking,
+		},
+	}
+
+	require.NoError(t, config.saveTo(configFile))
+
+	loaded, err := loadFrom(configFile, "")
+	require.NoError(t, err)
+	require.NotNil(t, loaded.Settings)
+	require.NotNil(t, loaded.Settings.ExpandThinking)
+	assert.False(t, loaded.Settings.GetExpandThinking())
 }
 
 func TestConfig_Settings_GetSettingsNil(t *testing.T) {
@@ -534,6 +557,7 @@ func TestConfig_Settings_GetSettingsNil(t *testing.T) {
 	settings := config.GetSettings()
 	assert.NotNil(t, settings)
 	assert.False(t, settings.HideToolResults)
+	assert.False(t, settings.GetExpandThinking())
 }
 
 func TestConfig_AliasWithHideToolResults(t *testing.T) {
@@ -791,6 +815,7 @@ func TestGet_Empty(t *testing.T) {
 	settings := Get()
 	require.NotNil(t, settings)
 	assert.False(t, settings.HideToolResults)
+	assert.False(t, settings.GetExpandThinking())
 }
 
 func TestGet_WithHideToolResults(t *testing.T) {

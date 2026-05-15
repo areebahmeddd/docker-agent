@@ -102,6 +102,11 @@ func (b *Base) View() string {
 	return b.render(b.message, b.spinner, b.sessionState, b.width, b.height)
 }
 
+// ExpandedView returns the regular, full tool renderer.
+func (b *Base) ExpandedView() string {
+	return b.View()
+}
+
 // CollapsedView returns a simplified view for use in collapsed reasoning blocks.
 // Falls back to the regular View() if no collapsed renderer is provided.
 func (b *Base) CollapsedView() string {
